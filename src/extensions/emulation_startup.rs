@@ -613,7 +613,9 @@ pub fn lacks_uid_params() -> bool {
 /// runs after `apply_personality_option_deltas` once the table exists.
 pub fn apply_personality_param_deltas() {
     let p = personality();
-    if p == Personality::Zsh {
+    // csh/tcsh runs on translated zsh text that reads `$OSTYPE` and has its own
+    // `which`; only the Bourne-family drop-ins get the parameter deltas.
+    if matches!(p, Personality::Zsh | Personality::Csh) {
         return;
     }
     // EVERY drop-in: `$OPTARG` starts unset (`${OPTARG+set}` is empty in bash,
