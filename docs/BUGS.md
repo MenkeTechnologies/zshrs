@@ -61521,3 +61521,28 @@ shared `Arc<Keymap>` was treated as immutable. `refkeymap_by_name`,
 the C bodies, storing the field across every alias through
 `src/keymap_primary.rs`; `linkkeymap` and `unlinkkeymap` call them at
 c:457 / c:443.
+
+## #1188 — `bindkey -R` and `bindkey -rp` were ignored, and `.safe` accepted bindings — fixed
+
+**Status:** `fixed` 2026-10-17.
+
+```console
+$ zsh   -fc 'zmodload zsh/zle; bindkey -R "a-c" kill-line; bindkey b; bindkey -rp "^X"; bindkey "^X^X"'
+"b" kill-line
+"^X^X" undefined-key
+$ zshrs -fc 'zmodload zsh/zle; bindkey -R "a-c" kill-line; bindkey b; bindkey -rp "^X"; bindkey "^X^X"'
+"b" self-insert
+"^X^X" exchange-point-and-mark
+```
+
+**C reference.** `bin_bindkey_bind` (c:Src/Zle/zle_keymap.c:999-1072): `-rp`
+runs `scanremoveprefix` (c:1078-1086, proper prefixes only) per argument and
+returns; `-R` binds each byte of a `FIRST-LAST` / `FIRSTLAST` range and warns
+`malformed key range`; an odd pair count warns `even number of arguments
+required`, an empty sequence `cannot bind to an empty key sequence`, and a
+`KM_IMMUTABLE` keymap `keymap `.safe' is protected` — `.safe` gets that flag
+at c:1461.
+
+**Fix.** All of the above in `bin_bindkey_bind` / `scanremoveprefix` /
+`default_bindings`; `scanremoveprefix` no longer deletes the prefix's own
+binding.

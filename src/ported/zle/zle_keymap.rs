@@ -1798,11 +1798,11 @@ pub fn bin_bindkey_meta(
 /// old Arc (preserves C's "all sharing names see the change"
 /// semantic).
 pub fn bin_bindkey_bind(
-    _name: &str,
+    name: &str,
     kmname: Option<&str>,
     _km: Option<&Keymap>,
     argv: &[String],
-    _ops: &options,
+    ops: &options,
     func: i32,
 ) -> i32 {
     // c:999 — `km` is preselected by the caller via opts/-M; fall back
@@ -1820,16 +1820,33 @@ pub fn bin_bindkey_bind(
     let func_c = if func == 0 { '\0' } else { func as u8 as char };
     let needs_pairs = func_c == '\0' || func_c == 's';
     if needs_pairs && (argv.len() % 2 != 0) {
+        crate::ported::utils::zwarnnam(name, "even number of arguments required"); // c:1008
+        return 1;
+    }
+    // c:1012-1015
+    if old_arc.flags & KM_IMMUTABLE != 0 {
+        crate::ported::utils::zwarnnam(name, &format!("keymap `{}' is protected", lookup_name));
         return 1;
     }
 
     // Mutable clone of the shared Keymap.
     let mut km: Keymap = (*old_arc).clone();
+    let mut ret = 0;
+
+    // c:1016-1028 — `bindkey -rp PREFIX...`: drop every binding that has
+    // PREFIX as a proper prefix, then stop (no per-sequence unbind).
+    let remove_prefix = func_c == 'r' && OPT_ISSET(ops, b'p');
+    if remove_prefix {
+        for useq in argv {
+            let bseq = crate::ported::zle::zle_bindings::getkeystring(useq); // c:1022
+            scanremoveprefix(&mut km, &bseq); // c:1025
+        }
+    }
 
     // c:1014-1090 — walk argv in 1 or 2-step strides.
     let stride = if func_c == 'r' { 1 } else { 2 };
     let mut i = 0;
-    while i + (stride - 1) < argv.len() {
+    while !remove_prefix && i + (stride - 1) < argv.len() {
         // c:Src/Zle/zle_keymap.c:1023-1040 — `seq = getkeystring(*argv,
         //   &len, GETKEYS_BINDKEY, NULL); seq = metafy(seq, len, META_USEHEAP);`
         // The user-typed string `^A` is 2 chars that getkeystring translates
@@ -1896,11 +1913,37 @@ pub fn bin_bindkey_bind(
             },
         };
 
+        // c:1047-1062 — `-R`: the sequence is a FIRST-LAST byte range and
+        // every single byte in it is bound.
+        let seqs: Vec<Vec<u8>> = if OPT_ISSET(ops, b'R') {
+            let len = seq_bytes.len();
+            if len < 2
+                || len > 2 + usize::from(seq_bytes[1] == b'-')
+                || seq_bytes[0] > seq_bytes[len - 1]
+            {
+                crate::ported::utils::zwarnnam(
+                    name,
+                    &format!("malformed key range `{}'", argv[i]), // c:1053
+                );
+                ret = 1;
+                Vec::new()
+            } else {
+                (seq_bytes[0]..=seq_bytes[len - 1]).map(|b| vec![b]).collect()
+            }
+        } else if seq_bytes.is_empty() {
+            // c:1064-1067 — `bindkey` returns 2 for an empty sequence.
+            crate::ported::utils::zwarnnam(name, "cannot bind to an empty key sequence");
+            ret = 1;
+            Vec::new()
+        } else {
+            vec![seq_bytes.clone()]
+        };
+        for seq_bytes in seqs {
         // c:1051 — `bindkey(km, seq, bind, str)`.
         if seq_bytes.len() == 1 {
             let c = seq_bytes[0] as usize;
             let key = seq_bytes.to_vec();
-            if let Some(s) = kb_value.str {
+            if let Some(s) = kb_value.str.clone() {
                 // c:614 — single-char SEND-STRING (`bindkey -s "^X" str`).
                 // `first[]` holds only a Thingy, so keep the string in
                 // `multi[]` and clear `first[]` (keybind falls through to it).
@@ -1957,7 +2000,8 @@ pub fn bin_bindkey_bind(
             {
                 crate::ported::zle::zle_thingy::unrefthingy(&old.nam);
             }
-            km.multi.insert(seq_bytes.to_vec(), kb_value); // c:1054 hashtable
+            km.multi.insert(seq_bytes.to_vec(), kb_value.clone()); // c:1054 hashtable
+        }
         }
         // PFA-SMR: record the binding so replay can recreate it.
         // Skip `bindkey -e` / `bindkey -v` mode switches (those land
@@ -1992,7 +2036,7 @@ pub fn bin_bindkey_bind(
             }
         }
     }
-    0 // c:1097
+    ret // c:1071
 }
 
 /// Port of `scanremoveprefix()` from `Src/Zle/zle_keymap.c:1078`.
@@ -2000,16 +2044,42 @@ pub fn bin_bindkey_bind(
 /// WARNING: param names don't match C — Rust=(km, prefix) vs C=(seq, bind, str, magic)
 pub fn scanremoveprefix(km: &mut Keymap, prefix: &[u8]) {
     // c:1078
-    // C body (c:1080-1110): walks km->multi removing all bindings
-    // whose key sequence starts with `prefix`. Used by `bindkey -rp`.
+    // c:1082-1083 — only sequences that have `prefix` as a PROPER prefix:
+    // `strncmp(seq, prefix, len) || !seq[len]` skips the prefix itself.
     let to_remove: Vec<Vec<u8>> = km
         .multi
         .keys()
-        .filter(|k| k.starts_with(prefix))
+        .filter(|k| k.len() > prefix.len() && k.starts_with(prefix))
         .cloned()
         .collect();
-    for k in to_remove {
-        km.unbind_seq(&k);
+    // c:1085 — `bindkey(km, seq, t_undefinedkey, NULL)` on each one. Every
+    // binding under `prefix` goes, so the c:612-625 walk back up the trie
+    // leaves `prefix` and each ancestor a prefix of nothing more than what
+    // still sits under it, and frees the ones left with no binding.
+    for k in &to_remove {
+        if let Some(old) = km.multi.remove(k).and_then(|kb| kb.bind) {
+            crate::ported::zle::zle_thingy::unrefthingy(&old.nam); // c:609
+        }
+    }
+    for end in (1..=prefix.len()).rev() {
+        let anc = &prefix[..end];
+        let below = km
+            .multi
+            .iter()
+            .filter(|(k, kb)| {
+                k.len() > anc.len() && k.starts_with(anc) && (kb.bind.is_some() || kb.str.is_some())
+            })
+            .count() as i32;
+        let empty = match km.multi.get_mut(anc) {
+            Some(kb) => {
+                kb.prefixct = below;
+                below == 0 && kb.bind.is_none() && kb.str.is_none()
+            }
+            None => false,
+        };
+        if empty {
+            km.multi.remove(anc); // c:613
+        }
     }
 }
 
@@ -2759,7 +2829,11 @@ pub fn default_bindings() {
     linkkeymap(Arc::new(amap), "vicmd", 0); // c:1451
     linkkeymap(Arc::new(oppmap), "viopp", 0); // c:1452
     linkkeymap(Arc::new(vismap), "visual", 0); // c:1453
-    linkkeymap(Arc::new(smap), ".safe", 1); // c:1454 — KM_IMMUTABLE
+    // c:1460-1461 — "the .safe map cannot be modified or deleted". The flag
+    // goes on before the link: nothing else holds `smap` yet, so this is the
+    // same keymap object C flags after linking.
+    smap.flags |= KM_IMMUTABLE;
+    linkkeymap(Arc::new(smap), ".safe", 1); // c:1454
 
     // c:Src/Zle/zle_keymap.c pre-2023-10-26 `default_bindings`
     // (zsh 5.9 + 5.9.1 still ship this; commit f36fccbb removed
@@ -3603,6 +3677,75 @@ mod tests {
             base,
             "bind+unbind must be thingytab-neutral (the ${{#widgets}} guard)"
         );
+    }
+
+    fn bound(km: &str, seq: &[u8]) -> Option<String> {
+        keybind(&openkeymap(km).unwrap(), seq).0.map(|t| t.nam)
+    }
+
+    /// c:1047-1062 — `bindkey -R a-c W` binds each byte of the range,
+    /// `ac` is the same range without the dash, high bytes work, and a
+    /// reversed / overlong / single-byte range is rejected with status 1.
+    #[test]
+    fn bindkey_range_binds_every_byte() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        thingy_baseline();
+        let ops = bindkey_ops(Some(b'R'));
+        let run = |seq: &str| {
+            bin_bindkey_bind("bindkey", Some("main"), None, &[seq.into(), "kill-word".into()], &ops, 0)
+        };
+        assert_eq!(run("a-c"), 0);
+        for b in [b'a', b'b', b'c'] {
+            assert_eq!(bound("main", &[b]).as_deref(), Some("kill-word"));
+        }
+        assert_ne!(bound("main", b"d").as_deref(), Some("kill-word"));
+        assert_eq!(run("xz"), 0);
+        assert_eq!(bound("main", b"y").as_deref(), Some("kill-word"));
+        assert_eq!(run("\\200-\\202"), 0);
+        assert_eq!(bound("main", &[0x81]).as_deref(), Some("kill-word"));
+        assert_ne!(bound("main", &[0x83]).as_deref(), Some("kill-word"));
+        for bad in ["c-a", "abcd", "q"] {
+            assert_eq!(run(bad), 1, "malformed range `{bad}' must fail");
+        }
+        assert_ne!(bound("main", b"q").as_deref(), Some("kill-word"));
+    }
+
+    /// c:1016-1028 / c:1078-1086 — `bindkey -rp ^X` drops every binding
+    /// strictly under `^X`, leaving `^X` itself unbound, while a binding
+    /// that merely shares no prefix survives.
+    #[test]
+    fn bindkey_remove_prefix_drops_proper_prefixes_only() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        thingy_baseline();
+        assert_eq!(bind("^Q^W^E", "kill-word"), 0);
+        assert_eq!(bound("main", b"\x18\x18").as_deref(), Some("exchange-point-and-mark"));
+        let ops = bindkey_ops(Some(b'p'));
+        let rp = |seq: &str| bin_bindkey_bind("bindkey", Some("main"), None, &[seq.into()], &ops, 'r' as i32);
+        assert_eq!(rp("^X"), 0);
+        assert_eq!(bound("main", b"\x18\x18"), None);
+        assert_eq!(bound("main", b"\x18\x05"), None);
+        assert!(
+            !openkeymap("main").unwrap().multi.keys().any(|k| k.starts_with(b"\x18")),
+            "no node may be left under the removed prefix"
+        );
+        assert_eq!(bound("main", b"\x11\x17\x05").as_deref(), Some("kill-word"));
+        assert_eq!(rp("^Q^W"), 0);
+        assert_eq!(bound("main", b"\x11\x17\x05"), None);
+    }
+
+    /// c:1012-1015 + c:1460-1461 — `.safe` is KM_IMMUTABLE, so binding
+    /// into it fails and leaves it untouched.
+    #[test]
+    fn bindkey_into_safe_keymap_is_refused() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        thingy_baseline();
+        let ops = bindkey_ops(None);
+        let r = bin_bindkey_bind("bindkey", Some(".safe"), None, &["x".into(), "kill-line".into()], &ops, 0);
+        assert_eq!(r, 1);
+        assert_eq!(bound(".safe", b"x").as_deref(), Some(".self-insert"));
     }
 
     /// c:1042 + c:643 — binding the SAME unknown name to the same key
