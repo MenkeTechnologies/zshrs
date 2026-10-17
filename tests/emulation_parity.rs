@@ -2087,6 +2087,7 @@ const BASH_KSH_CORPUS: &[&str] = &[
 /// Scripts only ksh93 (and its zshrs drop-in) accept: `print`, `typeset -i/-l/-u`,
 /// `set -A`, `float`/`integer`, ksh-glob patterns, `function f {}` scoping.
 const KSH_ONLY_CORPUS: &[&str] = &[
+    "M=9223372036854775807; echo $((M+1)) $((M+1000)) $((M*2)) $((-M-2)) $(( (-M-1) / -1 )) $((M-1)); echo $((2**60+1)) $((9007199254740993)) $((9007199254740993 % 10)); x=9007199254740993; echo $((x)) $((x==9007199254740992))",
     "echo \"a\\x\"; printf 'p\\x|\\n' | wc -c | tr -d ' '",
     "echo $((7.5%2)) $((-7.5%2)) $((9.9%4))",
     "test 1.5 -gt 1; echo $?; test 1.5 -lt 1; echo $?; test 2 -eq 2.0; echo $?; [ 0.1 -ne 0.1 ]; echo $?",

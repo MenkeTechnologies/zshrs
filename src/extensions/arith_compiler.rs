@@ -1265,6 +1265,12 @@ fn prec_tables_agree(ops: &[Tok]) -> bool {
 /// Each falls back to `BUILTIN_ARITH_EVAL`, which is what every
 /// expression used to do.
 pub fn arith_uncompilable_reason(expr: &str) -> Option<&'static str> {
+    // ksh93 does integer arithmetic in double (operands above 2^53 round, `+ - *`
+    // saturate or go float); that model lives in math.rs's `op`/`matheval`, which
+    // the compiled ops skip.
+    if crate::dash_mode::ksh93_mode() {
+        return Some("ksh93 double arithmetic");
+    }
     let b = expr.as_bytes();
     for (i, &c) in b.iter().enumerate() {
         match c {

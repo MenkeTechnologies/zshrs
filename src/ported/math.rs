@@ -100,6 +100,37 @@ pub const MUL: i32 = 11; // c:120  *
 pub const DIV: i32 = 12; // c:121  /
 /// `MOD` constant.
 pub const MOD: i32 = 13; // c:122  %
+
+/// !!! KSH93 GATE (no C counterpart) !!! ksh93 evaluates `+ - *` in long double —
+/// plain double on Apple arm64 — and prints the result as an integer only when its
+/// saturating conversion round-trips: `INT64_MAX + 1000` is INT64_MAX, while
+/// `INT64_MAX + 1000000` is `9.22337203685577e+18`. zsh wraps. Used for every ksh93
+/// integer `+ - *`, so the sub-2^53 rounding (`2**60 + 1` is 2**60) comes with it.
+macro_rules! ksh93_overflow {
+    ($d:expr) => {{
+        let d: f64 = $d;
+        let sat = d as i64;
+        if sat as f64 == d {
+            mnumber { l: sat, d: 0.0, type_: MN_INTEGER }
+        } else {
+            mnumber { l: 0, d, type_: MN_FLOAT }
+        }
+    }};
+}
+
+/// !!! KSH93 GATE (no C counterpart) !!! ksh93 holds every arithmetic value as a
+/// double, so an integer above 2^53 is rounded to the nearest representable one:
+/// `$((9007199254740993))` is 9007199254740992 and `9007199254740993 % 10` is 2.
+/// Applied to integer operands and to the final result; floats pass through.
+macro_rules! ksh93_round_int {
+    ($n:expr) => {{
+        let mut n = $n;
+        if n.type_ == MN_INTEGER {
+            n.l = (n.l as f64) as i64;
+        }
+        n
+    }};
+}
 /// `PLUS` constant.
 pub const PLUS: i32 = 14; // c:123  +
 /// `MINUS` constant.
@@ -3642,6 +3673,13 @@ pub(crate) fn op(what: i32) {
         } else {
             mv_a.val
         };
+        // ksh93 rounds integer operands through a double before any operator sees them
+        // (see `ksh93_round_int!`); an unresolved plain-assignment LHS is left alone.
+        let (a, b) = if crate::dash_mode::ksh93_mode() {
+            (ksh93_round_int!(a), ksh93_round_int!(b))
+        } else {
+            (a, b)
+        };
 
         // Coerce types
         let (a, b) = if (tp & (OP_A2IO | OP_E2IO)) != 0 {
@@ -3727,11 +3765,12 @@ pub(crate) fn op(what: i32) {
                             type_: MN_FLOAT,
                         }
                     } else {
-                        mnumber {
-                            l: (if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l })
-                                .wrapping_mul((if b.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(b.d) } else { b.l })),
-                            d: 0.0,
-                            type_: MN_INTEGER,
+                        let al = if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l };
+                        let bl = if b.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(b.d) } else { b.l };
+                        if crate::dash_mode::ksh93_mode() {
+                            ksh93_overflow!(al as f64 * bl as f64)
+                        } else {
+                            mnumber { l: al.wrapping_mul(bl), d: 0.0, type_: MN_INTEGER }
                         }
                     }
                 }
@@ -3816,11 +3855,12 @@ pub(crate) fn op(what: i32) {
                             type_: MN_FLOAT,
                         }
                     } else {
-                        mnumber {
-                            l: (if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l })
-                                .wrapping_add((if b.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(b.d) } else { b.l })),
-                            d: 0.0,
-                            type_: MN_INTEGER,
+                        let al = if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l };
+                        let bl = if b.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(b.d) } else { b.l };
+                        if crate::dash_mode::ksh93_mode() {
+                            ksh93_overflow!(al as f64 + bl as f64)
+                        } else {
+                            mnumber { l: al.wrapping_add(bl), d: 0.0, type_: MN_INTEGER }
                         }
                     }
                 }
@@ -3834,24 +3874,25 @@ pub(crate) fn op(what: i32) {
                             type_: MN_FLOAT,
                         }
                     } else {
-                        mnumber {
-                            l: (if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l })
-                                .wrapping_sub((if b.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(b.d) } else { b.l })),
-                            d: 0.0,
-                            type_: MN_INTEGER,
+                        let al = if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l };
+                        let bl = if b.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(b.d) } else { b.l };
+                        if crate::dash_mode::ksh93_mode() {
+                            ksh93_overflow!(al as f64 - bl as f64)
+                        } else {
+                            mnumber { l: al.wrapping_sub(bl), d: 0.0, type_: MN_INTEGER }
                         }
                     }
                 }
 
                 SHLEFT | SHLEFTEQ => mnumber {
                     l: (if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l })
-                        << ((if b.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(b.d) } else { b.l }) as u32 & 63),
+                        << ((if b.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(b.d) } else { b.l }) as u32 & if crate::dash_mode::pdksh_family() { 31 } else { 63 }),
                     d: 0.0,
                     type_: MN_INTEGER,
                 },
                 SHRIGHT | SHRIGHTEQ => mnumber {
                     l: (if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l })
-                        >> ((if b.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(b.d) } else { b.l }) as u32 & 63),
+                        >> ((if b.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(b.d) } else { b.l }) as u32 & if crate::dash_mode::pdksh_family() { 31 } else { 63 }),
                     d: 0.0,
                     type_: MN_INTEGER,
                 },
@@ -4495,7 +4536,12 @@ pub fn matheval(s: &str) -> Result<mnumber, String> {
     // or typed-float parameter, an unset name, a leading zero, a base prefix,
     // `/` `%` `<<` `**`, assignment, a second operator, FORCEFLOAT — returns
     // None and takes the full path, so errors and warnings are unchanged.
-    if M_LEVEL.with(|c| c.get()) == 0 && !crate::ported::zsh_h::isset(crate::ported::zsh_h::FORCEFLOAT) {
+    // ksh93 rounds every integer through a double (`ksh93_round_int!`, `ksh93_overflow!`
+    // in `op`); this shortcut computes exactly, so that mode always takes the full path.
+    if M_LEVEL.with(|c| c.get()) == 0
+        && !crate::ported::zsh_h::isset(crate::ported::zsh_h::FORCEFLOAT)
+        && !crate::dash_mode::ksh93_mode()
+    {
         let plain = |t: &str| -> Option<i64> {
             let digits = t.strip_prefix('-').unwrap_or(t);
             let ok = !digits.is_empty()
@@ -4644,6 +4690,8 @@ pub fn matheval(s: &str) -> Result<mnumber, String> {
     let math_ctx = crate::ported::exec::EvalContextFrame::push("math");
     let result = mathevall(prec_type::MPREC_TOP);
     drop(math_ctx);
+    // ksh93: a bare literal or variable never meets an operator, so round the result too.
+    let result = if crate::dash_mode::ksh93_mode() { result.map(|n| ksh93_round_int!(n)) } else { result };
     // c:455 — `stack = xstack;`, the cache goes out of scope with the
     // frame that owns it. At top level both maps were empty on entry,
     // so this is a clear; under a nested `matheval` it restores the
