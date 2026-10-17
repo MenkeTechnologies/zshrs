@@ -86,7 +86,7 @@
             <a href="https://github.com/MenkeTechnologies/zshrs" target="_blank" rel="noopener noreferrer">GitHub</a>
           </nav>
           <p style="margin:0.35rem 0 0;font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text-dim);letter-spacing:0.03em;opacity:0.75;">
-            src/zsh/Src/*.c &rarr; src/ported/*.rs &middot; <a href="https://github.com/MenkeTechnologies/zshrs/blob/main/docs/PORT.md" style="color:var(--cyan);">PORT.md</a> ruleset &middot; <code>tests/port_purity.rs</code> enforces strict-port purity
+            src/zsh/Src/*.c &rarr; src/ported/*.rs &middot; <code>tests/port_purity.rs</code> enforces strict-port purity
           </p>
         </div>
         <div class="tutorial-toolbar">
@@ -107,7 +107,7 @@
 
       <p class="tutorial-subtitle" style="margin-top:0.5rem;color:var(--accent-light);">
         <strong style="color:var(--accent);">Codebase split (NEW):</strong> the runtime crate now physically isolates ported code from non-port code so drift is mechanically detectable.
-        <code>src/ported/</code> (107 files) is the <strong>strict-port directory</strong> &mdash; every <code>.rs</code> mirrors a real <code>src/zsh/Src/&lt;x&gt;.c</code> file, every top-level <code>fn</code> carries a <code>/// Port of &lt;cname&gt;() from Src/&lt;file&gt;.c:NNNN</code> doc-comment, and the file set is <strong>FROZEN</strong> (no new files; PORT.md §"ABSOLUTE FREEZE").
+        <code>src/ported/</code> (107 files) is the <strong>strict-port directory</strong> &mdash; every <code>.rs</code> mirrors a real <code>src/zsh/Src/&lt;x&gt;.c</code> file, every top-level <code>fn</code> carries a <code>/// Port of &lt;cname&gt;() from Src/&lt;file&gt;.c:NNNN</code> doc-comment, and the file set is <strong>FROZEN</strong> (no new files).
         <code>src/extensions/</code> (40 files) is the <strong>non-port directory</strong> &mdash; features zsh C does not have (AOT, daemon coordination, plugin/script/autoload caches, fish-style autosuggest/abbrev/highlight, persistent worker pools, ZWC byte-code helpers).
         <code>src/recorder/</code> (1 file) is feature-gated; deleted by rustc in the default build.
         Both invariants are enforced by <code>tests/port_purity.rs</code> &mdash; a regression of either rule fails CI.
@@ -605,9 +605,7 @@
         the <strong>auto-derived OpenAPI 3.1 surface</strong> at <code>GET /openapi</code> from the daemon op registry;
         the <strong>flat zsh-extended-history text file</strong> + sibling FTS5 sqlite index;
         <strong>zsh grammar introspection to stdout</strong> (lexer token stream, <code>Eprog</code> wordcode layout, parser AST S-expression) via <code>zshrs --dump-*</code> and <code>zshrs_dump</code> (<code>dumptokens</code>, <code>dumpwordcode</code>) in formats byte-diffable against parity harnesses &mdash; not shipped as a trio by stock zsh.
-        Full list + governance in
-        <a href="https://github.com/MenkeTechnologies/zshrs/blob/main/CREATORS.md"><code>CREATORS.md</code></a>;
-        op-by-op detail in
+        Op-by-op detail in
         <a href="daemon-report.html"><code>daemon-report.html</code></a>.
       </p>
 

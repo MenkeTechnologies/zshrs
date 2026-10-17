@@ -171,7 +171,7 @@
         <li><strong>New (default):</strong> <code>crate::ported::lex</code> (port of <code>src/zsh/Src/lex.c</code>, in <code>src/ported/lex.rs</code>) → <code>crate::ported::parse</code> (port of <code>src/zsh/Src/parse.c</code>, in <code>src/ported/parse.rs</code>) → <code>ZshCompiler</code> (original Rust, <code>src/extensions/compile_zsh.rs</code>) → fusevm bytecode. Lex + parse are strict-port code; the bytecode compiler lives in <code>src/extensions/</code> because it has no C ancestor. Faster + more faithful to zsh's grammar than the legacy tree-walker.</li>
         <li><strong>Old (escape hatch):</strong> set <code>ZSHRS_OLD_PIPELINE=1</code> to route through the legacy hand-rolled <code>ShellLexer</code>/<code>ShellParser</code>/<code>ShellCompiler</code>. Slated for deletion once corpus parity is proven across all dogfood scenarios.</li>
       </ul>
-      <p style="font-size: 12px; color: var(--text-muted);">A residual bridge inside <code>compile_word_str</code> still re-parses param-modifier forms (<code>${x:-default}</code>, <code>${x#prefix}</code>, <code>${x/pat/rep}</code>) through the legacy <code>ShellParser</code> via <code>untokenize_preserve_quotes</code> round-trip. Each iteration of the migration replaces one runtime-fallback call site with native ops; tracked as Phase 1 / G8 in <code>ROADMAP.md</code>.</p>
+      <p style="font-size: 12px; color: var(--text-muted);">A residual bridge inside <code>compile_word_str</code> still re-parses param-modifier forms (<code>${x:-default}</code>, <code>${x#prefix}</code>, <code>${x/pat/rep}</code>) through the legacy <code>ShellParser</code> via <code>untokenize_preserve_quotes</code> round-trip. Each iteration of the migration replaces one runtime-fallback call site with native ops.</p>
     </section>
 
     <section class="tutorial-section">
@@ -1066,7 +1066,7 @@ while true; do …; done</code></pre>
 
       <article class="doc-entry" id="doc-local">
         <h3><a class="doc-anchor" href="#doc-local">#</a> <code>local VAR[=value]</code></h3>
-        <p>Function-local scope. zshrs's local-scope semantics: declared vars are pushed onto a scope stack at function entry, popped at return. Assignment-without-declare-at-top-of-function is allowed (zsh idiom) but has caveats — see CLAUDE.md "Never use `local` inside loops".</p>
+        <p>Function-local scope. zshrs's local-scope semantics: declared vars are pushed onto a scope stack at function entry, popped at return. Assignment-without-declare-at-top-of-function is allowed (zsh idiom) but a bare <code>local var</code> re-declaration inside a loop prints the current value when <code>TYPESET_SILENT</code> is unset, so declare locals once at the top of the function.</p>
         <pre><code>my_func() {
   local count=0
   local result

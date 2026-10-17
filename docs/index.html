@@ -130,7 +130,7 @@
           <button type="button" class="btn btn-secondary active" id="btnCrt" title="CRT scanline overlay">CRT</button>
           <button type="button" class="btn btn-secondary active" id="btnNeon" title="Neon border pulse">Neon</button>
           <a class="btn btn-secondary" href="reference.html">Reference</a>
-          <a class="btn btn-secondary" href="daemon-report.html" title="DAEMON.md → daemon/*.rs implementation map with file:line citations">Daemon Map</a>
+          <a class="btn btn-secondary" href="daemon-report.html" title="daemon/*.rs implementation map with file:line citations">Daemon Map</a>
           <a class="btn btn-secondary" href="https://github.com/MenkeTechnologies/zshrs" target="_blank" rel="noopener noreferrer">GitHub</a>
           <a class="btn btn-secondary" href="https://github.com/MenkeTechnologies/zshrs/issues" target="_blank" rel="noopener noreferrer">Issues</a>
         </div>
@@ -197,20 +197,14 @@
         is a choice; an idea is something another project could inherit and
         be changed by). Twenty-nine survive. The cuts &mdash; filing
         conventions, flags, mechanisms of other entries, and one claim that
-        was simply false &mdash; are listed with reasons in
-        <a href="https://github.com/MenkeTechnologies/zshrs/blob/main/docs/INVENTIONS.md"><code>docs/INVENTIONS.md</code></a>,
-        which is the canonical register.</p>
+        was simply false &mdash; are not claimed.</p>
 
         <p>This is a legacy, not a battle. Every item below originated in
         zshrs and is offered as <strong>prior art for the shell-design
         commons</strong> under the MIT grant. Future shells (bash, fish,
         nushell, elvish, oil, xonsh, murex, projects that don&rsquo;t exist
         yet) should inherit any of it. Ports must credit zshrs as the
-        invention source in their docs &mdash; see
-        <a href="https://github.com/MenkeTechnologies/zshrs/blob/main/CREATORS.md"><code>CREATORS.md</code></a>
-        for the suggested wording. The protected invariants in
-        <a href="https://github.com/MenkeTechnologies/zshrs/blob/main/MAINTAINERS.md"><code>MAINTAINERS.md</code></a>
-        guard upstream identity, not the ideas.</p>
+        invention source in their docs.</p>
 
         <h3 style="color: var(--cyan); margin-top: 1.6rem;">Execution</h3>
                 <div class="cat-grid">
@@ -268,7 +262,7 @@
         <div class="cat-grid">
           <div class="cat-card">
             <h4>Value lineage at the bytecode level (<code>provenance</code>)</h4>
-            <p>An <em>origin</em> (command substitution, glob, heredoc, process substitution) plus every op that touched the value &mdash; expand, concat, assign, exec, call &mdash; each stamped with file, line, enclosing function and wall clock. Functions carry the same chain: definition, every redefinition, every call at the <em>caller&rsquo;s</em> line, the <code>unfunction</code> that ended it. One relaxed atomic load when disarmed. <code>typeset -p</code> answers what a value <em>is</em>; <code>set -x</code> answers what <em>ran</em>; nothing answers where the bytes came from. Weiser&rsquo;s slicing (1981) is static, Perl&rsquo;s taint mode is one bit, PASS (2006) instruments the storage layer, W3C PROV standardizes the model &mdash; all outside the shell, which is the layer that glues the tools together. See <a href="https://github.com/MenkeTechnologies/zshrs/blob/main/docs/PROVENANCE.md"><code>PROVENANCE.md</code></a>.</p>
+            <p>An <em>origin</em> (command substitution, glob, heredoc, process substitution) plus every op that touched the value &mdash; expand, concat, assign, exec, call &mdash; each stamped with file, line, enclosing function and wall clock. Functions carry the same chain: definition, every redefinition, every call at the <em>caller&rsquo;s</em> line, the <code>unfunction</code> that ended it. One relaxed atomic load when disarmed. <code>typeset -p</code> answers what a value <em>is</em>; <code>set -x</code> answers what <em>ran</em>; nothing answers where the bytes came from. Weiser&rsquo;s slicing (1981) is static, Perl&rsquo;s taint mode is one bit, PASS (2006) instruments the storage layer, W3C PROV standardizes the model &mdash; all outside the shell, which is the layer that glues the tools together.</p>
           </div>
           <div class="cat-card">
             <h4>Aspect-oriented advice on any command or function</h4>
@@ -361,8 +355,6 @@
         </div>
 
         <p style="font-size: 12px; color: var(--text-muted); margin-top: 0.8rem;">
-          Full enumeration + suggested attribution wording in
-          <a href="https://github.com/MenkeTechnologies/zshrs/blob/main/CREATORS.md"><code>CREATORS.md</code></a>.
           Op-by-op detail in <a href="daemon-report.html"><code>daemon-report.html</code></a>.
           Port-coverage report in <a href="report.html"><code>report.html</code></a>.
         </p>
@@ -437,7 +429,7 @@
         </div>
 
         <h3>Source-tree layout: ported / extensions / recorder split</h3>
-        <p>The runtime crate is physically split so port code and original code can never be confused. Bots, contributors, and humans all read <a href="https://github.com/MenkeTechnologies/zshrs/blob/main/docs/PORT.md" style="color:var(--cyan);"><code>docs/PORT.md</code></a> before writing a single line of code; <code>tests/port_purity.rs</code> mechanically enforces the rules in CI.</p>
+        <p>The runtime crate is physically split so port code and original code can never be confused. <code>tests/port_purity.rs</code> mechanically enforces the rules in CI.</p>
         <ul>
           <li><strong><code>src/ported/</code> &mdash; 106 files, FROZEN.</strong> Strict 1:1 port. Every <code>.rs</code> mirrors a real <code>src/zsh/Src/&lt;x&gt;.c</code> file (same stem, same relative subpath). Every top-level <code>fn</code> carries a <code>/// Port of &lt;cname&gt;() from Src/&lt;file&gt;.c:NNNN</code> doc-comment. New file creation is banned; new fn names that don't exist in upstream zsh C source are banned. The freeze closes both drift vectors: bots invent helper names ("shell_quote", "find_in_path") and bots create fresh files to drop helpers in. Both blocked.</li>
           <li><strong><code>src/extensions/</code> &mdash; 130 files.</strong> The non-port directory. Features zsh C demonstrably does <em>not</em> have: AOT (<code>aot.rs</code>, <code>compile_zsh.rs</code>), autoload/plugin/script caches, fish-style autosuggest/abbrev/highlight, the native powerlevel10k engine (<code>p10k/</code>, 21 files), persistent worker pool, arith JIT, AST s-exp dump, ZWC byte-code helpers, recorder hooks, daemon presence, structured logging, ZLE keymaps/widgets, ext builtins, regex module, config, overlay snapshot + canonical apply, subscript/fds/hist extensions. <code>port_purity</code> exempts this directory from the 1:1 file-existence rule on the basis that no C ancestor exists.</li>
