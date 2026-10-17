@@ -924,6 +924,9 @@ const PORTABLE_CORPUS: &[&str] = &[
     "cat <<EOF2; printf after\\\\n\nbody\nEOF2",
     "while read -r l; do printf '<%s>' \"$l\"; done <<EOF2; printf '\\n'\na\nb\nEOF2",
     "cat <<A <<B\nfirst\nA\nsecond\nB",
+    // A command substitution's output is split on IFS and nothing else: a
+    // `$name` in it is never expanded again.
+    "x=1; printf '%s\\n' $(echo '$x') \"$(echo '$x')\" $(echo \\$x)",
 ];
 
 /// Extended-feature corpus — indexed arrays, `[[`, `(( ))`, brace expansion,
@@ -2070,6 +2073,15 @@ const BASH_ONLY_CORPUS: &[&str] = &[
     // `shift 1 2` ends a non-interactive shell (1); a subshell lists the
     // parent's traps, EXIT included, and an ignored signal stays listed.
     "trap 'echo e' EXIT; (trap); trap 'echo u' USR1; (trap); trap | grep -c SIG; trap '' INT; trap | grep -c INT; set -- a b; shift 1 2 2>/dev/null; echo after",
+    // `! !` double-negates; blanks around a `test` integer are fine; `hash -d`
+    // wants a name (1); a `-X` word after `kill -l` is a signal spec and lists
+    // everything (`-L` is the same table); `kill` is 0 when any pid got the
+    // signal; `command` runs builtins; the declaration commands are builtins;
+    // a multi-digit fd before `>`; a tilde prefix ends at `:`.
+    "! ! true; echo $?; test '1 ' -eq 1; echo $?; hash -d 2>/dev/null; echo $?; kill -l -1 | head -c 9; echo; kill -L | head -c 9; echo; kill -l ' 1'; kill -0 $$ 999999 2>/dev/null; echo $?; command : ; echo $?; command export x=1; echo $x; type local | head -c 30; echo; echo a 10>/dev/null; cd /; echo ~:x | head -c 3; echo",
+    // A pipeline stage lists the parent's traps until its own `trap` changes
+    // them; a signal name may be spelled `sigusr1`; `command trap` is trap.
+    "trap 'echo x' INT; (trap - INT; trap) | wc -l | tr -d ' '; trap '' INT; (trap 'echo x' INT; trap) | head -1; trap 'echo t' sigusr1; trap | grep -c USR1; trap 'echo e' EXIT; trap | grep -c EXIT; command trap - EXIT; echo end",
 ];
 
 /// bash + ksh corpus — constructs the two share but zsh does not, so they run
@@ -2257,6 +2269,12 @@ const KSH_ONLY_CORPUS: &[&str] = &[
     "unset 2>/dev/null; echo no",
     // A backslash-escaped `.` in a `=~` regex is literal; a quoted span is not.
     "[[ abc =~ a\\.c ]]; echo rc=$?; [[ a.c =~ a\\.c ]]; echo rc=$?; [[ abc =~ \"a.c\" ]]; echo rc=$?",
+    // `! !` double-negates; blanks around a `test` integer; `hash -d` is an
+    // unknown option (2); `kill -l -1` lists everything, `kill -l -x` is a
+    // usage error (2); `alias -p` is the reusable form; a tilde prefix ends at
+    // `:`; `command` runs builtins; `sigusr1` is a signal name; `10>` is the
+    // word `10`.
+    "! ! true; echo $?; test '1 ' -eq 1; echo $?; hash -d 2>/dev/null; echo $?; kill -l -1 | head -1; kill -l -x 2>/dev/null; echo $?; alias x=y; alias -p; cd /; echo ~:x | head -c 3; echo; command : ; echo $?; trap 'echo t' sigusr1; echo $?; echo a 10>/dev/null",
 ];
 
 /// Scripts every REAL Bourne-family shell (bash, ksh, sh, dash, mksh, ash) runs
@@ -2388,6 +2406,11 @@ const PDKSH_CORPUS: &[&str] = &[
     // function (1); a bare `export` lists names; an ignored signal stays
     // listed in a subshell.
     "kill -l TERM 2>/dev/null; echo rc=$?; [ '' -eq 0 ]; echo $?; f() { local x=5; unset x; echo \"[$x]\"; }; x=0; f; echo $x; g() { shift; echo \"[$@]\"; }; g 1; g 2>/dev/null; echo rc=$?; zz=1; export zz; export | grep -c '^zz$'; trap '' INT; (trap); trap | grep -c INT",
+    // `! !` double-negates; blanks around a `test` integer; `kill -l -1` is an
+    // unknown option (1); `alias -p` is the reusable form; `${#x}` counts
+    // bytes; `sigusr1` is a signal name; `command` runs builtins; `10>` is the
+    // word `10`; `${@:2}` is a fatal bad substitution (1).
+    "! ! true; echo $?; test '1 ' -eq 1; echo $?; kill -l -1 2>/dev/null; echo $?; alias x=y; alias -p | tail -1; x=héllo; echo ${#x}; trap 'echo t' sigusr1; echo $?; command : ; echo $?; echo a 10>/dev/null; set -- a b c; echo ${@:2} 2>/dev/null; echo after",
 ];
 
 /// dash and ash: `$@` counts as set with no positionals, so the quoted `-`
@@ -2445,6 +2468,16 @@ const DASH_ONLY_CORPUS: &[&str] = &[
     // `set` letters map to dash's option names (`-E` emacs, `-f` noglob);
     // `interactive`/`debug`/`nolog` are accepted; `shift 1 2` shifts by 1.
     "set -E; set -o interactive; set -o debug; set -o nolog; echo rc=$?; set -f; echo /etc/pass*; set +f; echo /etc/pass*; set -- a b c; shift 1 2; echo $#",
+    // Blanks around a `test` integer; `hash -d` is an illegal option (2);
+    // `kill -l -1` is an illegal option (2), `kill -l ' 1'` is HUP; `${#x}`
+    // counts bytes; `builtin` is a command not found (127) with or without a
+    // redirection; `usr1` is a signal name but `sigusr1` is not; `command`
+    // runs builtins; `10>` is the word `10`.
+    "test '1 ' -eq 1; echo $?; hash -d 2>/dev/null; echo $?; hash -d ls 2>/dev/null; echo $?; kill -l -1 2>/dev/null; echo $?; kill -l ' 1'; x=héllo; echo ${#x}; builtin 2>/dev/null; echo rc=$?; builtin >/dev/null 2>&1; echo rc=$?; trap 'echo t' usr1; echo $?; trap 'echo t' sigusr1 2>/dev/null; echo $?; command : ; echo $?; kill -0 $$ 999999 2>/dev/null; echo $?; echo a 10>/dev/null",
+    // `>&` takes a single digit: `1>&10` is a syntax error that ends the shell (2).
+    "echo a 1>&10; echo no",
+    // No array subscripts: `${b[@]}` is a fatal bad substitution (2).
+    "echo first; echo ${b[@]}; echo no",
 ];
 
 /// zsh-only `type -t` / `read` flags that are bash letters: zsh answers
@@ -2505,6 +2538,12 @@ const SH_BASH_CORPUS: &[&str] = &[
     // Bare `type` / `unset` are no-ops; `command -v` succeeds when any name is
     // found; an unclosed `[` stays literal; no `nameref`.
     "type; echo rc=$?; unset; echo rc=$?; command -v echo nosuch; echo rc=$?; cd /; echo b[in; nameref r=x 2>/dev/null; echo rc=$?",
+    // Blanks around a `test` integer; a `-X` word after `kill -l` is a signal
+    // spec and the names are listed on one line; `kill` is 0 when any pid got
+    // the signal; `alias -p` adds the prefix; a tilde prefix ends at `:`; a
+    // multi-digit fd before `>`; `command` runs builtins; the declaration
+    // commands are builtins.
+    "test '1 ' -eq 1; echo $?; kill -l -x | head -c 7; echo; kill -0 $$ 999999 2>/dev/null; echo $?; alias x=y; alias -p; cd /; echo ~:x | head -c 3; echo; echo a 10>/dev/null; command : ; echo $?; type local | head -c 30; echo",
 ];
 
 /// True when `path` is a bash build (`$BASH_VERSION` is set when it runs).

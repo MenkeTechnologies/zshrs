@@ -1253,6 +1253,16 @@ fn par_sublist() -> Option<ZshSublist> {
     } else if tok() == BANG_TOK {
         flags.not = true;
         zshlex();
+        // !!! DROP-IN GATE (no C counterpart) !!! bash, ksh93 and mksh take a
+        // repeated `!` as another negation (`! ! true` is 0); zsh, dash and
+        // /bin/sh (bash 3.2) reject it.
+        while tok() == BANG_TOK
+            && ((crate::dash_mode::bash_mode() && !crate::dash_mode::sh_mode())
+                || crate::dash_mode::korn_mode())
+        {
+            flags.not = !flags.not;
+            zshlex();
+        }
     }
 
     // c:882-883 (par_sublist2) — `if (!par_pline(cmplx) && !f) return -1;`:
@@ -9890,6 +9900,19 @@ fn par_redir_with_id(idstring: Option<&str>) -> Option<ZshRedir> {
             return None;
         }
     };
+
+    // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash's `fixredir` takes a
+    // SINGLE digit after `>&` / `<&` (or `-`): `1>&10` is the parse-time
+    // "Syntax error: Bad fd number", which ends a non-interactive shell (2).
+    if crate::dash_mode::dash_faithful()
+        && matches!(rtype, REDIR_MERGEIN | REDIR_MERGEOUT)
+        && name.len() > 1
+        && name.bytes().all(|b| b.is_ascii_digit())
+    {
+        crate::ported::utils::zerr("Syntax error: Bad fd number");
+        set_tok(LEXERR);
+        return None;
+    }
 
     // Heredoc terminator capture. C parse.c:2254-2317 par_redir builds
     // a `struct heredocs` entry here for REDIR_HEREDOC[DASH]. zshrs

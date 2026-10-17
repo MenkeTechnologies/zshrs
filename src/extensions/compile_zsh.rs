@@ -8878,7 +8878,11 @@ impl ZshCompiler {
             let take_fast = (!is_star || !dq_for_splice)
                 && !(has_quote_markers && !word_is_single_dq_span(s));
             if take_fast {
-                if let Some(name) = array_splice_ref(&untoked) {
+                // dash has no array subscripts: leave `${name[@]}` / `${name[*]}` to the
+                // runtime paramsubst, which rejects it there ("bad substitution", 2).
+                if let Some(name) =
+                    array_splice_ref(&untoked).filter(|_| !crate::dash_mode::dash_strict())
+                {
                     let idx = self.builder.add_constant(Value::str(name));
                     self.builder.emit(Op::LoadConst(idx), 0);
                     // c:Src/subst.c:4226 — `if (isarr && ssub) { val =

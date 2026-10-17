@@ -3286,6 +3286,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if args.is_empty() && crate::dash_mode::bash_mode() {
             return Value::Status(0);
         }
+        // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash has no `builtin`: the
+        // bare word is a command not found (127), like the prefixed forms.
+        if args.is_empty() && crate::dash_mode::dash_faithful() {
+            crate::ported::utils::zwarnnam("builtin", "not found");
+            return Value::Status(127);
+        }
         // c:Src/exec.c:3760-3763 — `if (errflag) { lastval = 1; goto err; }`
         // after argument expansion: a bad glob qualifier or pattern in the
         // words (`builtin print x(a)` "number expected") skips the builtin
@@ -3531,7 +3537,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // dispatch.is_builtin would be true; honour it.
         let n = name.clone();
         let r = rest.to_vec();
-        if dispatch.is_builtin
+        // !!! DROP-IN GATE (no C counterpart) !!! bash and every POSIX shell run a
+        // builtin under `command` (`command :`, `command export x=1`); zsh does so
+        // only with POSIX_BUILTINS, which the bash drop-in does not set.
+        let command_runs_builtins = dispatch.is_builtin
+            || crate::dash_mode::bash_mode()
+            || crate::dash_mode::posix_faithful();
+        if command_runs_builtins
             && crate::ported::builtin::BUILTINS
                 .iter()
                 .any(|b| b.node.nam == n.as_str())
@@ -4742,6 +4754,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // only in sigtrapped and the `trap` listing now reads it
                     // (c:Src/builtin.c:7358-7361); clearing just the body left
                     // `trap | grep -c EXIT` reporting the stale flag.
+                    //
+                    // !!! DROP-IN GATE (no C counterpart) !!! bash, ksh93, mksh,
+                    // dash and /bin/sh reset EVERY trap in a forked pipeline
+                    // stage (`trap 'echo t' USR1; trap | cat` prints nothing
+                    // there); bash alone still LISTS the parent's traps, EXIT
+                    // included, through the snapshot the helper takes — which
+                    // is why it runs before the EXIT drop below.
+                    if crate::dash_mode::bash_mode() || crate::dash_mode::posix_faithful() {
+                        entersubsh_reset_traps();
+                    }
                     if let Ok(mut tt) = crate::ported::builtin::traps_table().lock() {
                         tt.remove("EXIT");
                     }
@@ -7548,8 +7570,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // gating, quote-aware parsing, and empty-field handling).
     vm.register_builtin(BUILTIN_WORD_SPLIT, |vm, _argc| {
         let s = vm.pop().to_str();
-        let (_joined, parts, _isarr, _flags) =
-            crate::ported::subst::multsub(&s, crate::ported::zsh_h::PREFORK_SPLIT);
+        // c:Src/exec.c readoutput — the captured output is split on IFS and
+        // nothing else: no parameter, command or arithmetic substitution runs
+        // over it again. This used to go through `multsub`, which re-expanded
+        // the TEXT, so `echo $(echo '$x')` printed `$x`'s value (and `$(cat
+        // file)` expanded whatever the file said). `sepsplit(NULL)` is C's
+        // spacesplit with the IFS-whitespace rules; `allownull` keeps the empty
+        // fields between two non-blank separators (`IFS=:; $(echo a::b)` is
+        // three words), as readoutput's own split does.
+        let parts: Vec<String> = crate::ported::utils::sepsplit(&s, None, true);
         // Empty single-string special case → empty Array (drop empty arg).
         // The Array is a carrier for "no argv word", not an array-SHAPED
         // result: a single empty field came from an empty SCALAR (c:3922-3923

@@ -3297,6 +3297,11 @@ pub fn printaliasnode(hn: &alias, printflags: i32) {
         } else {
             crate::extensions::emulation_startup::single_quote(&hn.text)
         };
+        // !!! SH-MODE (no C counterpart) !!! `alias -p` (PRINT_LIST) carries the
+        // `alias ` prefix in /bin/sh, as `-L` does in zsh.
+        if (printflags & PRINT_LIST) != 0 {
+            print!("alias ");
+        }
         println!("{}={}", hn.node.nam, quoted);
         return;
     }

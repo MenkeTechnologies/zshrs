@@ -446,9 +446,12 @@ pub fn execbuiltin(
         if crate::dash_mode::dash_strict() && name == "echo" {
             optstr_bytes = b"n".to_vec();
         }
-        // !!! BASH-MODE (no C counterpart) !!! bash's `alias -p` lists the aliases
-        // exactly as a bare `alias` does; zsh has no `-p`.
-        if crate::dash_mode::bash_mode() && name == "alias" {
+        // !!! DROP-IN GATE (no C counterpart) !!! bash's `alias -p` lists the aliases
+        // exactly as a bare `alias` does; ksh93, mksh and /bin/sh list them in the
+        // reusable `alias NAME=value` form (zsh's `-L`). zsh has no `-p`.
+        if (crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode() || crate::dash_mode::sh_mode())
+            && name == "alias"
+        {
             optstr_bytes.push(b'p');
         }
         // !!! KSH93-ONLY (no C counterpart) !!! ksh93u+m's `echo` takes `-n` and `-e`
@@ -12705,6 +12708,14 @@ pub fn bin_hash(
     if crate::dash_mode::bash_mode() {
         return crate::extensions::emulation_output::bash_hash(argv, ops);
     }
+    // !!! KSH93 GATE (no C counterpart) !!! ksh93's `hash` takes `-r` only; each of
+    // zsh's other letters is an "unknown option" usage error (2).
+    if crate::dash_mode::ksh93_mode() {
+        if let Some(c) = [b'd', b'f', b'm', b'v', b'L'].into_iter().find(|&c| OPT_ISSET(ops, c)) {
+            zwarnnam(name, &format!("-{}: unknown option", c as char));
+            return 2;
+        }
+    }
     let mut returnval = 0i32; // c:4239
     let mut printflags = 0i32; // c:4240
     let dir_mode = OPT_ISSET(ops, b'd'); // c:4242
@@ -13374,7 +13385,10 @@ pub fn bin_alias(
     }
 
     // c:4486-4490 — printflags from -L / + suffix.
-    if OPT_ISSET(ops, b'L') {
+    // !!! KORN/SH GATE (no C counterpart) !!! ksh93, mksh and /bin/sh spell zsh's
+    // `-L` listing as `alias -p`; bash's `-p` is the plain listing (which already
+    // carries the `alias ` prefix there).
+    if OPT_ISSET(ops, b'L') || (OPT_ISSET(ops, b'p') && !crate::dash_mode::bash_mode()) {
         // c:4486
         printflags |= PRINT_LIST; // c:4487
     } else if OPT_PLUS(ops, b'g')
@@ -19155,6 +19169,16 @@ pub fn bin_trap(
             if let Ok(mut t) = traps_table().lock() {
                 t.remove(&key);
             }
+            // !!! BASH-MODE GATE (no C counterpart) !!! a bash subshell lists the
+            // parent's traps until its own `trap` changes them: keep the snapshot
+            // in step (`trap 'echo x' INT; (trap - INT; trap)` lists nothing).
+            if crate::dash_mode::bash_mode() {
+                if let Ok(mut p) = BASH_SUBSH_PARENT_TRAPS.lock() {
+                    if let Some(p) = p.as_mut() {
+                        p.remove(&key);
+                    }
+                }
+            }
             // c:Src/signals.c:836-843 — ZSIG_FUNC arm.
             if let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().write() {
                 tab.remove(&format!("TRAP{}", key));
@@ -19215,7 +19239,21 @@ pub fn bin_trap(
     let mut trap_install_error = 0i32;
     for sigarg in &argv {
         // c:7421
-        let sig = getsigidx(sigarg);
+        // !!! DROP-IN GATE (no C counterpart) !!! bash, ksh93, mksh and /bin/sh take a
+        // signal name in any case, with or without the `SIG` prefix (`sigusr1`,
+        // `usr1`); dash takes any case but no prefix.
+        let spelled: String = if crate::dash_mode::bash_mode()
+            || crate::dash_mode::korn_mode()
+            || crate::dash_mode::sh_mode()
+        {
+            let upper = sigarg.to_ascii_uppercase();
+            upper.strip_prefix("SIG").map(str::to_string).unwrap_or(upper)
+        } else if crate::dash_mode::dash_faithful() {
+            sigarg.to_ascii_uppercase()
+        } else {
+            sigarg.clone()
+        };
+        let sig = getsigidx(&spelled);
         // !!! BASH/KORN GATE (no C counterpart) !!! `ZERR` is zsh's spelling of ERR;
         // bash, ksh93 and mksh do not know it ("invalid signal specification").
         let korn_bash_zerr = (crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode())
@@ -19388,6 +19426,15 @@ pub fn bin_trap(
         }
         if let Ok(mut t) = traps_table().lock() {
             t.insert(canonical.clone(), arg.clone()); // c:7448 (effective)
+        }
+        // See the `trap -` arm: a bash subshell's own `trap` updates the listing
+        // snapshot it inherited (`trap '' INT; (trap 'echo x' INT; trap)`).
+        if crate::dash_mode::bash_mode() {
+            if let Ok(mut p) = BASH_SUBSH_PARENT_TRAPS.lock() {
+                if let Some(p) = p.as_mut() {
+                    p.insert(canonical.clone(), arg.clone());
+                }
+            }
         }
         // c:Src/signals.c::settrap — when a string-form trap
         // replaces an existing trap, settrap calls unsettrap which

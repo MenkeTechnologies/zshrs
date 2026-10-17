@@ -313,7 +313,9 @@ pub fn note_error_message(msg: &str) {
         READONLY_VIOLATION.store(true, Ordering::Relaxed);
     }
     // mksh ends only the FUNCTION on a read-only assignment made inside one; the
-    // caller goes on with status 2 (ksh93, like zsh, ends the script).
+    // caller goes on with status 2. ksh93 ends the script like zsh — except when
+    // the call carries a redirection (`f 2>/dev/null` goes on with 1), a shape
+    // this hook cannot see, so the ksh93 line keeps zsh's fatal exit.
     if msg.starts_with("read-only variable: ") {
         note_korn_fn_abort(2);
     }
@@ -427,6 +429,9 @@ pub fn dash_builtin_optstr(name: &str) -> Option<&'static [u8]> {
         "type" => Some(b""),
         // dash's printf has no options at all (`printf -v v …` is "Illegal option -v").
         "printf" => Some(b""),
+        // dash's hash knows `-r` only; zsh's `-d` (named directories) and the
+        // rest are "Illegal option" (2).
+        "hash" => Some(b"r"),
         _ => None,
     }
 }
@@ -3354,6 +3359,13 @@ pub fn reswd_in_emulation(name: &str) -> bool {
     } else if bash_mode() || korn_mode() || sh_mode() {
         !matches!(name, "repeat" | "foreach" | "nocorrect" | "end" | "always")
             && !(korn_mode() && name == "coproc")
+            // bash's declaration commands are builtins, not keywords (`type local`
+            // is "local is a shell builtin").
+            && !((bash_mode() || sh_mode())
+                && matches!(
+                    name,
+                    "declare" | "export" | "float" | "integer" | "local" | "readonly" | "typeset"
+                ))
     } else {
         true
     }
@@ -3545,7 +3557,9 @@ fn dash_getop(s: &str) -> Option<&'static DashOp> {
 /// string (overflow saturates, as strtoimax does); anything else is
 /// "Illegal number".
 fn dash_getn(s: &str) -> Result<i64, String> {
-    let t = s.trim_start_matches(|c: char| c.is_ascii_whitespace());
+    // dash's `atomax` skips leading blanks and `number()` tolerates trailing ones
+    // (`[ '1 ' -eq 1 ]` is true).
+    let t = s.trim_matches(|c: char| c.is_ascii_whitespace());
     let (neg, digits) = match t.as_bytes().first() {
         Some(b'-') => (true, &t[1..]),
         Some(b'+') => (false, &t[1..]),
@@ -3771,6 +3785,9 @@ fn dash_mtime(path: &str) -> Option<(i64, i64)> {
 
 /// test.c `newerf`: a missing FIRST file is never newer, a missing second is.
 fn dash_newerf(f1: &str, f2: &str) -> bool {
+    // dash 0.5.13 (Homebrew, the matrix reference): a missing SECOND file makes
+    // the first newer. The older macOS /bin/dash wants both files to exist — a
+    // version split, resolved the same way as `type -a` (newer dash wins).
     let Some(a) = dash_mtime(f1) else { return false };
     dash_mtime(f2).map_or(true, |b| a > b)
 }

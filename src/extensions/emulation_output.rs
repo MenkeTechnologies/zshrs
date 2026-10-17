@@ -146,7 +146,10 @@ pub fn kill_list(sigs: &[(i32, String)]) -> Option<String> {
         // line, a slot its mksignames.c has no name for printed as the
         // number. That table knows no STKFLT, and glibc keeps signals 32
         // and 33 for itself, so Linux shows `16`, `32` and `33`.
-        Personality::Dash | Personality::Sh => {
+        // /bin/sh (bash 3.2) prints the bare names on one line, separated by
+        // blanks — zsh's own shape, so the caller's default rendering is right.
+        Personality::Sh => return None,
+        Personality::Dash => {
             out.push_str("0\n");
             for slot in 1..nsig {
                 match sigs.iter().find(|(num, name)| *num == slot && *name != "STKFLT") {
@@ -347,6 +350,11 @@ pub fn bash_hash(argv: &[String], ops: &options) -> i32 {
         return 0;
     }
     if OPT_ISSET(ops, b'd') {
+        // bash: `hash -d` with no name is "-d: option requires an argument" (1).
+        if argv.is_empty() {
+            zwarnnam("hash", "-d: option requires an argument");
+            return 1;
+        }
         let mut rc = 0;
         for n in argv {
             let gone = cmdnamtab_lock().write().ok().map_or(false, |mut t| t.remove(n).is_some());

@@ -1483,13 +1483,29 @@ fn gettok() -> lextok {
     // ASCII-only: `c as u8` on a multibyte char truncates into the digit range
     // (U+4E30 → 0x30 = '0'), which would misread a CJK word as a redirection fd.
     if c.is_ascii() && crate::ztype_h::idigit(c as u8) {
-        let d = hgetc();
+        // !!! BASH-MODE GATE (no C counterpart) !!! bash and /bin/sh read a
+        // MULTI-digit fd before a redirection operator (`echo a 10>f` redirects
+        // fd 10); zsh, ksh93, mksh and dash take one digit, so there `10>f` is
+        // the word `10` plus `>f`. The extra digits are pushed back, last first,
+        // when no operator follows.
+        let mut extra: Vec<char> = Vec::new();
+        let mut d = hgetc();
+        if crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode() {
+            while let Some(x) = d.filter(|x| x.is_ascii_digit()) {
+                extra.push(x);
+                d = hgetc();
+            }
+        }
+        let mut fdval = (c as u8 - b'0') as i32;
+        for &x in &extra {
+            fdval = fdval.saturating_mul(10).saturating_add((x as u8 - b'0') as i32);
+        }
         match d {
             Some('&') => {
                 let e = hgetc();
                 if e == Some('>') {
                     // c:653-657 — `N&>` shape detected.
-                    peekfd = (c as u8 - b'0') as i32;
+                    peekfd = fdval;
                     hungetc('>');
                     c = '&';
                 } else {
@@ -1498,18 +1514,28 @@ fn gettok() -> lextok {
                         hungetc(e);
                     }
                     hungetc('&');
+                    for &x in extra.iter().rev() {
+                        hungetc(x);
+                    }
                 }
             }
             Some('>') | Some('<') => {
                 // c:662-664 — `N>` or `N<` shape detected.
-                peekfd = (c as u8 - b'0') as i32;
+                peekfd = fdval;
                 c = d.unwrap();
             }
             Some(d) => {
                 // c:665-668 — not a redir prefix, push back.
                 hungetc(d);
+                for &x in extra.iter().rev() {
+                    hungetc(x);
+                }
             }
-            None => {}
+            None => {
+                for &x in extra.iter().rev() {
+                    hungetc(x);
+                }
+            }
         }
         LEX_LEXSTOP.set(false);
     }

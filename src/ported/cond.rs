@@ -360,6 +360,13 @@ pub fn evalcond(state: &mut estate, fromtest: Option<&str>) -> i32 {
                         }
                     }
                 } else {
+                    // !!! DROP-IN GATE (no C counterpart) !!! bash, ksh93, dash and
+                    // /bin/sh allow blanks around an integer operand (`[ '1 ' -eq 1 ]`
+                    // is true); zsh's zstrtol stops at the blank and errors.
+                    if crate::dash_mode::bash_mode() || crate::dash_mode::posix_faithful() {
+                        left = left.trim().to_string();
+                        right = right.trim().to_string();
+                    }
                     let (l1, eptr) = zstrtol(&left, 10);
                     let mut err: &str = &left;
                     let mut l2: i64 = 0;

@@ -4371,6 +4371,9 @@ pub fn bin_kill(
     let mut returnval: i32 = 0; // c:2775
     let mut got_sig = false; // c:2780
     let mut idx = 0usize;
+    // !!! BASH-MODE GATE (no C counterpart) !!! bash answers 0 when ANY pid was
+    // signalled (`kill -0 $$ 999999`); zsh, ksh93, mksh and dash count the failures.
+    let mut any_ok = false;
 
     // c:2962-2989 — the `-s NAME` / `-NAME` lookup, written once inline
     // in C; the port splits those two branches, so both call this:
@@ -4429,11 +4432,43 @@ pub fn bin_kill(
         if body == "l" {
             // c:2818
             idx += 1;
+            // !!! DROP-IN GATE (no C counterpart) !!! a `-X` word after `-l`: bash and
+            // /bin/sh read it as the signal spec of `kill -X -l` and list everything;
+            // ksh93 does the same for a number or a signal name and rejects any other
+            // letter (2); mksh (1) and dash (2) reject it outright.
+            if idx < argv.len() && argv[idx].starts_with('-') && argv[idx].len() > 1 {
+                let flag = argv[idx].clone();
+                let fbody = &flag[1..];
+                if crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode() {
+                    idx += 1;
+                } else if crate::dash_mode::ksh93_mode() {
+                    if fbody.bytes().all(|b| b.is_ascii_digit()) || kill_signame_lookup(fbody).is_some() {
+                        idx += 1;
+                    } else {
+                        zwarnnam(nam, &format!("{}: unknown option", flag));
+                        return 2;
+                    }
+                } else if crate::dash_mode::pdksh_family() {
+                    zwarnnam(nam, &format!("{}: unknown option", flag));
+                    return 1;
+                } else if crate::dash_mode::dash_faithful() {
+                    zwarnnam(nam, &format!("Illegal option -{}", &fbody[..1]));
+                    return 2;
+                }
+            }
             if idx < argv.len() {
                 // c:2819
                 // c:2820-2868 — per-arg lookup: numeric → name; name → number.
                 while idx < argv.len() {
-                    let token = &argv[idx];
+                    // bash, /bin/sh and dash accept blanks around a number (`kill -l ' 1'`).
+                    let token: &str = if crate::dash_mode::bash_mode()
+                        || crate::dash_mode::sh_mode()
+                        || crate::dash_mode::dash_faithful()
+                    {
+                        argv[idx].trim()
+                    } else {
+                        argv[idx].as_str()
+                    };
                     idx += 1;
                     // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash's `kill -l` takes
                     // signal NUMBERS only; a name is "Illegal number" (status 2).
@@ -4549,6 +4584,15 @@ pub fn bin_kill(
         // c:2907-2935 — with argument "-L" list signals with their numbers
         // in a table.
         if body == "L" {
+            // !!! BASH-MODE GATE (no C counterpart) !!! bash's `kill -L` is the same
+            // numbered five-a-row table as its `kill -l`.
+            if crate::dash_mode::bash_mode() {
+                let sigs = crate::extensions::emulation_output::kill_l_signals();
+                if let Some(rendered) = crate::extensions::emulation_output::kill_list(&sigs) {
+                    print!("{rendered}");
+                    return 0;
+                }
+            }
             use crate::ported::signals_h::SIGCOUNT;
             // c:2909-2913 — field width from the highest signal number.
             #[cfg(target_os = "linux")]
@@ -4746,6 +4790,9 @@ pub fn bin_kill(
             match num.parse::<i32>() {
                 Ok(pgid) => {
                     let r = unsafe { libc::killpg(pgid, sig) }; // c:3032
+                    if r == 0 {
+                        any_ok = true;
+                    }
                     if r != 0 {
                         // c:Src/jobs.c:2994/3022 — `zwarnnam("kill",
                         // "kill %s failed: %e", *argv, errno)`. `%e`
@@ -4815,6 +4862,7 @@ pub fn bin_kill(
                 returnval += 1; // c:2995
                 continue;
             }
+            any_ok = true;
             // c:3001-3010 — if stopped + non-stopping signal,
             // SIGCONT after to wake the job so it processes `sig`.
             let stopped = JOBTAB
@@ -4839,6 +4887,9 @@ pub fn bin_kill(
                 // c:3024 PID
                 Ok(pid) => {
                     let r = unsafe { libc::kill(pid, sig) }; // c:3025
+                    if r == 0 {
+                        any_ok = true;
+                    }
                     if r != 0 {
                         // c:Src/jobs.c:2994/3022 — `zwarnnam("kill",
                         // "kill %s failed: %e", *argv, errno)`. `%e`
@@ -4882,6 +4933,9 @@ pub fn bin_kill(
                 }
             }
         }
+    }
+    if any_ok && (crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode()) {
+        return 0;
     }
     // c:3067 — `return returnval < 126 ? returnval : 1;`. The accumulated
     // failure count IS the exit status, clamped so it can never collide

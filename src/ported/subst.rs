@@ -2389,8 +2389,15 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
         // The canonical Inpar value is `\u{e188}` (Src/zsh.h:163 `Inpar=0x88`).
         // Effect: `~(xxx` (legitimate Inpar after tilde) wouldn't isend,
         // while `~$xxx` (Stringg, which should NOT isend) would.
+        // !!! DROP-IN GATE (no C counterpart) !!! bash, ksh93 and /bin/sh end a tilde
+        // prefix at `:` in EVERY word (`echo ~:x` is `$HOME:x`); zsh, mksh and dash
+        // only inside an assignment.
+        let colon_ends = assign
+            || crate::dash_mode::bash_mode()
+            || crate::dash_mode::ksh93_mode()
+            || crate::dash_mode::sh_mode();
         let isend =
-            |c: char| -> bool { c == '\0' || c == '/' || c == Inpar || (assign && c == ':') };
+            |c: char| -> bool { c == '\0' || c == '/' || c == Inpar || (colon_ends && c == ':') };
 
         // `~/...` and `~` (isend(str[1])) — bare HOME
         if isend(nx) {
@@ -14722,11 +14729,17 @@ pub fn paramsubst(
                     // the count from characters to display CELLS, so
                     // `${(m)#日本語}` returns 6 (3 wide chars × 2 cells),
                     // not 3. width != 0 ⇔ multi_width set.
-                    crate::ported::utils::mb_metastrlenend(
-                        &raw_value_for_len,
-                        multi_width as i32,
-                        raw_value_for_len.len(),
-                    )
+                    // !!! DROP-IN GATE (no C counterpart) !!! dash and a non-interactive
+                    // mksh count BYTES (`x=héllo; ${#x}` is 6).
+                    if crate::dash_mode::dash_faithful() || crate::dash_mode::pdksh_family() {
+                        crate::ported::utils::unmetafy_str(&raw_value_for_len).len()
+                    } else {
+                        crate::ported::utils::mb_metastrlenend(
+                            &raw_value_for_len,
+                            multi_width as i32,
+                            raw_value_for_len.len(),
+                        )
+                    }
                 } else {
                     // c:3869 word count
                     let multi = if getlen > 3 { 1 } else { 0 };
@@ -22527,6 +22540,14 @@ pub fn paramsubst(
                                                            // `exec::pparams()` — so the names that resolve to the
                                                            // pparams vector are exactly the three IPDEF9 rows
                                                            // that share `&pparams` (`Src/params.c:385,386,423`).
+                        // !!! PDKSH GATE (no C counterpart) !!! mksh has no substring
+                        // form for the positionals: `${@:2}` / `${*:1:2}` is a fatal
+                        // "bad substitution" (1), spelled with a blank after the colon.
+                        if crate::dash_mode::pdksh_family() && matches!(resolved_name, "@" | "*") {
+                            zerr(&format!("${{{}: {}}}: bad substitution", var_name, core_slice));
+                            errflag_set_error();
+                            return (String::new(), 0, Vec::new());
+                        }
                         if matches!(resolved_name, "@" | "*" | "argv") {
                             let s0 = vars_get("0").unwrap_or_default(); // c:3702 argzero
                             arr.insert(0, s0); // c:3668-3669,3681-3682,3701-3703

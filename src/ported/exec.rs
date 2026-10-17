@@ -1372,6 +1372,14 @@ pub fn execcmd_compile_head(args: &[String], type_: u32) -> execcmd_dispatch {
             if !typeset_hit && isset(POSIXBUILTINS) && (cflags & BINF_EXEC) != 0 {
                 break; // c:3103
             }
+            // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash has no `builtin`
+            // modifier: the word is an ordinary command name, so a bare `builtin`
+            // (with or without redirections) and `builtin echo x` alike are
+            // "builtin: not found" (127) — the walk stops here and the command
+            // search takes the word as the head.
+            if crate::dash_mode::dash_faithful() && cmdarg == "builtin" {
+                break;
+            }
 
             // c:3050-3052 — `if (!(cflags & (BINF_BUILTIN |
             // BINF_COMMAND)) && shfunctab->getnode(...))` — shell
@@ -4931,6 +4939,21 @@ pub fn entersubsh(flags: i32, retp: Option<&mut entersubsh_ret>) {
     // c:1088-1092 — reset traps unless KEEPTRAP.
     if (flags & esub::KEEPTRAP) == 0 {
         // c:1088
+        // !!! BASH-MODE GATE (no C counterpart) !!! a bash subshell lists the
+        // parent's traps (`trap | cat`): snapshot them before the reset. This is
+        // the forked path (pipeline legs, `&`, process substitution); the
+        // in-process `( … )` / `$( … )` path takes the same snapshot in
+        // `fusevm_bridge::entersubsh_reset_traps`.
+        if crate::dash_mode::bash_mode() {
+            if let (Ok(tbl), Ok(mut p)) = (
+                crate::ported::builtin::traps_table().lock(),
+                crate::ported::builtin::BASH_SUBSH_PARENT_TRAPS.lock(),
+            ) {
+                if p.is_none() {
+                    *p = Some(tbl.clone());
+                }
+            }
+        }
         for sig in 0..=SIGCOUNT {
             // c:1089
             let st = {
