@@ -38,6 +38,15 @@ use crate::ported::zsh_h::{
     ZLCON_VARED,
 };
 
+/// `static const struct gsu_integer undo_change_no_gsu =
+/// { get_undo_current_change, NULL, zleunsetfn };` (c:100-101).
+#[allow(non_upper_case_globals)]
+static undo_change_no_gsu: crate::ported::zsh_h::gsu_integer = crate::ported::zsh_h::gsu_integer {
+    getfn: |_| get_undo_current_change(),
+    setfn: crate::ported::params::nullintsetfn,
+    unsetfn: zleunsetfn,
+};
+
 /// The ZLE special parameters, in the order of the C `zleparams[]`
 /// table (`Src/Zle/zle_params.c:141-188`) plus the `registers` special
 /// hash `makezleparams` adds at c:225.
@@ -273,6 +282,15 @@ pub fn makezleparams(ro: i32) {
         "UNDO_CHANGE_NO",
         crate::ported::zle::zle_main::UNDO_CHANGENO.load(Ordering::SeqCst) as i64,
     ); // c:170
+       // c:170 — `GSU(undo_change_no_gsu)`: the value is NOT a snapshot. Every
+       // read runs `get_undo_current_change`, which first records the edits
+       // the widget has made so far (c:1801 `mkundoent()`), so `x=$UNDO_CHANGE_NO`
+       // taken after `LBUFFER=...` names that edit and `zle undo $x` keeps it.
+    if let Ok(mut t) = crate::ported::params::paramtab().write() {
+        if let Some(pm) = t.get_mut("UNDO_CHANGE_NO") {
+            pm.gsu_i = Some(Box::new(undo_change_no_gsu.clone()));
+        }
+    }
     let _ = setiparam(
         "UNDO_LIMIT_NO",
         crate::ported::zle::zle_main::UNDO_LIMITNO.load(Ordering::SeqCst) as i64,
@@ -2902,6 +2920,26 @@ mod scope_tests {
     fn leave_widget_scope() {
         crate::zle_param_sync::clear_snapshot();
         endparamscope(); // c:1540
+    }
+
+    /// c:100-101 / c:1801 — `$UNDO_CHANGE_NO` is read through
+    /// `get_undo_current_change`, so an edit the widget has made since the
+    /// publish is recorded first and the number names it; a second read
+    /// with no further edit adds no entry.
+    #[test]
+    fn undo_change_no_reads_live_and_records_the_pending_edit() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        crate::ported::zle::zle_utils::initundo();
+        enter_widget_scope();
+        let get = || crate::ported::params::getiparam("UNDO_CHANGE_NO");
+        assert_eq!(get(), 0);
+        set_lbuffer("xy");
+        assert_eq!(get(), 1, "the LBUFFER edit must become change 1");
+        assert_eq!(get(), 1, "re-reading must not invent a change");
+        set_rbuffer("z");
+        assert_eq!(get(), 2);
+        leave_widget_scope();
     }
 
     /// c:206 `pm->level = locallevel + 1` + c:200 `PM_SPECIAL|PM_REMOVABLE`

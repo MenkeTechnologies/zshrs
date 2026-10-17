@@ -61546,3 +61546,26 @@ at c:1461.
 **Fix.** All of the above in `bin_bindkey_bind` / `scanremoveprefix` /
 `default_bindings`; `scanremoveprefix` no longer deletes the prefix's own
 binding.
+
+## #1189 — `$UNDO_CHANGE_NO` was a widget-entry snapshot, so it never named an edit the widget had just made — fixed
+
+**Status:** `fixed` 2026-10-17.
+
+```console
+# widget: LBUFFER=xy; print $UNDO_CHANGE_NO   (after typing "abc")
+zsh     4
+zshrs   3
+```
+
+**C reference.** `zleparams[]` binds the parameter to `undo_change_no_gsu`
+(c:Src/Zle/zle_params.c:100-101, :170), whose getter
+`get_undo_current_change` (c:Src/Zle/zle_utils.c:1785-1808) runs
+`mkundoent()` + `setlastline()` before returning `undo_changeno`. The usual
+`x=$UNDO_CHANGE_NO; …; zle undo $x` idiom depends on that.
+
+**Fix.** `makezleparams` installs that vtable on `UNDO_CHANGE_NO`.
+
+**Still open:** `UNDO_LIMIT_NO=N` (and `local UNDO_LIMIT_NO=…`) does not reach
+`set_undo_limit_change`: the integer assignment path in `params.rs` stores
+`pm.u_val` instead of dispatching `pm->gsu.i->setfn` (c:Src/params.c:2874), so
+the limit never applies.
