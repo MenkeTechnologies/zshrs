@@ -2097,6 +2097,19 @@ pub fn bin_cd(
         }
     };
 
+    // !!! BASH GATE (no C counterpart) !!! POSIX leaves a leading `//` implementation-defined
+    // and bash keeps it (`cd //tmp; pwd` prints `//tmp`); zsh, ksh93 and dash fold it.
+    let dest_path = if crate::dash_mode::bash_mode()
+        && dest_raw.starts_with("//")
+        && !dest_raw.starts_with("///")
+        && dest_path.starts_with('/')
+        && !dest_path.starts_with("//")
+    {
+        format!("/{dest_path}")
+    } else {
+        dest_path
+    };
+
     // c:1238 — `oldpwd = pwd;` snapshot pre-cd $PWD for $OLDPWD.
     //          Read from paramtab (the canonical zsh-side `pwd`
     //          global); was reading OS env which can lag behind.
@@ -11471,7 +11484,7 @@ pub fn bin_whence(
         zwarnnam(nam, "bad option: -t");
         return 1;
     }
-    if crate::dash_mode::bash_mode() && OPT_ISSET(ops, b't') {
+    if (crate::dash_mode::bash_mode() || crate::dash_mode::ksh93_mode()) && OPT_ISSET(ops, b't') {
         let type_of = |name: &str| -> Option<&'static str> {
             if crate::dash_mode::aliases_visible()
                 && aliastab_lock()

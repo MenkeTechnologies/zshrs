@@ -1701,6 +1701,9 @@ const ZSH_ONLY_CORPUS: &[&str] = &[
 /// zsh, so they run ONLY against the real bash (`--bash` vs bash). Each probe
 /// was a measured `--bash` divergence.
 const BASH_ONLY_CORPUS: &[&str] = &[
+    "cd //tmp; pwd; echo $PWD",
+    "cd ///tmp; pwd",
+    "cd /tmp//; pwd",
     "echo \"${GROUPS[@]}|${#GROUPS[@]}|${GROUPS[0]}\"",
     "f() { echo hi; }; g() { :; }; set | grep -A3 '^f '",
     "ZZ_V=; set | grep '^ZZ_V='",
@@ -2062,6 +2065,8 @@ const BASH_KSH_CORPUS: &[&str] = &[
 /// Scripts only ksh93 (and its zshrs drop-in) accept: `print`, `typeset -i/-l/-u`,
 /// `set -A`, `float`/`integer`, ksh-glob patterns, `function f {}` scoping.
 const KSH_ONLY_CORPUS: &[&str] = &[
+    "type -t echo; type -t ls; type -t if; f() { :; }; type -t f; alias a=b; type -t a; type -t nosuch_zz; echo rc=$?",
+    "cd //tmp; pwd",
     "cd '' 2>/dev/null; echo $?",
     "ZZ_V=\"it's\"; set | grep '^ZZ_V='",
     "echo \"[${CDPATH-u}][${MAILCHECK-u}][${TMOUT-u}]\"",
