@@ -3644,6 +3644,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let in_subshell = exec_in_process_subshell();
         if in_subshell && !clean_env {
             let status = exec_execute(&args, walk.exec_argv0.clone(), login, use_defpath, false);
+            // The "command not found" diagnostic raised errflag; a dash subshell would
+            // have `_exit(127)`ed, not been turned into the status-2 fatal-error unwind.
+            if crate::dash_mode::dash_faithful() {
+                crate::ported::utils::errflag
+                    .fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, std::sync::atomic::Ordering::Relaxed);
+            }
             crate::ported::builtin::EXIT_VAL.store(status, std::sync::atomic::Ordering::Relaxed);
             crate::ported::builtin::EXIT_PENDING.store(1, std::sync::atomic::Ordering::Relaxed);
             return Value::Status(status);
