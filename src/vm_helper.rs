@@ -1595,7 +1595,13 @@ pub(crate) fn execute_spawn(
         }
     }
     // c:877 `execute_skip_exec:` — `for (pp = path; *pp; pp++)`.
-    let path = crate::ported::params::getaparam("path").unwrap_or_default();
+    let mut path = crate::ported::params::getaparam("path").unwrap_or_default();
+    // The Korn shells fall back to `/bin:/usr/bin` when PATH is unset.
+    if path.is_empty() && crate::ported::params::getsparam("PATH").is_none() {
+        if let Some(def) = crate::dash_mode::korn_default_path() {
+            path = def.split(':').map(String::from).collect();
+        }
+    }
     for pp in &path {
         let pth = if pp.is_empty() || pp == "." {
             arg0.to_string() // c:879-880
@@ -6678,9 +6684,11 @@ impl ShellExecutor {
         // INSTEAD OF the `$path` walk, so `command -p` must not be judged by
         // `$PATH` at all: the oracle runs `PATH=; command -p awk …` fine.
         if !cmd.contains('/') && defpath == 0 {
+            // The Korn shells still search `/bin:/usr/bin` with PATH unset.
             let path_set_and_nonempty = crate::ported::params::getsparam("PATH")
                 .map(|p| !p.is_empty())
-                .unwrap_or(false);
+                .unwrap_or(false)
+                || crate::dash_mode::korn_default_path().is_some();
             if !path_set_and_nonempty {
                 let sn =
                     crate::ported::utils::scriptname_get().unwrap_or_else(|| "zshrs".to_string());

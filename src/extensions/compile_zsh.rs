@@ -5320,6 +5320,9 @@ impl ZshCompiler {
     fn compile_redir(&mut self, redir: &crate::parse::ZshRedir, permanent: bool) {
         // Default fd: stdin for read-side redirects, stdout for write-side.
         let fd_default: u8 = match redir.rtype {
+            // !!! KSH93 GATE (no C counterpart) !!! ksh93's `<>file` without a
+            // number opens fd 1 (`echo b <>file` writes b into file).
+            REDIR_READWRITE if crate::extensions::dash_mode::ksh93_mode() => 1,
             REDIR_READ | REDIR_HEREDOC | REDIR_HEREDOCDASH | REDIR_HERESTR | REDIR_READWRITE
             | REDIR_MERGEIN | REDIR_INPIPE => 0,
             _ => 1,
@@ -5571,11 +5574,13 @@ impl ZshCompiler {
         let name_is_dynamic = name_clean.contains('$') || name_clean.contains('`');
         let mut effective_rtype = redir.rtype;
         // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash has no `>&file`: the
-        // word stays a dup and the runtime reports "Bad fd number".
+        // word stays a dup and the runtime reports "Bad fd number". ksh93 and
+        // mksh reject it too ("bad file unit number", status 1).
         if redir.rtype == REDIR_MERGEOUT
             && !name_is_fd_like
             && !name_is_dynamic
             && !crate::extensions::dash_mode::dash_faithful()
+            && !crate::extensions::dash_mode::korn_mode()
         {
             // `>& FILE` → `> FILE 2>&1`. Default fd1 was 1 (set above)
             // which matches WRITE_BOTH semantics.

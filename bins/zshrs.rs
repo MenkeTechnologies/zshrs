@@ -2574,6 +2574,8 @@ pub fn zshrs_main() {
         // `extensions/reaped_status.rs` is what keeps `$pipestatus` intact through
         // that race (see `waitpid_eintr` in fusevm_bridge.rs).
         zsh::ported::signals::install_handler(libc::SIGCHLD);
+        // The drop-ins' own arming (bash's termsig_handler shape); a no-op in zsh mode.
+        zsh::extensions::emulation_startup::init_dropin_signals();
         // c:Src/init.c:1340 — `if (cmd)
         //                       setsparam("ZSH_EXECUTION_STRING",
         //                                 ztrdup_metafy(cmd));`
@@ -2894,6 +2896,8 @@ pub fn zshrs_main() {
         // script file that backgrounds anything left every one of those
         // children a zombie.
         zsh::ported::signals::install_handler(libc::SIGCHLD);
+        // The drop-ins' own arming (bash's termsig_handler shape); a no-op in zsh mode.
+        zsh::extensions::emulation_startup::init_dropin_signals();
         // Port from Src/init.c:295-306 + Src/init.c:1368-1370.
         // In script mode the parsed argv is split as:
         //   argv[0] = shell binary       (from init.c:271)

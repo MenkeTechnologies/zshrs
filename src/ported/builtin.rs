@@ -12369,8 +12369,9 @@ pub fn bin_whence(
                     // ksh93's `command -v ALIAS` prints the alias value alone
                     // (`command -V` keeps the "is an alias for" wording).
                     println!("{}", a.text);
-                } else if nam == "command" && crate::dash_mode::dash_faithful() {
-                    // dash prints the reusable `alias NAME='value'` form.
+                } else if nam == "command" && crate::dash_mode::dash_faithful() && !v {
+                    // dash's `command -v` prints the reusable `alias NAME='value'` form
+                    // (`command -V` keeps type's "is an alias for" wording).
                     println!(
                         "alias {}={}",
                         a.node.nam,
@@ -15870,6 +15871,7 @@ pub fn zexit(val: i32, from_where: i32) {
         SHELL_EXITING.store(0, Relaxed);
         EXIT_VAL.store(val, Relaxed);
         EXIT_PENDING.store(1, Relaxed);
+        EXIT_PENDING_SIGNAL.store(from_where == ZEXIT_SIGNAL, Relaxed);
         RETFLAG.store(1, Relaxed);
         BREAKS.store(LOOPS.load(Relaxed), Relaxed);
         return;
@@ -15958,14 +15960,38 @@ pub fn zexit(val: i32, from_where: i32) {
     // C zsh's dotrap handles BOTH paths internally; Rust splits
     // them. Call dotrap to cover the function-named form. Bug
     // #157 in docs/BUGS.md.
-    let exit_trap = traps_table().lock().ok().and_then(|mut t| t.remove("EXIT"));
+    let exit_trap = traps_table()
+        .lock()
+        .ok()
+        .and_then(|mut t| t.remove("EXIT"))
+        // The body a running string trap pulled aside (signals::EXIT_TRAP_STASH):
+        // `trap 'echo T; exit 3' TERM` still owes the EXIT trap.
+        .or_else(|| {
+            crate::ported::signals::EXIT_TRAP_STASH
+                .lock()
+                .ok()
+                .and_then(|mut s| s.last_mut().map(std::mem::take))
+                .filter(|b| !b.is_empty())
+        });
     LASTVAL.store(val, Relaxed); // c:6076 — $? inside trap = val
+    // c:6034 — `errflag = intrap = 0;` "Ensure trap can run": an `exit` issued
+    // from inside another trap's body still gets its EXIT trap.
+    crate::ported::signals::intrap.store(0, Relaxed);
     crate::ported::signals::in_exit_trap.store(1, Relaxed);
     if let Some(body) = exit_trap {
         // Set LASTVAL to the requested exit value so `$?` inside
         // the trap body sees the right number (matches `(exit 7)`
         // → trap body reads $?=7).
         let _ = crate::ported::exec::execute_script(&body);
+        // !!! DROP-IN GATE (no C counterpart) !!! mksh leaves the trap body's own
+        // status behind a caught fatal signal (`trap 'echo e' EXIT; kill -TERM $$`
+        // exits 0); an `exit N` in the body has already moved EXIT_VAL.
+        if from_where == ZEXIT_SIGNAL
+            && crate::dash_mode::fatal_exit_status_is_trap_status()
+            && EXIT_VAL.load(Relaxed) == val
+        {
+            EXIT_VAL.store(LASTVAL.load(Relaxed), Relaxed);
+        }
     }
     // c:6043-6044 — `if (sigtrapped[SIGEXIT]) dotrap(SIGEXIT);`.
     //
@@ -18618,6 +18644,19 @@ pub fn bin_test(
     if crate::dash_mode::dash_faithful() {
         return crate::dash_mode::dash_test(name, argv);
     }
+    // !!! SH GATE (no C counterpart) !!! bash 3.2's three-argument test reads
+    // `! ! X` as "too many arguments" (2), and its four-argument form negates
+    // that (`! ! ! X` is 2 too); five words and more go through the full parser.
+    if crate::dash_mode::sh_mode() {
+        let words = match (func == BIN_BRACKET, argv.last().map(|s| s.as_str())) {
+            (true, Some("]")) => &argv[..argv.len() - 1],
+            _ => argv,
+        };
+        if (3..=4).contains(&words.len()) && words[..words.len() - 1].iter().all(|w| w == "!") {
+            zwarnnam(name, "too many arguments");
+            return 2;
+        }
+    }
     // !!! RUST-ONLY FAST PATH (no C counterpart) !!! `[ N -op M ]` with two
     // plain decimal integers is the loop-condition shape; it skips the
     // parse_cond/evalcond round trip below. At three words a binary-operator
@@ -19062,13 +19101,15 @@ pub fn bin_trap(
             crate::extensions::emulation_startup::personality(),
             crate::extensions::emulation_startup::Personality::Ksh93
                 | crate::extensions::emulation_startup::Personality::Bash
+                | crate::extensions::emulation_startup::Personality::Sh
         );
-    // bash `trap -p SIG...` lists only the named signals' traps.
+    // bash (and /bin/sh) `trap -p SIG...` lists only the named signals' traps.
     let p_filter: Option<Vec<i32>> = (argv.len() > 1
         && argv[0] == "-p"
         && matches!(
             crate::extensions::emulation_startup::personality(),
             crate::extensions::emulation_startup::Personality::Bash
+                | crate::extensions::emulation_startup::Personality::Sh
         ))
     .then(|| {
         argv[1..]
@@ -19102,8 +19143,17 @@ pub fn bin_trap(
         let mut traps = traps_table().lock().map(|t| t.clone()).unwrap_or_default();
         // The snapshot exists only while a subshell (forked, threaded or a
         // pipeline leg) is running, so its presence is the subshell test.
-        if crate::dash_mode::bash_mode() {
-            if let Some(parent) = BASH_SUBSH_PARENT_TRAPS.lock().ok().and_then(|p| p.clone()) {
+        // !!! DROP-IN GATE (no C counterpart) !!! bash lists the parent's traps from
+        // `( trap )` and `$(trap)`, ksh93 from the ones it runs without forking
+        // (dash_mode::ksh93_virtual_subshell), dash and /bin/sh from `$(trap)` only
+        // (POSIX's command-substitution exception), mksh from none — and every
+        // one of them lists its own table once the subshell changed a trap.
+        if let Some(parent) = BASH_SUBSH_PARENT_TRAPS.lock().ok().and_then(|p| p.clone()) {
+            let in_cmdsubst = crate::fusevm_bridge::cmdsubst_outer_stdout().is_some();
+            let lists_parent = crate::dash_mode::bash_mode()
+                || (crate::dash_mode::ksh93_mode() && crate::dash_mode::ksh93_virtual_subshell(in_cmdsubst))
+                || ((crate::dash_mode::sh_mode() || crate::dash_mode::dash_faithful()) && in_cmdsubst);
+            if lists_parent && !SUBSH_TRAPS_CHANGED.load(Relaxed) {
                 traps = parent;
             }
         }
@@ -19186,6 +19236,17 @@ pub fn bin_trap(
                 if state == 0 || (state & crate::ported::zsh_h::ZSIG_FUNC) != 0 {
                     continue;
                 }
+                // !!! DROP-IN GATE (no C counterpart) !!! an ignore the shell set for
+                // itself — entersubsh's SIGINT/SIGQUIT for an `&` job
+                // (c:Src/exec.c:1100) — is no trap to bash, ksh93, mksh, dash or
+                // /bin/sh: `(trap) & wait` lists nothing of it there. A `trap ''
+                // SIG` the script set has its body in `traps` and was listed above;
+                // the ignore bash inherited is listed below.
+                if (crate::dash_mode::bash_mode() || crate::dash_mode::posix_faithful())
+                    && (state & crate::ported::zsh_h::ZSIG_IGNORED) != 0
+                {
+                    continue;
+                }
                 let idx = sig as i32;
                 // Already covered by a function-form or a stored body.
                 if combined.iter().any(|(i, _)| *i == idx) {
@@ -19218,13 +19279,26 @@ pub fn bin_trap(
         // so dash and mksh list nothing from `( trap )`, `$(trap)` or `trap | cmd` (a forked
         // pipeline stage has a pid other than `$$`). bash and ksh93 differ per context and
         // keep the shared behaviour.
+        let forked = std::process::id() as i32 != crate::ported::params::mypid.load(Relaxed) as i32;
         if (crate::dash_mode::dash_faithful() || crate::dash_mode::pdksh_family())
-            && (SUBSHELL_DEPTH.load(Relaxed) > 0
-                || std::process::id() as i32 != crate::ported::params::mypid.load(Relaxed) as i32)
+            && (SUBSHELL_DEPTH.load(Relaxed) > 0 || forked)
         {
             // A subshell starts with the caught traps reset, but an IGNORED signal
-            // stays ignored and is still listed (`trap '' INT; (trap)`).
-            combined.retain(|(_, e)| matches!(e, TrapEntry::Str(_, body) if body.is_empty()));
+            // stays ignored and is still listed (`trap '' INT; (trap)`), and so is
+            // a trap the subshell set itself (`(trap 'echo x' INT; trap)`).
+            let parent = BASH_SUBSH_PARENT_TRAPS.lock().ok().and_then(|p| p.clone()).unwrap_or_default();
+            combined.retain(|(_, e)| {
+                matches!(e, TrapEntry::Str(name, body)
+                    if body.is_empty() || parent.get(name).is_none_or(|pb| pb != body))
+            });
+        } else if crate::dash_mode::ksh93_mode() && forked {
+            // !!! KSH93 GATE (no C counterpart) !!! a forked ksh93 child (pipeline
+            // stage, `&` job) lists nothing it inherited, an ignored signal
+            // included: `trap '' INT; (trap) | cat` prints nothing.
+            let parent = BASH_SUBSH_PARENT_TRAPS.lock().ok().and_then(|p| p.clone()).unwrap_or_default();
+            combined.retain(|(_, e)| {
+                matches!(e, TrapEntry::Str(name, body) if parent.get(name).is_none_or(|pb| pb != body))
+            });
         }
         combined.sort_by_key(|(idx, _)| *idx);
         // !!! EMULATION-ONLY (no C counterpart) !!! ksh93 walks the trap
@@ -19368,15 +19442,11 @@ pub fn bin_trap(
             if let Ok(mut t) = traps_table().lock() {
                 t.remove(&key);
             }
-            // !!! BASH-MODE GATE (no C counterpart) !!! a bash subshell lists the
-            // parent's traps until its own `trap` changes them: keep the snapshot
-            // in step (`trap 'echo x' INT; (trap - INT; trap)` lists nothing).
-            if crate::dash_mode::bash_mode() {
-                if let Ok(mut p) = BASH_SUBSH_PARENT_TRAPS.lock() {
-                    if let Some(p) = p.as_mut() {
-                        p.remove(&key);
-                    }
-                }
+            // !!! DROP-IN GATE (no C counterpart) !!! a subshell lists the parent's
+            // traps until its own `trap` changes them; from then on the listing is
+            // its own table (`trap 'echo x' INT; (trap - INT; trap)` lists nothing).
+            if BASH_SUBSH_PARENT_TRAPS.lock().is_ok_and(|p| p.is_some()) {
+                SUBSH_TRAPS_CHANGED.store(true, Relaxed);
             }
             // c:Src/signals.c:836-843 — ZSIG_FUNC arm.
             if let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().write() {
@@ -19632,14 +19702,17 @@ pub fn bin_trap(
         if let Ok(mut t) = traps_table().lock() {
             t.insert(canonical.clone(), arg.clone()); // c:7448 (effective)
         }
-        // See the `trap -` arm: a bash subshell's own `trap` updates the listing
-        // snapshot it inherited (`trap '' INT; (trap 'echo x' INT; trap)`).
-        if crate::dash_mode::bash_mode() {
-            if let Ok(mut p) = BASH_SUBSH_PARENT_TRAPS.lock() {
-                if let Some(p) = p.as_mut() {
-                    p.insert(canonical.clone(), arg.clone());
-                }
-            }
+        // !!! DROP-IN GATE (no C counterpart) !!! bash's set_signal arms the
+        // terminating signals the moment a non-interactive shell sets an EXIT
+        // trap (trap.c), so `trap 'echo e' EXIT; kill -TERM $$` prints `e` while a
+        // shell without one dies of the signal.
+        if canonical == "EXIT" && crate::dash_mode::fatal_signals_armed_by_exit_trap() {
+            crate::extensions::emulation_startup::arm_dropin_fatal_signals();
+        }
+        // See the `trap -` arm: a subshell's own `trap` ends the parent listing
+        // (`trap '' INT; (trap 'echo x' INT; trap)` lists only the new trap).
+        if BASH_SUBSH_PARENT_TRAPS.lock().is_ok_and(|p| p.is_some()) {
+            SUBSH_TRAPS_CHANGED.store(true, Relaxed);
         }
         // c:Src/signals.c::settrap — when a string-form trap
         // replaces an existing trap, settrap calls unsettrap which
@@ -23776,6 +23849,21 @@ pub fn traps_table() -> &'static Mutex<HashMap<String, String>> {
 /// traps inside a subshell (`trap 'echo e' EXIT; (trap)` prints the EXIT trap)
 /// even though they no longer fire there.
 pub static BASH_SUBSH_PARENT_TRAPS: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
+
+/// Set once the running subshell changed a trap of its own: the listing then
+/// shows the subshell's table, not the parent snapshot above. Cleared with it.
+pub static SUBSH_TRAPS_CHANGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Set once the running subshell waited for a foreground child outside a
+/// `$( … )`: ksh93 forks its subshell at that point and `trap` stops listing
+/// the parent's traps (dash_mode::ksh93_virtual_subshell). Cleared with the
+/// snapshot above.
+pub static SUBSH_RAN_EXTERNAL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// True while the deferred in-process subshell exit (EXIT_PENDING) came from a
+/// signal: mksh then reports the subshell's EXIT trap status, not 128+sig
+/// (dash_mode::fatal_exit_status_is_trap_status). Consumed by subshell_end.
+pub static EXIT_PENDING_SIGNAL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 #[cfg(test)]
 mod tests {

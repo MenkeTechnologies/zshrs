@@ -3271,7 +3271,7 @@ pub fn printaliasnode(hn: &alias, printflags: i32) {
             let quoted = if crate::dash_mode::ksh93_mode() {
                 crate::dash_mode::ksh93_printf_q(&hn.text)
             } else {
-                quotedzputs(&hn.text)
+                quotedzputs(&crate::dash_mode::alias_text_for_listing(&hn.text))
             };
             let _ = io::Write::write_all(&mut so, &unmetafy_str(&quoted));
         } else {
@@ -3315,7 +3315,9 @@ pub fn printaliasnode(hn: &alias, printflags: i32) {
             }
             q
         } else {
-            crate::extensions::emulation_startup::single_quote(&hn.text)
+            crate::extensions::emulation_startup::single_quote(
+                &crate::dash_mode::alias_text_for_listing(&hn.text),
+            )
         };
         // !!! SH-MODE (no C counterpart) !!! `alias -p` (PRINT_LIST) carries the
         // `alias ` prefix in /bin/sh, as `-L` does in zsh.
@@ -3363,7 +3365,7 @@ pub fn printaliasnode(hn: &alias, printflags: i32) {
     let value = if crate::dash_mode::ksh93_mode() {
         crate::dash_mode::ksh93_printf_q(&hn.text)
     } else {
-        quotedzputs(&hn.text)
+        quotedzputs(&crate::dash_mode::alias_text_for_listing(&hn.text))
     };
     let _ = io::Write::write_all(&mut io::stdout(), &unmetafy_str(&value)); // c:1334
     println!(); // c:1336

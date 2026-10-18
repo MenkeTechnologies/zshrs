@@ -2088,6 +2088,26 @@ const BASH_ONLY_CORPUS: &[&str] = &[
     // a WINCH trap is delivered; the EXIT trap runs when a non-interactive
     // `exec` fails.
     "pwd a >/dev/null; echo $?; times a >/dev/null; echo $?; f() { break; echo in; }; for i in 1; do f 2>/dev/null; echo $i; done; umask -p | head -c 6; echo; command -v ']]'; echo $?; type in; readonly r=1; readonly -p | grep -c ' r='; trap 'echo t' WINCH; kill -WINCH $$; echo yes; trap 'echo e' EXIT; exec nonexist 2>/dev/null; echo no",
+    // A foreground child or `( … )` fires a CHLD trap; a trap raised by `kill`
+    // on the shell sees `$?` = 0; a pipeline stage runs the EXIT trap it set;
+    // a subshell lists the parent's traps until its own `trap` changes them;
+    // an untrapped TERM runs the EXIT trap, and so does `exit` inside a trap.
+    "trap 'echo t' CHLD; (true); echo yes; /usr/bin/true; echo end; trap - CHLD; trap 'echo $?' USR1; false; kill -USR1 $$; trap 'echo s' EXIT | cat; trap 'echo x' USR2; (trap) | grep -c USR2; trap '' INT; (trap 'echo y' INT; trap) | grep -c INT; trap 'echo e' EXIT; trap 'echo T; exit 3' TERM; kill -TERM $$; echo no",
+    // An untrapped HUP runs the EXIT trap before the shell dies (129).
+    "trap 'echo e' EXIT; kill -HUP $$; echo no",
+    // SIGQUIT is swallowed; setting an EXIT trap arms the terminating signals
+    // (set_signal → initialize_terminating_signals), so INT, ALRM and PIPE then run
+    // it, while a shell without one dies of INT at once.
+    "kill -QUIT $$; echo q; trap 'echo e' EXIT; kill -INT $$; echo no",
+    "kill -INT $$; echo no",
+    "trap 'echo e' EXIT; kill -ALRM $$; echo no",
+    // A forked child gets the original dispositions back (make_child), so a killed
+    // `sleep &` dies of the signal even with an EXIT trap set; the ignore an `&` job
+    // sets is not listed; a `( … )` killed from inside reports 143 and the parent's
+    // EXIT trap still runs.
+    "trap 'echo e' EXIT; sleep 5 & kill $!; wait $!; echo rc=$?; kill -PIPE $$; echo no",
+    "trap 'echo x' USR2; (trap) & wait; trap '' INT; (trap) & wait",
+    "trap 'echo e' EXIT; ( sh -c 'kill -TERM $PPID'; echo no ); echo $?",
 ];
 
 /// bash + ksh corpus — constructs the two share but zsh does not, so they run
@@ -2289,6 +2309,24 @@ const KSH_ONLY_CORPUS: &[&str] = &[
     // a WINCH trap is delivered; a failed non-interactive `exec` exits
     // WITHOUT running the EXIT trap.
     "echo $[1+2]; pwd a >/dev/null; echo $?; f() { break; echo in; }; for i in 1; do f; echo $i; done; command -v local; echo $?; command -v declare; echo $?; alias e=echo; command -V e; type . ; type typeset; type in; type ls | head -c 20; echo; sleep 5 & kill $!; wait $! 2>/dev/null; echo rc=$?; sh -c 'kill -TERM $$'; echo $?; trap 'echo t' WINCH; kill -WINCH $$; echo yes; trap 'echo e' EXIT; exec nonexist 2>/dev/null; echo no",
+    // A trap raised by `kill` on the shell sees `$?` = 0; a pipeline stage
+    // runs the EXIT trap it set; `( trap )` and `$(trap)` list the parent's
+    // traps; a forked subshell (pipeline stage, nested `$( … )`) lists no
+    // inherited trap; `>& word` is an error (1) that leaves the command unrun;
+    // `<>file` opens fd 1; PATH unset still searches /bin; an untrapped TERM
+    // runs the EXIT trap, and so does `exit` inside a trap.
+    "trap 'echo $?' USR1; false; kill -USR1 $$; trap 'echo s' EXIT | cat; trap 'echo x' USR2; (trap) | grep -c USR2; echo [$(trap)] | grep -c USR2; echo a >& /dev/null; echo rc=$?; echo b <>/tmp/zshrs_rw_$$; cat /tmp/zshrs_rw_$$; rm -f /tmp/zshrs_rw_$$; (unset PATH; ls / >/dev/null; echo rc=$?); trap 'echo e' EXIT; trap 'echo T; exit 3' TERM; kill -TERM $$; echo no",
+    // An untrapped HUP runs the EXIT trap before the shell dies (129).
+    "trap 'echo e' EXIT; kill -HUP $$; echo no",
+    // `trap` lists the parent's traps only in a subshell ksh93 runs without forking:
+    // not a pipeline stage or `&` job, not a subshell nested in one, not a `( … )`
+    // that has run an external command (a `$( … )` that has still does); a forked
+    // child dies of a signal even with an EXIT trap set; ALRM and QUIT run the EXIT
+    // trap; `trap -p SIG` prints the body alone.
+    "trap 'echo x' USR2; trap | grep -c USR2; (trap) | grep -c USR2; (sleep 0; trap); echo \"[$(trap)]\"; (echo \"[$(trap)]\"); (x=$(/bin/true; trap); echo \"[$x]\"); (trap) & wait; trap 'echo e' EXIT; sleep 5 & kill $!; wait $!; echo rc=$?; kill -ALRM $$; echo no",
+    "trap 'echo e' EXIT; kill -QUIT $$; echo no",
+    "trap 'echo x' INT; trap -p INT 2>/dev/null; trap | grep -c INT; trap 'echo e' 0; trap | grep -c EXIT",
+    "trap 'echo x' USR2; (cd /; trap); (exec 3>/dev/null; trap); f() { trap; }; (f); ( (trap) ); echo \"[$( (trap) )]\"; trap '' INT; (trap) | cat; (trap '' USR1; trap)",
 ];
 
 /// Scripts every REAL Bourne-family shell (bash, ksh, sh, dash, mksh, ash) runs
@@ -2434,6 +2472,27 @@ const PDKSH_CORPUS: &[&str] = &[
     // delivered; the EXIT trap runs once, before the `exec`, failed or not.
     "echo $[1+2]; cd ''; echo rc=$?; times a >/dev/null; echo $?; alias x; echo $?; command -v nonexist echo; echo $?; command -v declare; echo $?; type . ; type typeset; type in; type ls | head -c 20; echo; type printf | grep -c /; kill -l ' 1'; f() { break; echo in; }; for i in 1; do f 2>/dev/null; echo $i; done; trap 'echo t' WINCH; kill -WINCH $$; echo yes; trap 'echo e' EXIT; exec nonexist 2>/dev/null; echo no",
     "trap 'echo t' EXIT; exec true; echo no",
+    // A trap raised by `kill` on the shell sees `$?` = 0; a pipeline stage
+    // runs the EXIT trap it set; a `( … )` fires a CHLD trap; a subshell lists
+    // only the traps it set itself or inherited ignored; the predefined aliases
+    // list as `\\builtin …`; `>& word` is an error (1); PATH unset still
+    // searches /bin; an untrapped TERM runs the EXIT trap.
+    "trap 'echo $?' USR1; false; kill -USR1 $$; trap 'echo s' EXIT | cat; trap 'echo t' CHLD; (true); echo yes; trap - CHLD; trap 'echo x' USR2; (trap) | wc -l | tr -d ' '; trap '' INT; (trap 'echo y' INT; trap); alias local; type local; echo a >& /dev/null; echo rc=$?; (unset PATH; ls / >/dev/null; echo rc=$?); trap 'echo e' EXIT; kill -TERM $$; echo no",
+    // An untrapped HUP ends the shell WITHOUT the EXIT trap (129).
+    "trap 'echo e' EXIT; kill -HUP $$; echo no",
+    // `exec BUILTIN` runs the builtin and exits through the EXIT trap; `exec
+    // EXTERNAL` replaces the shell without it.
+    "trap 'echo t' EXIT; exec echo hi",
+    "trap 'echo t' EXIT; exec /usr/bin/true; echo no",
+    // mksh catches INT, QUIT and TERM only: each runs the EXIT trap and the shell
+    // exits with the trap's own status; ALRM is swallowed; HUP, USR1 and USR2 kill
+    // it without the trap; the ignore an `&` job sets is not listed.
+    "trap 'echo e' EXIT; kill -ALRM $$; echo a; kill -USR1 $$; echo no",
+    "trap 'echo e; false' EXIT; kill -TERM $$",
+    "trap 'echo e' EXIT; kill -INT $$",
+    "trap 'echo e' EXIT; kill -QUIT $$",
+    "trap 'echo e' EXIT; kill -HUP $$; echo no",
+    "trap 'echo x' USR2; (trap) & wait; echo done",
 ];
 
 /// dash and ash: `$@` counts as set with no positionals, so the quoted `-`
@@ -2508,6 +2567,15 @@ const DASH_ONLY_CORPUS: &[&str] = &[
     // any existing path; a WINCH trap is delivered; the EXIT trap runs when a
     // non-interactive `exec` fails.
     "cd ''; echo rc=$?; pwd a >/dev/null; echo $?; times a >/dev/null; echo $?; alias x=\"echo 'q'\"; alias x; f() { break; echo in; }; for i in 1; do f; echo $i; done; command -v echo ls; command -v nonexist echo; echo $?; type local; type in; type /etc; echo $?; trap 'echo t' WINCH; kill -WINCH $$; echo yes; trap 'echo e' EXIT; exec nonexist 2>/dev/null; echo no",
+    // A trap raised by `kill` on the shell sees `$?` = 0; a pipeline stage
+    // runs the EXIT trap it set; a foreground child or `( … )` fires a CHLD
+    // trap; `( trap )` lists the ignored and the subshell's own traps while
+    // `$(trap)` lists the parent's; `command -V ALIAS` uses type's wording; a
+    // non-numeric kill operand (`--` included) is "Illegal number" (2).
+    "trap 'echo $?' USR1; false; kill -USR1 $$; trap 'echo s' EXIT | cat; trap 'echo t' CHLD; (true); echo yes; /usr/bin/true; echo end; trap - CHLD; trap 'echo x' USR2; (trap) | wc -l | tr -d ' '; echo [$(trap)] | grep -c USR2; trap '' INT; (trap 'echo y' INT; trap) | grep -c INT; alias e=echo; command -V e; kill -0 -- $$ 2>/dev/null; echo $?; kill -0 abc 2>/dev/null; echo $?",
+    // The ignore an `&` job sets is not listed; an untrapped INT kills the shell
+    // (130) with no EXIT trap run.
+    "trap 'echo x' USR2; (trap) & wait; echo done; trap 'echo e' EXIT; kill -INT $$; echo no",
 ];
 
 /// zsh-only `type -t` / `read` flags that are bash letters: zsh answers
@@ -2581,6 +2649,21 @@ const SH_BASH_CORPUS: &[&str] = &[
     // answers an existing path; a WINCH trap is delivered; the EXIT trap runs
     // when a non-interactive `exec` fails, and the shell then exits 0.
     "cd ''; echo rc=$?; pwd a >/dev/null; echo $?; umask -p | head -c 6; echo; times a >/dev/null; echo $?; readonly r=1; readonly -p | grep ' r='; f() { :; }; unset f; type f 2>/dev/null; echo rc=$?; command -v ']]'; echo $?; alias e=echo; type e; type nonexist 2>/dev/null; echo rc=$?; type if; type in; type nonexist ls 2>/dev/null | wc -l | tr -d ' '; type /etc 2>/dev/null; echo rc=$?; trap 'echo t' WINCH; kill -WINCH $$; echo yes; trap 'echo e' EXIT; exec nonexist 2>/dev/null; echo no",
+    // A trap raised by `kill` on the shell sees `$?` = 0; `trap -p`; `$(trap)`
+    // lists the parent's traps while `( trap )` does not; no `coproc`; `test
+    // ! ! X` is "too many arguments" (2); `kill -l SIGHUP` and a number past
+    // the table are invalid (1); an untrapped TERM runs the EXIT trap, and so
+    // does `exit` inside a trap.
+    "trap 'echo $?' USR1; false; kill -USR1 $$; trap 'echo t' TERM; trap -p; trap -p TERM; trap 'echo x' USR2; (trap) | grep -c USR2; echo [$(trap)] | grep -c USR2; command -v coproc; echo $?; test ! ! a; echo $?; test ! ! ! a; echo $?; test ! ! -n a; echo $?; kill -l SIGHUP 2>/dev/null; echo rc=$?; kill -l HUP; kill -l 64 2>/dev/null; echo rc=$?; kill -l 129; trap 'echo e' EXIT; trap 'echo T; exit 3' TERM; kill -TERM $$; echo no",
+    // An untrapped HUP runs the EXIT trap before the shell dies (129).
+    "trap 'echo e' EXIT; kill -HUP $$; echo no",
+    // Setting an EXIT trap arms the terminating signals (bash's set_signal): an
+    // untrapped ALRM then runs the trap (142); QUIT kills bash 3.2 without it;
+    // an untrapped INT exits 130; the ignore an `&` job sets is not listed.
+    "trap 'echo e' EXIT; kill -ALRM $$; echo no",
+    "kill -INT $$; echo no",
+    "trap 'echo e' EXIT; kill -QUIT $$; echo no",
+    "trap 'echo x' USR2; (trap) & wait; echo done",
 ];
 
 /// True when `path` is a bash build (`$BASH_VERSION` is set when it runs).

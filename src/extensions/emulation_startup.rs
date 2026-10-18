@@ -769,6 +769,78 @@ const MKSH_ALIASES: &[(&str, &str)] = &[
     ("type", r"\builtin whence -v"),
 ];
 
+/// !!! RUST-ONLY (no C counterpart) !!! the drop-ins' startup signal policy,
+/// run after `startup_signals::init_dispatch_signals`, which arms zsh's own
+/// handlers and returns early for every drop-in. ksh93 and mksh catch their
+/// terminating signals from the start (`dash_mode::fatal_signal_action`); bash
+/// and /bin/sh arm them when a `trap … EXIT` is set (bin_trap); dash keeps the
+/// default dispositions.
+pub fn init_dropin_signals() {
+    // bash swallows SIGQUIT from the start; its EXIT-trap handlers come later.
+    let lazy = crate::dash_mode::fatal_signals_armed_by_exit_trap();
+    for sig in crate::dash_mode::DROPIN_FATAL_SIGNALS {
+        match crate::dash_mode::fatal_signal_action(sig) {
+            crate::dash_mode::FatalSignalAction::Default => {}
+            crate::dash_mode::FatalSignalAction::Ignore => crate::ported::signals::install_handler(sig),
+            crate::dash_mode::FatalSignalAction::ExitTrap => {
+                if !lazy {
+                    crate::ported::signals::install_handler(sig);
+                }
+            }
+        }
+    }
+}
+
+/// Arm the handler for every signal this personality catches or swallows.
+/// Idempotent; `signals::zhandler` acts on `fatal_signal_action`.
+pub fn arm_dropin_fatal_signals() {
+    for sig in crate::dash_mode::DROPIN_FATAL_SIGNALS {
+        if crate::dash_mode::fatal_signal_action(sig) != crate::dash_mode::FatalSignalAction::Default {
+            crate::ported::signals::install_handler(sig);
+        }
+    }
+}
+
+/// A forked child's dispositions (`dash_mode::forked_child_resets_fatal_signals`):
+/// bash's `make_child` puts the original ones back, so `sleep 5 & kill $!` leaves a
+/// child that died of the signal, not one that exited 128+sig from the handler.
+/// An ignored signal stays ignored, as across any fork.
+pub fn reset_dropin_fatal_signals() {
+    if !crate::dash_mode::forked_child_resets_fatal_signals() {
+        return;
+    }
+    // The handlers are still armed, and one firing while `sigtrapped` is held
+    // deadlocks in handletrap's own lock (a `kill $!` right after the fork
+    // did exactly that). Hold the signals back until the dispositions are set;
+    // a pending one is then delivered with its final disposition.
+    let mut held: libc::sigset_t = unsafe { std::mem::zeroed() };
+    let mut old: libc::sigset_t = unsafe { std::mem::zeroed() };
+    unsafe {
+        libc::sigemptyset(&mut held);
+        for sig in crate::dash_mode::DROPIN_FATAL_SIGNALS {
+            libc::sigaddset(&mut held, sig);
+        }
+        libc::sigprocmask(libc::SIG_BLOCK, &held, &mut old);
+    }
+    let ignored: Vec<i32> = crate::ported::signals::sigtrapped
+        .lock()
+        .map(|st| {
+            crate::dash_mode::DROPIN_FATAL_SIGNALS
+                .into_iter()
+                .filter(|&sig| st.get(sig as usize).is_some_and(|s| s & crate::ported::zsh_h::ZSIG_IGNORED != 0))
+                .collect()
+        })
+        .unwrap_or_default();
+    for sig in crate::dash_mode::DROPIN_FATAL_SIGNALS {
+        if crate::dash_mode::fatal_signal_action(sig) != crate::dash_mode::FatalSignalAction::Default
+            && !ignored.contains(&sig)
+        {
+            crate::ported::signals_h::signal_default(sig);
+        }
+    }
+    unsafe { libc::sigprocmask(libc::SIG_SETMASK, &old, std::ptr::null_mut()) };
+}
+
 /// The aliases this personality starts with, or `None` to leave zsh's own
 /// defaults (`run-help`, `which-command`) in place.
 ///

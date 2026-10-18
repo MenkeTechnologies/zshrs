@@ -2988,6 +2988,7 @@ pub fn findcmd(arg0: &str, _docopy: i32, default_path: i32) -> Option<String> {
             // c:937-938
             None if isset(crate::ported::zsh_h::HASHCMDS) => {
                 let dirs: Vec<String> = getsparam("PATH")
+                    .or_else(crate::dash_mode::korn_default_path)
                     .unwrap_or_default()
                     .split(':')
                     .map(String::from)
@@ -3039,7 +3040,10 @@ pub fn findcmd(arg0: &str, _docopy: i32, default_path: i32) -> Option<String> {
     //         }
     //         RET_IF_COM(nn);
     //     }
-    let path = getsparam("PATH").unwrap_or_default();
+    // The Korn shells fall back to `/bin:/usr/bin` when PATH is unset.
+    let path = getsparam("PATH")
+        .or_else(crate::dash_mode::korn_default_path)
+        .unwrap_or_default();
     let dirs: Vec<&str> = path.split(':').collect();
     if let Some(cn) = cn.as_ref() {
         // c:948
@@ -4944,13 +4948,14 @@ pub fn entersubsh(flags: i32, retp: Option<&mut entersubsh_ret>) {
         // the forked path (pipeline legs, `&`, process substitution); the
         // in-process `( … )` / `$( … )` path takes the same snapshot in
         // `fusevm_bridge::entersubsh_reset_traps`.
-        if crate::dash_mode::bash_mode() {
+        if crate::dash_mode::bash_mode() || crate::dash_mode::posix_faithful() {
             if let (Ok(tbl), Ok(mut p)) = (
                 crate::ported::builtin::traps_table().lock(),
                 crate::ported::builtin::BASH_SUBSH_PARENT_TRAPS.lock(),
             ) {
                 if p.is_none() {
                     *p = Some(tbl.clone());
+                    crate::ported::builtin::SUBSH_TRAPS_CHANGED.store(false, Ordering::Relaxed);
                 }
             }
         }

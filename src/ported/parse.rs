@@ -9044,8 +9044,12 @@ fn par_redir_wordcode(rp: &mut usize, idstring: Option<&str>) -> i32 {
     set_nocorrect(oldnc);
 
     // c:2248-2249 — `if (fd1 == -1) fd1 = IS_READFD(type) ? 0 : 1;`
+    // !!! KSH93 GATE (no C counterpart) !!! ksh93's `<>file` without a number
+    // opens fd 1 (`echo b <>file` writes b into file); zsh, bash, mksh and dash
+    // open fd 0.
+    let readwrite_on_stdout = r#type == REDIR_READWRITE && crate::dash_mode::ksh93_mode();
     let fd1 = if fd1 == -1 {
-        if is_readfd(r#type) {
+        if is_readfd(r#type) && !readwrite_on_stdout {
             0
         } else {
             1
@@ -9830,6 +9834,10 @@ fn par_redir_with_id(idstring: Option<&str>) -> Option<ZshRedir> {
 
     let fd = if tokfd() >= 0 {
         tokfd()
+    } else if rtype == REDIR_READWRITE && crate::dash_mode::ksh93_mode() {
+        // !!! KSH93 GATE (no C counterpart) !!! ksh93's `<>file` without a
+        // number opens fd 1 (`echo b <>file` writes b into file).
+        1
     } else if matches!(
         rtype,
         REDIR_READ

@@ -214,9 +214,8 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
     let (groups, nsub) = match matched {
         Some(m) => m,
         None => {
-            // !!! BASH GATE (no C counterpart) !!! a failed `=~` empties `BASH_REMATCH`; zsh leaves
-            // `$match` alone.
-            if isset(BASHREMATCH) {
+            // !!! BASH-MODE (no C counterpart) !!! bash empties BASH_REMATCH on a failed match.
+            if crate::dash_mode::bash_mode() && isset(BASHREMATCH) {
                 setaparam("BASH_REMATCH", Vec::new());
             }
             return 0; // c:93-94 REG_NOMATCH

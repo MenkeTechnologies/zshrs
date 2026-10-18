@@ -4529,6 +4529,8 @@ pub fn bin_kill(
     let mut sig: i32 = libc::SIGTERM; // c:2774
     let mut returnval: i32 = 0; // c:2775
     let mut got_sig = false; // c:2780
+    // dash accepts `--` after `-s SIG` only (see the `--` arm below).
+    let mut sig_via_s = false;
     let mut idx = 0usize;
     // !!! BASH-MODE GATE (no C counterpart) !!! bash answers 0 when ANY pid was
     // signalled (`kill -0 $$ 999999`); zsh, ksh93, mksh and dash count the failures.
@@ -4563,6 +4565,14 @@ pub fn bin_kill(
         // pseudo `--` end-of-flags.
         if body == "-" {
             // c:2814 / c:3010
+            // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash's kill knows no
+            // `--` once the signal is settled (`kill -0 -- $$`, `kill -TERM --
+            // pid`): the word is read as a pid, "Illegal number: -" (2). Only
+            // `kill -s SIG -- pid` accepts it.
+            if crate::dash_mode::dash_faithful() && got_sig && !sig_via_s {
+                zwarnnam(nam, "Illegal number: -");
+                return 2;
+            }
             idx += 1;
             break;
         }
@@ -4653,7 +4663,9 @@ pub fn bin_kill(
                         }
                         if !in_range
                             && cfg!(not(target_os = "linux"))
-                            && (crate::dash_mode::bash_mode() || crate::dash_mode::dash_faithful())
+                            && (crate::dash_mode::bash_mode()
+                                || crate::dash_mode::sh_mode()
+                                || crate::dash_mode::dash_faithful())
                         {
                             zwarnnam(nam, &format!("{}: invalid signal specification", n));
                             return if crate::dash_mode::dash_faithful() { 2 } else { 1 };
@@ -4707,6 +4719,16 @@ pub fn bin_kill(
                             zwarnnam(nam, &format!("unknown signal: SIG{}", bare)); // c:2851
                             returnval += 1;
                         } else {
+                            // !!! SH GATE (no C counterpart) !!! bash 3.2 (/bin/sh) takes a
+                            // bare name only: `kill -l SIGHUP` is an "invalid signal
+                            // specification" (1) where `kill -l HUP` prints 1.
+                            if crate::dash_mode::sh_mode()
+                                && token.len() > 3
+                                && token[..3].eq_ignore_ascii_case("SIG")
+                            {
+                                zwarnnam(nam, &format!("{}: invalid signal specification", token));
+                                return 1;
+                            }
                             let upper = token.to_ascii_uppercase();
                             let bare = upper.strip_prefix("SIG").unwrap_or(&upper);
                             // c:2865-2867 — a real-time name prints its number.
@@ -4859,6 +4881,7 @@ pub fn bin_kill(
                 }
             }
             got_sig = true;
+            sig_via_s = true;
             idx += 1;
             continue;
         }
@@ -5047,6 +5070,15 @@ pub fn bin_kill(
             match arg.parse::<i32>() {
                 // c:3024 PID
                 Ok(pid) => {
+                    // !!! DROP-IN GATE (no C counterpart) !!! a trap that `kill`
+                    // raises in the shell itself sees `$?` as kill's own status (0)
+                    // in bash, ksh93, mksh, dash and /bin/sh; zsh's handler runs
+                    // before the builtin's status lands.
+                    if (crate::dash_mode::bash_mode() || crate::dash_mode::posix_faithful())
+                        && pid == unsafe { libc::getpid() }
+                    {
+                        crate::ported::builtin::LASTVAL.store(0, std::sync::atomic::Ordering::Relaxed);
+                    }
                     let r = unsafe { libc::kill(pid, sig) }; // c:3025
                     if r == 0 {
                         any_ok = true;
@@ -5089,6 +5121,13 @@ pub fn bin_kill(
                     // (c:3067), so `kill a b c` exits 3 and `kill -INT a b c`
                     // exits 3. Assigning 1 collapsed every multi-operand
                     // failure to a single 1.
+                    // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash's kill reads
+                    // every operand as a number once the signal is settled, `--`
+                    // included: "Illegal number: -" ends the command with 2.
+                    if crate::dash_mode::dash_faithful() {
+                        zwarnnam(nam, &format!("Illegal number: {}", arg.strip_prefix('-').unwrap_or(arg)));
+                        return 2;
+                    }
                     let adj = if crate::extensions::emulation_startup::emulating_592() { "illegal" } else { "invalid" };
                     zwarnnam(nam, &format!("{} pid: {}", adj, arg));
                     returnval += 1; // c:3040 returnval++

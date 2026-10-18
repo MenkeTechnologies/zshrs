@@ -484,6 +484,15 @@ pub extern "C" fn zhandler(sig: libc::c_int) {
         libc::SIGPIPE => {
             // c:434
             if handletrap(libc::SIGPIPE) == 0 {
+                // !!! DROP-IN GATE (no C counterpart) !!! bash, /bin/sh and ksh93
+                // run the EXIT trap and exit 141; the handler is armed there only
+                // (`arm_dropin_fatal_signals`), mksh and dash die of the signal.
+                if crate::dash_mode::fatal_signal_action(libc::SIGPIPE)
+                    == crate::dash_mode::FatalSignalAction::ExitTrap
+                {
+                    zexit(0o200 | libc::SIGPIPE, ZEXIT_SIGNAL);
+                    return;
+                }
                 // c:436-441 — non-interactive exits immediately; an
                 // interactive non-tty also exits via zexit.
                 let interact = isset(INTERACTIVE);
@@ -512,12 +521,31 @@ pub extern "C" fn zhandler(sig: libc::c_int) {
             if handletrap(libc::SIGHUP) == 0 {
                 // c:447 — `stopmsg = 1; zexit(SIGHUP, ZEXIT_SIGNAL);`
                 STOPMSG.store(1, Ordering::Relaxed);
-                zexit(libc::SIGHUP, ZEXIT_SIGNAL); // c:448
+                // !!! DROP-IN GATE (no C counterpart) !!! bash, /bin/sh and ksh93
+                // leave 128+sig behind, zsh the signal number.
+                let status = if crate::dash_mode::fatal_signal_action(libc::SIGHUP)
+                    == crate::dash_mode::FatalSignalAction::ExitTrap
+                {
+                    0o200 | libc::SIGHUP
+                } else {
+                    libc::SIGHUP
+                };
+                zexit(status, ZEXIT_SIGNAL); // c:448
             }
         }
         libc::SIGINT => {
             // c:452
             if handletrap(libc::SIGINT) == 0 {
+                // !!! DROP-IN GATE (no C counterpart) !!! bash, /bin/sh, ksh93 and
+                // mksh treat an untrapped SIGINT like any other terminating signal:
+                // EXIT trap, then exit 130 (bash's termsig_handler). zsh ends the
+                // current list and goes on below.
+                if crate::dash_mode::fatal_signal_action(libc::SIGINT)
+                    == crate::dash_mode::FatalSignalAction::ExitTrap
+                {
+                    zexit(0o200 | libc::SIGINT, ZEXIT_SIGNAL);
+                    return;
+                }
                 // c:454-456 — PRIVILEGED+INTERACTIVE during a signal-
                 // noerrexit window: immediate exit.
                 let privileged =
@@ -612,6 +640,17 @@ pub extern "C" fn zhandler(sig: libc::c_int) {
         libc::SIGALRM => {
             // c:475
             if handletrap(libc::SIGALRM) == 0 {
+                // !!! DROP-IN GATE (no C counterpart) !!! no TMOUT logout here: bash,
+                // /bin/sh and ksh93 run the EXIT trap and exit 142, mksh swallows
+                // the signal, dash never catches it.
+                match crate::dash_mode::fatal_signal_action(libc::SIGALRM) {
+                    crate::dash_mode::FatalSignalAction::ExitTrap => {
+                        zexit(0o200 | libc::SIGALRM, ZEXIT_SIGNAL);
+                        return;
+                    }
+                    crate::dash_mode::FatalSignalAction::Ignore => return,
+                    crate::dash_mode::FatalSignalAction::Default => {}
+                }
                 // c:476-489 — idle vs TMOUT branch. The previous Rust
                 // port commented "Skip the still idle re-arm" claiming
                 // no ttyidlegetfn port — but it IS ported at
@@ -657,7 +696,17 @@ pub extern "C" fn zhandler(sig: libc::c_int) {
         }
         _ => {
             // c:506
-            let _ = handletrap(sig);
+            // !!! DROP-IN GATE (no C counterpart) !!! bash's termsig_handler: an
+            // untrapped terminating signal runs the EXIT trap, then the shell dies
+            // with 128+sig; a swallowed one (bash's SIGQUIT) does nothing. Only the
+            // signals `arm_dropin_fatal_signals` armed get here untrapped; zsh never
+            // installs a handler for them.
+            if handletrap(sig) == 0
+                && crate::dash_mode::fatal_signal_action(sig)
+                    == crate::dash_mode::FatalSignalAction::ExitTrap
+            {
+                zexit(0o200 | sig, ZEXIT_SIGNAL);
+            }
         }
     }
 }
@@ -1053,6 +1102,15 @@ pub fn settrap(sig: i32, l: Option<Eprog>, flags: i32) -> i32 {
         let signame = getsigname(sig);
         zerr(&format!("can't trap SIG{} in interactive shells", signame));
         return 1; // c:699
+    }
+
+    // !!! POSIX-FAITHFUL GATE (no C counterpart) !!! a non-interactive bash, dash, ksh93 or
+    // mksh silently refuses to trap a signal that was ignored on entry.
+    if crate::dash_mode::posix_faithful()
+        && !crate::ported::zsh_h::interact()
+        && crate::startup_signals::ignored_on_entry(sig)
+    {
+        return 0;
     }
 
     // c:705 — `queue_signals()` + `unsettrap(sig)` unconditional
@@ -2044,6 +2102,14 @@ pub fn dotrap(sig: i32) -> i32 {
         } else {
             None
         };
+        // An `exit` inside this body must still find the EXIT trap (c:Src/
+        // builtin.c:6035 `if (sigtrapped[SIGEXIT]) dotrap(SIGEXIT)`): zexit
+        // reads the stashed body from here when the table has none.
+        if let Some(b) = &exit_stash {
+            if let Ok(mut s) = EXIT_TRAP_STASH.lock() {
+                s.push(b.clone());
+            }
+        }
         // c:1268/1170 — `execode((Eprog)sigfn, 1, 0, "trap");`. execode
         // (c:Src/exec.c:1245-1266) APPENDS its context argument to
         // `zsh_eval_context` for the duration of the body, so a trap handler
@@ -2141,8 +2207,18 @@ pub fn dotrap(sig: i32) -> i32 {
             }
         }
         if let Some(b) = exit_stash {
-            if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
-                t.insert("EXIT".to_string(), b);
+            // zexit empties the stashed entry when it ran the trap (an in-process
+            // subshell's deferred exit comes back here); only an unconsumed body
+            // goes back into the table.
+            let consumed = EXIT_TRAP_STASH
+                .lock()
+                .ok()
+                .and_then(|mut s| s.pop())
+                .is_some_and(|stashed| stashed.is_empty() && !b.is_empty());
+            if !consumed {
+                if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
+                    t.insert("EXIT".to_string(), b);
+                }
             }
         }
         if let Some(_) = outer {
@@ -2698,6 +2774,12 @@ pub static nsigtrapped: AtomicI32 = AtomicI32::new(0); // c:58
 /// trap body is running so nested `dotrap` calls short-circuit
 /// (matches the c:1245 dispatcher's `if (intrap) return`).
 pub static intrap: AtomicI32 = AtomicI32::new(0); // c:intrap
+
+/// !!! RUST-ONLY (no C counterpart) !!! the EXIT trap bodies pulled out of
+/// `traps_table` while another string trap's body runs (innermost last), so
+/// that an `exit` inside that body still runs the EXIT trap. zexit takes the
+/// innermost entry and leaves it empty; the trap runner pops it afterwards.
+pub static EXIT_TRAP_STASH: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 /// File-scope `int in_exit_trap` from `Src/signals.c:60`. Set
 /// while the EXIT trap body is running so `exit` and friends can

@@ -3560,7 +3560,8 @@ pub fn reswd_in_emulation(name: &str) -> bool {
         )
     } else if bash_mode() || korn_mode() || sh_mode() {
         !matches!(name, "repeat" | "foreach" | "nocorrect" | "end" | "always")
-            && !(korn_mode() && name == "coproc")
+            // neither Korn shell nor bash 3.2 (/bin/sh) has `coproc`.
+            && !((korn_mode() || sh_mode()) && name == "coproc")
             // bash's declaration commands are builtins, not keywords (`type local`
             // is "local is a shell builtin").
             && !((bash_mode() || sh_mode() || korn_mode())
@@ -3585,7 +3586,126 @@ pub fn extra_keyword(name: &str) -> bool {
 /// The status a child killed by signal `sig` leaves in `$?`: ksh93 reports
 /// `256 + sig`, every other shell here `128 + sig`.
 ///
+/// What a drop-in does with an untrapped signal that would end the shell.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FatalSignalAction {
+    /// The signal's default action: the shell dies at once, no EXIT trap.
+    Default,
+    /// The shell swallows the signal and goes on.
+    Ignore,
+    /// The EXIT trap runs, then the shell exits with 128+sig.
+    ExitTrap,
+}
+
+/// The signals a drop-in may catch; `fatal_signal_action` says which.
+pub const DROPIN_FATAL_SIGNALS: [i32; 8] = [
+    libc::SIGHUP,
+    libc::SIGINT,
+    libc::SIGQUIT,
+    libc::SIGTERM,
+    libc::SIGUSR1,
+    libc::SIGUSR2,
+    libc::SIGALRM,
+    libc::SIGPIPE,
+];
+
 /// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+/// bash (`termsig_handler`), /bin/sh, ksh93 and mksh catch some terminating
+/// signals so that an untrapped one still runs the EXIT trap before the shell
+/// dies with 128+sig; zsh and dash die at once. Per shell:
+/// - bash: HUP INT TERM USR1 USR2 ALRM PIPE run the trap; QUIT is swallowed
+///   (`kill -QUIT $$` is a no-op, `trap … QUIT` still works); bash 3.2
+///   (/bin/sh) dies of QUIT.
+/// - ksh93: HUP INT QUIT TERM USR1 USR2 ALRM PIPE.
+/// - mksh: INT QUIT TERM run the trap and exit with ITS status
+///   (`fatal_exit_status_is_trap_status`); ALRM is a no-op; HUP USR1 USR2
+///   PIPE kill it at once.
+/// `emulation_startup::arm_dropin_fatal_signals` arms the handlers,
+/// `signals::zhandler` acts.
+pub fn fatal_signal_action(sig: i32) -> FatalSignalAction {
+    use FatalSignalAction::*;
+    if pdksh_family() {
+        return match sig {
+            libc::SIGINT | libc::SIGQUIT | libc::SIGTERM => ExitTrap,
+            libc::SIGALRM => Ignore,
+            _ => Default,
+        };
+    }
+    if !(bash_mode() || sh_mode() || ksh93_mode()) {
+        return Default;
+    }
+    match sig {
+        libc::SIGHUP
+        | libc::SIGINT
+        | libc::SIGTERM
+        | libc::SIGUSR1
+        | libc::SIGUSR2
+        | libc::SIGALRM
+        | libc::SIGPIPE => ExitTrap,
+        libc::SIGQUIT if ksh93_mode() => ExitTrap,
+        libc::SIGQUIT if bash_mode() => Ignore,
+        _ => Default,
+    }
+}
+
+/// bash arms its terminating-signal handlers only once a non-interactive shell
+/// sets an EXIT trap (trap.c `set_signal` → `initialize_terminating_signals`), so
+/// `sleep 5 & kill $!` leaves a child that dies of the signal; ksh93 and mksh arm
+/// them at startup.
+pub fn fatal_signals_armed_by_exit_trap() -> bool {
+    bash_mode() || sh_mode()
+}
+
+/// bash's `make_child` restores the original dispositions in every forked child
+/// (which re-arms them the moment it sets its own EXIT trap), and a ksh93 child
+/// dies of the signal outright; mksh's children keep the handlers.
+pub fn forked_child_resets_fatal_signals() -> bool {
+    bash_mode() || sh_mode() || ksh93_mode()
+}
+
+/// mksh exits with the EXIT trap's own status after a caught fatal signal:
+/// `trap 'echo e' EXIT; kill -TERM $$` exits 0, `trap 'echo e; false' EXIT` 1.
+pub fn fatal_exit_status_is_trap_status() -> bool {
+    pdksh_family()
+}
+
+/// ksh93 runs `( … )` and `$( … )` in the shell process and `trap` there lists
+/// the parent's traps; it forks — and lists only what the subshell set — for a
+/// pipeline stage or `&` job, a subshell nested in a subshell, and a `( … )`
+/// that has run an external command (`(sleep 0; trap)` lists nothing, while
+/// `$(/bin/true; trap)` still lists the parent's).
+pub fn ksh93_virtual_subshell(in_cmdsubst: bool) -> bool {
+    use std::sync::atomic::Ordering::Relaxed;
+    let forked = std::process::id() as i32 != crate::ported::params::mypid.load(Relaxed) as i32;
+    crate::ported::params::getsparam("ZSH_SUBSHELL").as_deref() == Some("1")
+        && !forked
+        && (in_cmdsubst || !crate::ported::builtin::SUBSH_RAN_EXTERNAL.load(Relaxed))
+}
+
+/// bash, dash and mksh deliver a CHLD trap when a foreground child or a `( … )`
+/// subshell finishes; ksh93 and /bin/sh (bash 3.2) do not, and zsh fires it for
+/// background jobs only.
+pub fn chld_trap_on_child_exit() -> bool {
+    (bash_mode() && !sh_mode()) || dash_faithful() || pdksh_family()
+}
+
+/// An alias value as mksh lists it: its predefined aliases (`local`, `type`,
+/// `autoload`, …) are stored as `\builtin …` and listed as `\\builtin …` by
+/// `alias`, `type` and `command -v`; a user's own backslash is listed as is.
+pub fn alias_text_for_listing(text: &str) -> String {
+    if pdksh_family() && text.starts_with("\\builtin") {
+        format!("\\{text}")
+    } else {
+        text.to_string()
+    }
+}
+
+/// The Korn shells search `/bin:/usr/bin` when PATH is unset (`unset PATH; ls`
+/// still runs); every other shell here has no command to run.
+pub fn korn_default_path() -> Option<String> {
+    korn_mode().then(|| "/bin:/usr/bin".to_string())
+}
+
 pub fn signaled_status(sig: i32) -> i32 {
     if ksh93_mode() {
         256 + sig

@@ -85,6 +85,37 @@ pub fn record_inherited_sigquit_ignore() {
 #[cfg(not(unix))]
 pub fn record_inherited_sigquit_ignore() {}
 
+/// Bit `n` is set when signal `n` was `SIG_IGN` when the shell started.
+static IGNORED_ON_ENTRY: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// POSIX: "Signals that were ignored on entry to a non-interactive shell cannot be trapped
+/// or reset." bash, dash, ksh93 and mksh all honour it; zsh does not, so only the real-shell
+/// drop-ins consult this (see `settrap`).
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+#[cfg(unix)]
+pub fn record_ignored_on_entry() {
+    let mut mask = 0u64;
+    for sig in 1..32 {
+        if sig == libc::SIGKILL || sig == libc::SIGSTOP {
+            continue;
+        }
+        let ignored = unsafe {
+            let mut act: libc::sigaction = std::mem::zeroed();
+            libc::sigaction(sig, std::ptr::null(), &mut act) == 0 && act.sa_sigaction == libc::SIG_IGN
+        };
+        if ignored {
+            mask |= 1u64 << sig;
+        }
+    }
+    IGNORED_ON_ENTRY.store(mask, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether `sig` was ignored when the shell started.
+pub fn ignored_on_entry(sig: i32) -> bool {
+    (1..64).contains(&sig) && IGNORED_ON_ENTRY.load(std::sync::atomic::Ordering::Relaxed) & (1u64 << sig) != 0
+}
+
 /// Run `init_signals` (`Src/init.c:1427-1470`) on a dispatch path that
 /// does not reach `ported::init::zsh_main`.
 ///
@@ -109,6 +140,7 @@ pub fn record_inherited_sigquit_ignore() {}
 /// `trap -- '' QUIT` where zsh prints nothing.
 #[cfg(unix)]
 pub fn init_dispatch_signals() {
+    record_ignored_on_entry();
     use crate::ported::signals::install_handler;
     use crate::ported::signals_h::{signal_default, signal_ignore, winch_block, SIGCOUNT};
     use crate::ported::zsh_h::{interact, jobbing};

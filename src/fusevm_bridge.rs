@@ -3975,16 +3975,27 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // keeps the Command route below: C hands it `blank_env` (c:778-779),
         // which carries no `_` either.
         if !clean_env {
-            // !!! DROP-IN GATE (no C counterpart) !!! mksh runs the EXIT trap once,
-            // before replacing itself (a failed exec does not run it again); bash,
-            // dash and /bin/sh run it when the exec FAILS and the non-interactive
-            // shell exits (127); ksh93 exits without running it.
-            if crate::dash_mode::pdksh_family() {
-                let _ = crate::ported::signals::dotrap(crate::ported::signals_h::SIGEXIT);
+            // !!! DROP-IN GATE (no C counterpart) !!! mksh's `exec BUILTIN` runs the
+            // builtin in the shell and exits, so the EXIT trap follows it (`exec
+            // echo hi` prints hi, then the trap); an external replaces the shell
+            // without running the trap.
+            let pdksh_exec_builtin = crate::dash_mode::pdksh_family()
+                && !cmd.contains('/')
+                && crate::ported::builtin::createbuiltintable().contains_key(&cmd)
+                && !crate::ported::builtin::BUILTINS_DISABLED
+                    .lock()
+                    .map(|d| d.contains(&cmd))
+                    .unwrap_or(false);
+            if pdksh_exec_builtin {
+                let st = dispatch_builtin_raw(&cmd, rest.clone());
+                crate::ported::builtin::zexit(st, crate::ported::zsh_h::ZEXIT_NORMAL);
+                std::process::exit(st);
             }
             let st = exec_execute(&args, walk.exec_argv0.clone(), login, use_defpath, true);
+            // bash, dash, mksh and /bin/sh run the EXIT trap when the exec FAILS and
+            // the non-interactive shell exits (127); ksh93 exits without running it.
             if crate::dash_mode::bash_mode()
-                || (crate::dash_mode::posix_faithful() && !crate::dash_mode::korn_mode())
+                || (crate::dash_mode::posix_faithful() && !crate::dash_mode::ksh93_mode())
             {
                 // !!! SH GATE (no C counterpart) !!! bash 3.2 (/bin/sh) leaves 0, not
                 // 127, when an EXIT trap is set at the failed exec.
@@ -4932,6 +4943,23 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     stage_vm.last_status = parent_status;
                     register_builtins(&mut stage_vm);
                     let _ = stage_vm.run();
+                    // !!! DROP-IN GATE (no C counterpart) !!! bash, ksh93, mksh and
+                    // dash run the EXIT trap a pipeline stage set for itself when
+                    // the stage exits (`trap 'echo t' EXIT | cat` prints t); zsh
+                    // and /bin/sh do not.
+                    if (crate::dash_mode::bash_mode() || crate::dash_mode::posix_faithful())
+                        && !crate::dash_mode::sh_mode()
+                    {
+                        let exit_body = crate::ported::builtin::traps_table()
+                            .lock()
+                            .ok()
+                            .and_then(|mut t| t.remove("EXIT"));
+                        if let Some(body) = exit_body {
+                            crate::ported::builtin::LASTVAL
+                                .store(stage_vm.last_status, std::sync::atomic::Ordering::Relaxed);
+                            let _ = crate::ported::exec::execute_script(&body);
+                        }
+                    }
                     // Flush any buffered output before exiting
                     let _ = std::io::stdout().flush();
                     let _ = std::io::stderr().flush();
@@ -5101,6 +5129,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
         // Wait for all forked stages, capture per-stage statuses for PIPESTATUS.
         let mut pipestatus: Vec<i32> = Vec::with_capacity(n);
+        // See ForegroundWaitGuard::enter: a pipeline forks ksh93's subshell too.
+        if cmdsubst_outer_stdout().is_none() {
+            crate::ported::builtin::SUBSH_RAN_EXTERNAL.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
         for (i, pid) in child_pids.into_iter().enumerate() {
             // EINTR retry: the SIGCHLD handler interrupts this wait and
             // leaves `status` untouched, which used to read back as a
@@ -17913,10 +17945,17 @@ pub(crate) fn entersubsh_reset_traps() {
     // the parent, and `(false; true)` / `$(false)` print none.
     let korn = crate::extensions::dash_mode::korn_mode();
     if let Ok(mut tbl) = crate::ported::builtin::traps_table().lock() {
-        if crate::dash_mode::bash_mode() {
+        // Every drop-in takes the parent snapshot: bash and ksh93 list it, dash and
+        // /bin/sh list it from `$( … )`, and dash and mksh tell a trap the subshell
+        // set from one it inherited by it (see bin_trap's listing).
+        if crate::dash_mode::bash_mode() || crate::dash_mode::posix_faithful() {
             if let Ok(mut p) = crate::ported::builtin::BASH_SUBSH_PARENT_TRAPS.lock() {
                 if p.is_none() {
                     *p = Some(tbl.clone());
+                    crate::ported::builtin::SUBSH_TRAPS_CHANGED
+                        .store(false, std::sync::atomic::Ordering::Relaxed);
+                    crate::ported::builtin::SUBSH_RAN_EXTERNAL
+                        .store(false, std::sync::atomic::Ordering::Relaxed);
                 }
             }
         }
@@ -18101,6 +18140,7 @@ pub(crate) fn subshell_signal_leave() {
     if let Ok(mut p) = crate::ported::builtin::BASH_SUBSH_PARENT_TRAPS.lock() {
         *p = None;
     }
+    crate::ported::builtin::SUBSH_TRAPS_CHANGED.store(false, std::sync::atomic::Ordering::Relaxed);
     let pending: Vec<i32> = match SUBSH_DEFERRED_SIGS.lock() {
         Ok(mut q) => std::mem::take(&mut *q),
         Err(_) => return,
@@ -18724,6 +18764,10 @@ fn forked_child_subsh_levels() {
         Ordering::Relaxed,
     ); // c:1221
     crate::ported::builtin::SUBSHELL_DEPTH.store(0, Ordering::Relaxed);
+    // !!! DROP-IN GATE (no C counterpart) !!! bash's make_child restores the
+    // original dispositions in the child (`restore_original_signals`), and a
+    // ksh93 child dies of a terminating signal outright.
+    crate::extensions::emulation_startup::reset_dropin_fatal_signals();
     // c:1263-1264 — `ancestor_loops += loops; loops = 0;` (55061). 5.9.2 lets
     // the child inherit `loops`.
     if !crate::extensions::emulation_startup::emulating_592() {
@@ -18845,6 +18889,12 @@ impl ForegroundWaitGuard {
                                                  // this is not the `wait` builtin.
         crate::ported::signals::queue_traps(0); // c:1643
         crate::ported::signals_h::winch_unblock(); // c:Src/signals.c:232
+        // !!! DROP-IN GATE (no C counterpart) !!! ksh93 forks a `( … )` that waits
+        // for a child, and `trap` then lists only the subshell's own traps; a
+        // `$( … )` inside it keeps the parent's (dash_mode::ksh93_virtual_subshell).
+        if cmdsubst_outer_stdout().is_none() {
+            crate::ported::builtin::SUBSH_RAN_EXTERNAL.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
         ForegroundWaitGuard { q }
     }
 }
@@ -18865,6 +18915,12 @@ impl Drop for ForegroundWaitGuard {
         crate::ported::signals::unqueue_traps(); // c:1667
         crate::ported::signals_h::child_unblock(); // c:1668
         crate::ported::signals_h::restore_queue_signals(self.q); // c:1669
+        // !!! DROP-IN GATE (no C counterpart) !!! bash, dash and mksh run a CHLD
+        // trap when a foreground child finishes; zsh fires it for background
+        // jobs only. dotrap returns at once when CHLD is not trapped.
+        if crate::dash_mode::chld_trap_on_child_exit() {
+            let _ = crate::ported::signals::dotrap(libc::SIGCHLD);
+        }
     }
 }
 
@@ -21969,13 +22025,24 @@ impl fusevm::ShellHost for ZshrsHost {
             .lock()
             .ok()
             .and_then(|mut t| t.remove("EXIT"));
+        let signal_exit = crate::ported::builtin::EXIT_PENDING_SIGNAL.swap(false, std::sync::atomic::Ordering::Relaxed);
         if let Some(body) = exit_trap_body {
             // Execute the trap body. Errors during trap execution
             // don't bubble — zsh ignores trap-body errors.
             with_executor(|exec| {
                 let _ = exec.execute_string_without_exit_hooks(&body);
             });
+            // !!! DROP-IN GATE (no C counterpart) !!! mksh's forked subshell, killed
+            // by a caught signal, exits with its EXIT trap's status
+            // (`( trap 'echo s' EXIT; sh -c 'kill -TERM $PPID' ); echo $?` → 0).
+            if signal_exit && crate::dash_mode::fatal_exit_status_is_trap_status() {
+                crate::ported::builtin::EXIT_VAL.store(
+                    crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed),
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+            }
         }
+<<<<<<< Updated upstream
         // The `( … )` BUILTIN_SUBSH_FORK forked this process for has finished:
         // the child exits with the subshell's status (c:Src/exec.c:4383-4389).
         let depth = with_executor(|exec| exec.subshell_snapshots.len());
@@ -21990,6 +22057,13 @@ impl fusevm::ShellHost for ZshrsHost {
             let _ = std::io::stderr().flush();
             unsafe { libc::_exit(status) };
         }
+=======
+        // !!! DROP-IN GATE (no C counterpart) !!! bash, dash and mksh run the
+        // parent's CHLD trap when the forked `( … )` child exits; the in-process
+        // subshell has no child to reap, so the trap is run here instead. It
+        // runs after the state below is restored, on the parent's trap table.
+        let run_chld_trap = crate::dash_mode::chld_trap_on_child_exit();
+>>>>>>> Stashed changes
         with_executor(|exec| {
             // c:Src/exec.c::entersubsh — the subshell is a forked child, so a
             // NOMATCH failure raised inside it (c:Src/glob.c:1877) lives and
@@ -22203,6 +22277,9 @@ impl fusevm::ShellHost for ZshrsHost {
         // the PARENT traps, now that the parent's `sigtrapped[]` and
         // `traps_table` are back. See `subshell_defer_signal`.
         subshell_signal_leave();
+        if run_chld_trap {
+            let _ = crate::ported::signals::dotrap(libc::SIGCHLD);
+        }
         // c:Src/exec.c — a `( … )` subshell is a FORK in C: an errflag
         // abort inside the child ends the child with its lastval as
         // the exit status, and the flag dies with the child process.
@@ -23688,6 +23765,17 @@ impl ShellExecutor {
                     // `>&file`; a non-number word is "Bad fd number" (status 2).
                     crate::ported::utils::zerr(&format!("Bad fd number: {n}"));
                     self.set_last_status(crate::extensions::dash_mode::fatal_error_status().unwrap_or(2));
+                    self.redirect_failed = true;
+                } else if op_byte == r::DUP_WRITE && crate::extensions::dash_mode::korn_mode() {
+                    // !!! KORN GATE (no C counterpart) !!! neither Korn shell has
+                    // `>&file` either: the command fails with status 1 and the
+                    // script goes on.
+                    if crate::extensions::dash_mode::ksh93_mode() {
+                        crate::ported::utils::zwarn(&format!("{n}: bad file unit number"));
+                    } else {
+                        crate::ported::utils::zwarn(&format!(">&{n} : illegal file descriptor name"));
+                    }
+                    self.set_last_status(1);
                     self.redirect_failed = true;
                 } else if op_byte == r::DUP_WRITE {
                     // c:Src/glob.c:2184-2187 xpandredir — a MERGEOUT
