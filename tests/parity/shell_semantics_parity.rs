@@ -516,3 +516,45 @@ mod unset_and_unbraced_splats {
         assert_parity(r#"e=(); printf '<%s>' x"$e[@]"y "$e[@]"y; set -- p q; printf '<%s>' x"$argv[@]"y; print"#);
     }
 }
+
+/// An associative array's values come out in the table's visit order
+/// (Src/hashtable.c scanhashtable) for every whole-array read, including the
+/// `"${h[@]}"` / `${h[@]}` / `"${h[*]}"` splats, not in insertion order.
+#[test]
+fn assoc_value_splats_follow_hash_order() {
+    assert_parity(r#"typeset -A h=(b 2 a 1 c 3 foo x bar y zz q); print -- "${h[@]}"; print -- ${h[@]}; print -- "${h[*]}"; for v in "${h[@]}"; do printf '%s ' $v; done; print"#);
+}
+
+/// Word lists past 255 words: the VM's call ops count arguments in a u8, so
+/// a longer list wrapped mod 256 (`for` over 300 words ran 44 times).
+mod word_lists_past_255_words {
+    use super::*;
+
+    fn words(n: usize) -> String {
+        (1..=n).map(|i| format!("w{i}")).collect::<Vec<_>>().join(" ")
+    }
+
+    #[test]
+    fn for_and_select_lists() {
+        for n in [255, 256, 300] {
+            let w = words(n);
+            assert_parity(&format!("n=0; for k in {w}; do ((n++)); done; print $n $k"));
+            assert_parity(&format!(r#"select x in {w}; do print -- "[$x]"; break; done <<< {n} 2>/dev/null"#));
+        }
+    }
+
+    #[test]
+    fn precommands_dynamic_words_and_anonymous_functions() {
+        let w = words(300);
+        assert_parity(&format!("builtin print {w} | wc -w; c=print; $c {w} | wc -w"));
+        assert_parity(&format!("builtin print {w} 2>/dev/null | wc -w; f(){{ print $#; }}; c=f; $c {w}"));
+        assert_parity(&format!("() {{ print $# $1 ${{@[-1]}}; }} {w}"));
+    }
+
+    #[test]
+    fn subscripted_array_assignment() {
+        let w = words(300);
+        assert_parity(&format!("a=(1 2 3); a[2,2]=({w}); print ${{#a}} $a[1] $a[2] $a[-1]; a[2]+=({w}); print ${{#a}}"));
+        assert_parity(&format!("set -- x y; 2=({w}); print $# $2"));
+    }
+}

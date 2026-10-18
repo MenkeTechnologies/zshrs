@@ -540,3 +540,24 @@ fn unset_parameters_list_and_splat_as_bash_does() {
         assert_bash_parity(bash, script);
     }
 }
+
+/// bash enumerates an associative array in its own hash-table order (1024
+/// FNV-1 buckets, head insertion, ×4 growth past two entries per bucket), not
+/// in insertion order: `${!h[@]}`, `${h[@]}`, `declare -p`, `@K` and `@A` all
+/// walk it. An overwrite keeps the slot; an unset key re-added goes to the
+/// head of its bucket.
+#[test]
+fn associative_arrays_enumerate_in_bash_hash_order() {
+    let Some(bash) = bash_path() else {
+        eprintln!("SKIP: no bash >= 4 with $BASHOPTS found");
+        return;
+    };
+    for script in [
+        r#"declare -A h=([b]=2 [a]=1 [c]=3 [foo]=x [bar]=y [zz]=q); echo "${!h[@]}"; echo "${h[@]}"; echo "${h[*]}"; declare -p h"#,
+        r#"declare -A h=([b]=2 [a]=1 [c]=3 [é]=e ["a b"]=s); for k in "${!h[@]}"; do printf '<%s>' "$k"; done; echo; printf '<%s>' "${h[@]@K}"; echo; echo "${h[@]@A}""#,
+        r#"declare -A h; for k in k1 k2 k3 k1 k9 k2; do h[$k]=1; done; unset 'h[k3]'; h[k3]=2; h[new]=n; echo "${!h[@]}"; h=([z]=1 [y]=2); echo "${!h[@]}""#,
+        r#"declare -A h; for i in {1..5000}; do h[k$i]=$i; done; echo "${!h[@]}" | cksum; echo "${h[@]}" | cksum"#,
+    ] {
+        assert_bash_parity(bash, script);
+    }
+}

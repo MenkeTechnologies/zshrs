@@ -2632,7 +2632,9 @@ fn param_value_elems_c2916(exec: &mut ShellExecutor, name: &str) -> (Vec<String>
         // c:Src/params.c:392,393,430 — the three IPDEF9 rows over `pparams`.
         return (exec.pparams(), true);
     }
-    if let Some(assoc_map) = exec.assoc(name) {
+    // c:Src/hashtable.c scanhashtable — values in the table's visit order,
+    // which `assoc_get` reconstructs (the store is insertion-ordered).
+    if let Some(assoc_map) = exec.has_assoc(name).then(|| crate::ported::subst::assoc_get(name)).flatten() {
         // c:Src/params.c — assoc-splat values for `"${h[@]}"` / `"${h[*]}"`.
         // Bug #109 in docs/BUGS.md.
         return (assoc_map.values().cloned().collect::<Vec<_>>(), true);
@@ -8730,7 +8732,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // `get_variable("h")` (also empty for an assoc-only
                 // name), and returned `Array(vec![])`. zsh's expected
                 // behavior is to enumerate values.
-                if let Some(assoc_map) = exec.assoc(&name) {
+                // In the table's visit order (c:Src/hashtable.c scanhashtable),
+                // which `assoc_get` reconstructs from the insertion-ordered store.
+                if let Some(assoc_map) =
+                    exec.has_assoc(&name).then(|| crate::ported::subst::assoc_get(&name)).flatten()
+                {
                     return Value::array(assoc_map.values().cloned().map(Value::str).collect());
                 }
                 match exec.array(&name) {

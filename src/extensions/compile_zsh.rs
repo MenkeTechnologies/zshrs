@@ -3340,7 +3340,6 @@ impl ZshCompiler {
                 || first_untoked.starts_with('~')
                 || first_untoked.starts_with('='));
         if first_is_dynamic {
-            let argc = simple.words.len() as u8;
             // c:Src/exec.c:3009 `use_cmdoutval = !args` — clear the
             // cmd-subst-ran flag BEFORE this command's words expand, so a
             // `$(...)` from an earlier command can't make THIS command's
@@ -3375,6 +3374,7 @@ impl ZshCompiler {
                     self.builder.emit(Op::Pop, 0);
                 }
             }
+            let argc = self.emit_pack_argv(simple.words.len(), 0);
             // c:Src/exec.c:3285-3304 → c:3720 — the pipe fds and then
             // the redirect scope open AFTER the word ops, so an
             // expansion zerr (`=cmd` not found, nomatch) hits the
@@ -3739,7 +3739,6 @@ impl ZshCompiler {
                 _ => None,
             };
             if let Some(opcode) = opcode {
-                let argc = (simple.words.len() - 1) as u8;
                 // c:Src/exec.c:3104-3402 — the precommand walk (`exec`'s
                 // option errors, a prefix left with no command) runs before c:3720 applies the
                 // redirections, so its diagnostics reach the ORIGINAL
@@ -3824,6 +3823,7 @@ impl ZshCompiler {
                         self.builder.emit(Op::Pop, 0);
                     }
                 }
+                let argc = self.emit_pack_argv(simple.words.len() - 1, usize::from(has_redirects));
                 // c:Src/exec.c:3285-3304 → c:3720 — pipe fds and then
                 // the redirect scope open after arg expansion, before
                 // addvars/dispatch.
@@ -4732,30 +4732,10 @@ impl ZshCompiler {
             Some(fusevm::shell_builtins::BUILTIN_CD) if first_clean == "chdir" => None,
             other => other,
         };
-        // u8 argc overflow. `CallBuiltin`/`CallFunction` carry argc as a u8
-        // (op.rs `Call{,Builtin,Function}(u16, u8)`), so a command invoked
-        // with >255 args wraps argc mod 256 and the dispatch pops only the
-        // last `argc & 0xFF` slots — the rest leak on the VM stack. This bit
-        // compsys: a completer's `_arguments <specs…>` with a large option
-        // set (curl ships 274) collapsed to ~20 options because `_arguments`
-        // (a function) received only `274 & 0xFF` of its argv. Pack the
-        // pushed args into a single Array (Op::MakeArray, u16-counted),
-        // recursively flatten it (BUILTIN_ARGV_RFLATTEN — a brace/glob/`$arr`
-        // word contributes a NESTED Array that the call op's single-level
-        // splat would stringify), and dispatch with argc=1; the VM's
-        // CallFunction flatten (vm.rs) and pop_args' array-splat
-        // (fusevm_bridge) then restore the full positional list. Mirrors the
-        // MakeArray dodge used for `arr=(...)` literals.
-        let argc = if argc_full > u8::MAX as usize {
-            self.builder.emit(Op::MakeArray(argc_full as u16), 0);
-            self.builder.emit(
-                Op::CallBuiltin(crate::vm_helper::BUILTIN_ARGV_RFLATTEN, 1),
-                0,
-            );
-            1u8
-        } else {
-            argc
-        };
+        // u8 argc overflow — see `emit_pack_argv`. This bit compsys: a
+        // completer's `_arguments <specs…>` with a large option set (curl
+        // ships 274) collapsed to ~20 options.
+        let argc = if argc_full > u8::MAX as usize { self.emit_pack_argv(argc_full, 0) } else { argc };
         if let Some(builtin_id) = builtin_id {
             if head_is_typeset_family && simple.typeset_reswd {
                 // c:Src/exec.c:3088-3096 — `if (type == WC_TYPESET && (hn =
@@ -6278,6 +6258,7 @@ impl ZshCompiler {
                                 .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_SPLIT, 0), 0);
                         }
                     }
+                    let nvals = self.emit_pack_argv(elements.len(), 3);
                     let name_const = self.builder.add_constant(Value::str(base));
                     self.builder.emit(Op::LoadConst(name_const), 0);
                     // Key may contain `$var` / `$#name` — emit through
@@ -6296,7 +6277,7 @@ impl ZshCompiler {
                     // it to the handler via the trailing append flag.
                     self.builder
                         .emit(Op::LoadInt(if assign.append { 1 } else { 0 }), 0);
-                    let argc = (elements.len() + 3) as u8;
+                    let argc = nvals + 3;
                     self.builder.emit(
                         Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_SUBSCRIPT_RANGE, argc),
                         0,
@@ -6595,6 +6576,26 @@ impl ZshCompiler {
         // N <= 0: BREAK_COUNT_VALIDATE already emitted the error and set
         // errflag; no table entry matches Int(0), so control falls
         // through here and the VM aborts on errflag.
+    }
+
+    /// The argc for `n` argument values just pushed, with `extra` more values
+    /// the call pops after them. `CallBuiltin` /
+    /// `CallFunction` carry argc as a u8 (op.rs `Call{,Builtin,Function}(u16,
+    /// u8)`), so past 255 it wraps mod 256: the dispatch pops only the last
+    /// `n & 0xFF` values and the rest leak on the VM stack. Past that limit the
+    /// values are packed into one Array (Op::MakeArray, u16-counted) and
+    /// recursively flattened (BUILTIN_ARGV_RFLATTEN — a brace/glob/`$arr` word
+    /// contributes a NESTED Array the call's single-level splat would
+    /// stringify), and the call takes argc 1; the VM's CallFunction flatten
+    /// (vm.rs) and pop_args' array-splat (fusevm_bridge) restore the list.
+    fn emit_pack_argv(&mut self, n: usize, extra: usize) -> u8 {
+        if n + extra <= u8::MAX as usize {
+            return n as u8;
+        }
+        self.builder.emit(Op::MakeArray(n as u16), 0);
+        self.builder
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARGV_RFLATTEN, 1), 0);
+        1
     }
 
     fn emit_unbraced_subscript(&mut self, name: &str, key: &str, suffix: &str, quoted: bool) {
@@ -11340,7 +11341,7 @@ impl ZshCompiler {
                             .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_SPLIT, 0), 0);
                     }
                 }
-                ws.len()
+                usize::from(self.emit_pack_argv(ws.len(), 2))
             }
             // c:Src/loop.c:235-242 — `select x; do … done` (WC_SELECT_PPARAM)
             // takes the positionals DIRECTLY:
@@ -11634,8 +11635,9 @@ impl ZshCompiler {
                 );
             }
         }
+        let flatten_argc = self.emit_pack_argv(words.len(), 0);
         self.builder.emit(
-            Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_FLATTEN, words.len() as u8),
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_FLATTEN, flatten_argc),
             0,
         );
         // ARRAY_FLATTEN pushes Array then Int(len) (its return). Top is len.
@@ -12740,7 +12742,6 @@ impl ZshCompiler {
         // route through CallFunction (host.call_function checks
         // functions_compiled).
         if let Some(args) = &f.auto_call_args {
-            let argc = args.len() as u8;
             for arg in args {
                 self.compile_word_str(arg);
             }
@@ -12782,6 +12783,7 @@ impl ZshCompiler {
                     0,
                 );
                 self.builder.emit(Op::Pop, 0);
+                let argc = self.emit_pack_argv(args.len(), 0);
                 let name_idx = self.builder.add_name(&cleaned);
                 self.builder.emit(Op::CallFunction(name_idx, argc), 0);
                 self.builder.emit(Op::SetStatus, 0);

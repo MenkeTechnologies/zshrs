@@ -16586,7 +16586,8 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
             return;
         }
         if fl & PM_HASHED != 0 {
-            let m = crate::ported::exec::assoc(&nm).unwrap_or_default();
+            // In bash's own hash-table order (`assoc_enumeration_order`).
+            let m = crate::ported::subst::assoc_get(&nm).unwrap_or_default();
             let body: String = m
                 .iter()
                 .map(|(k, v)| {
@@ -16700,7 +16701,8 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
                 .into_iter()
                 .collect();
             m.sort();
-            let body: Vec<String> = m.iter().map(|(k, v)| format!("[{k}]={}", q(v))).collect();
+            // ksh93 quotes a key exactly like a value: `['a b']=1`, `[$'it\'s']=2`.
+            let body: Vec<String> = m.iter().map(|(k, v)| format!("[{}]={}", q(k), q(v))).collect();
             println!("{head}{nm}=({})", body.join(" "));
         } else if fl & PM_ARRAY != 0 {
             let a = hn

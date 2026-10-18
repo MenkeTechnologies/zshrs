@@ -2838,40 +2838,145 @@ pub fn bash_array_elem_store(name: &str, val: &str) -> Option<String> {
     }
 }
 
-/// ksh93's `printf %q` quoting of one argument.
+/// ksh93's `printf %q` quoting of one argument: a port of ksh93u+m 1.0.10
+/// `sh_fmtq` (src/cmd/ksh93/sh/string.c), the quoting `typeset -p`, `alias`
+/// and `printf %q` share.
 ///
-/// !!! EMULATION-ONLY (no C counterpart) !!! zsh backslash-escapes
-/// (`a\ b`); ksh93u+m wraps in single quotes (`'a b'`), switches to the
-/// ANSI-C `$'…'` form when the argument holds a control character or an
-/// apostrophe, and leaves `a=b`, `a!b`, `a,b`, `a%b`, `a+b`, `a@b`, `a^b`
-/// and non-ASCII text bare. Measured against ksh93u+m 1.0.10 with every
-/// ASCII punctuation character between two letters, plus leading `=`.
+/// !!! EMULATION-ONLY (no zsh C counterpart) !!! zsh backslash-escapes
+/// (`a\ b`). ksh93 leaves a leading identifier bare (and the `name=` of an
+/// assignment-shaped word), single-quotes when a lexer-special character
+/// remains, and switches to the ANSI-C `$'…'` form for an apostrophe or a
+/// character the locale cannot print — every non-ASCII one under the C
+/// locale, written byte by byte:
+///   $ LC_ALL=C ksh -c 'printf "%q\n" é "x=a b"'   → $'\xc3\xa9'  x='a b'
 pub fn ksh93_printf_q(arg: &str) -> String {
-    if arg.is_empty() {
-        return "''".to_string();
-    }
-    if arg.chars().any(|c| c.is_control()) || arg.contains('\'') {
-        let mut out = String::from("$'");
-        for c in arg.chars() {
-            match c {
-                '\\' => out.push_str("\\\\"),
-                '\'' => out.push_str("\\'"),
-                '\t' => out.push_str("\\t"),
-                '\n' => out.push_str("\\n"),
-                '\r' => out.push_str("\\r"),
-                c if c.is_control() => out.push_str(&format!("\\x{:02x}", c as u32)),
-                c => out.push(c),
+    // mbchar: characters in a multibyte locale, bytes under the C locale.
+    let wide = !crate::extensions::c_locale::codeset_is_ascii();
+    let units: Vec<(u32, &str)> = if wide {
+        arg.char_indices().map(|(i, c)| (c as u32, &arg[i..i + c.len_utf8()])).collect()
+    } else {
+        arg.bytes().enumerate().map(|(i, b)| (b as u32, arg.get(i..i + 1).unwrap_or(""))).collect()
+    };
+    let ch = |c: u32| char::from_u32(c).unwrap_or('\0');
+    // c:308 sh_isprint
+    let sh_isprint = |c: u32| {
+        if !wide || c <= 127 {
+            (0x20..0x7f).contains(&c)
+        } else {
+            crate::extensions::c_locale::iswgraph(ch(c))
+        }
+    };
+    // lexstates.h isaletter / isaname: `[A-Za-z_]` / `[A-Za-z0-9_]`, and
+    // isalpha(3) above 0x7f.
+    let isaletter = |c: u32| {
+        if c > 0x7f {
+            wide && crate::extensions::c_locale::iswalpha(ch(c))
+        } else {
+            c == b'_' as u32 || ch(c).is_ascii_alphabetic()
+        }
+    };
+    let isaname = |c: u32| isaletter(c) || (c <= 0x7f && ch(c).is_ascii_digit());
+    // sh_lexstates[ST_NORM][c] && c != S_EPAT, for ASCII c (measured on ksh93
+    // with every printable character between two `-`).
+    let lex_special = |c: u32| c <= 0x7f && " \t\n\"$&'()*;<>?[\\`{|}".contains(ch(c));
+    let at = |i: usize| units.get(i).map_or(0, |u| u.0);
+
+    let mut out = String::new();
+    let mut i = 1; // index after `c`, like C's `cp`
+    let mut c = at(0);
+    let mut state = u8::from(c == 0);
+    let mut start = 0; // C's `string`
+    if isaletter(c) {
+        loop {
+            c = at(i);
+            i += 1;
+            if !isaname(c) {
+                break;
             }
         }
-        out.push('\'');
+        if c == 0 {
+            return arg.to_string();
+        }
+        if c == b'=' as u32 {
+            if i >= units.len() {
+                return arg.to_string();
+            }
+            if at(i) == b'=' as u32 {
+                i += 1;
+            }
+            units[..i].iter().for_each(|u| out.push_str(u.1));
+            start = i;
+            c = at(i);
+            i += 1;
+        }
+    }
+    if c == 0 || c == b'#' as u32 || c == b'~' as u32 {
+        state = 1;
+    }
+    while c != 0 {
+        if c == b'\'' as u32 || !sh_isprint(c) {
+            state = 2;
+        } else if c == b']' as u32 || c == b'=' as u32 || (c != b':' as u32 && lex_special(c)) {
+            state |= 1;
+        }
+        c = at(i);
+        i += 1;
+    }
+    let rest = &units[start..];
+    if state < 2 {
+        let body: String = rest.iter().map(|u| u.1).collect();
+        if state == 1 {
+            out.push('\'');
+            out.push_str(&body);
+            out.push('\'');
+        } else {
+            out.push_str(&body);
+        }
         return out;
     }
-    const SPECIAL: &str = " \"#$&()*;<>?[\\]`{|}~";
-    if arg.starts_with('=') || arg.chars().any(|c| SPECIAL.contains(c)) {
-        return format!("'{arg}'");
+    out.push_str("$'");
+    for (k, &(c, text)) in rest.iter().enumerate() {
+        let next_is_xdigit = rest.get(k + 1).is_some_and(|n| ch(n.0).is_ascii_hexdigit());
+        let hex_byte = |out: &mut String, b: u32| {
+            if next_is_xdigit {
+                out.push_str(&format!("\\x[{b:02x}]"));
+            } else {
+                out.push_str(&format!("\\x{b:02x}"));
+            }
+        };
+        let escaped = match c {
+            0x1b => 'E',
+            0x0a => 'n',
+            0x0d => 'r',
+            0x09 => 't',
+            0x0c => 'f',
+            0x08 => 'b',
+            0x07 => 'a',
+            0x5c | 0x27 => ch(c),
+            _ => {
+                if wide {
+                    if c < 128 && !(0x20..0x7f).contains(&c) {
+                        hex_byte(&mut out, c); // unprintable ASCII: one hex byte
+                    } else if !sh_isprint(c) {
+                        out.push_str(&format!("\\u[{c:x}]"));
+                    } else {
+                        out.push_str(text);
+                    }
+                } else if !(0x20..0x7f).contains(&c) {
+                    hex_byte(&mut out, c);
+                } else {
+                    out.push_str(text);
+                }
+                continue;
+            }
+        };
+        out.push('\\');
+        out.push(escaped);
     }
-    arg.to_string()
+    out.push('\'');
+    out
 }
+
 
 /// ksh93 `print` / `echo -e` backslash escapes, as measured on
 /// /opt/homebrew/bin/ksh (93u+m). The set is narrower than zsh's
@@ -4112,4 +4217,54 @@ pub fn bash_array_attr_store(name: &str, vals: Vec<String>) -> Vec<String> {
     vals.into_iter()
         .map(|v| bash_array_elem_store(base, &v).unwrap_or(v))
         .collect()
+}
+
+/// The order bash / ksh93 enumerate an associative array, as indices into
+/// `keys` (the insertion-ordered store); `None` for every other personality,
+/// which keeps zsh's own hash-bucket order.
+///
+/// bash keeps an assoc in its `hashlib.c` table: `ASSOC_HASH_BUCKETS` (1024)
+/// buckets, the FNV-1 `hash_string`, each new key PREPENDED to its bucket
+/// chain (`hash_insert`), and the table grown ×4 (`hash_rehash`, chains
+/// walked head→tail and prepended again) once `nentries >= nbuckets * 2`
+/// before an insert. `${!h[@]}`, `${h[@]}` and `declare -p` walk buckets in
+/// index order:
+///   $ bash -c 'declare -A h=([b]=2 [a]=1 [c]=3); echo "${!h[@]}"'   → c b a
+/// ksh93 keeps keys in an ordered dictionary, sorted by bytes in every locale:
+///   $ ksh -c 'typeset -A h=([b]=1 [B]=2 [10]=3); echo "${!h[@]}"'     → 10 B b
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn assoc_enumeration_order(keys: &[&str]) -> Option<Vec<usize>> {
+    if ksh93_mode() {
+        let mut order: Vec<usize> = (0..keys.len()).collect();
+        order.sort_by(|&a, &b| keys[a].as_bytes().cmp(keys[b].as_bytes()));
+        return Some(order);
+    }
+    if !bash_mode() {
+        return None;
+    }
+    // hashlib.c hash_string: `i *= FNV_PRIME; i ^= *s;` over `const char *`,
+    // so a byte >= 0x80 is sign-extended where `char` is signed.
+    let hash = |k: &str| -> u32 {
+        k.bytes().fold(2_166_136_261u32, |i, b| {
+            i.wrapping_mul(16_777_619) ^ (b as std::ffi::c_char as i32 as u32)
+        })
+    };
+    let hashes: Vec<u32> = keys.iter().map(|k| hash(k)).collect();
+    let mut nbuckets = 1024usize; // assoc.h ASSOC_HASH_BUCKETS
+    let mut buckets: Vec<Vec<usize>> = vec![Vec::new(); nbuckets]; // each chain head-first
+    for (i, &h) in hashes.iter().enumerate() {
+        if i >= nbuckets * 2 {
+            // HASH_SHOULDGROW → hash_grow → hash_rehash(nbuckets * 4)
+            nbuckets *= 4;
+            let old = std::mem::replace(&mut buckets, vec![Vec::new(); nbuckets]);
+            for chain in old {
+                for idx in chain {
+                    buckets[hashes[idx] as usize & (nbuckets - 1)].insert(0, idx);
+                }
+            }
+        }
+        buckets[h as usize & (nbuckets - 1)].insert(0, i);
+    }
+    Some(buckets.into_iter().flatten().collect())
 }

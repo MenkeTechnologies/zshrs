@@ -30381,6 +30381,16 @@ pub(crate) fn assoc_get(name: &str) -> Option<indexmap::IndexMap<String, String>
             // every key on every ×4 growth — on the 51,709-entry `$_comps`
             // that is ~98k hash calls and ~103k String allocations per read.
             let keys: Vec<&str> = m.keys().map(String::as_str).collect();
+            // !!! BASH/KSH93 GATE (no C counterpart) !!! those shells walk
+            // their own tables; see `assoc_enumeration_order`.
+            if let Some(order) = crate::dash_mode::assoc_enumeration_order(&keys) {
+                return Some(
+                    order
+                        .into_iter()
+                        .filter_map(|i| m.get_index(i).map(|(k, v)| (k.clone(), v.clone())))
+                        .collect(),
+                );
+            }
             let n = keys.len();
             let hashes: Vec<u32> = keys
                 .iter()

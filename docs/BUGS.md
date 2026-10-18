@@ -19,6 +19,53 @@ CI green pending the underlying fix.
 
 ---
 
+## #1194 — word lists past 255 words wrapped mod 256 — fixed
+
+**Status:** `fixed` 2026-10-18.
+
+```
+$ zsh   -fc 'n=0; for k in w1 … w300; do ((n++)); done; print $n'   → 300
+$ zshrs -fc '…same…'                                                 → 44     ✗
+$ zshrs -fc 'builtin print w1 … w300'          → zshrs:1: no such builtin: w256   ✗
+```
+
+The VM's call ops carry argc as a `u8`. The plain command dispatch already packed
+more than 255 values into one array (`Op::MakeArray` is u16-counted), but the
+other call sites cast the count to `u8`: a `for` list, a `select` list, the
+`builtin` / `command` / `exec` precommands, a command whose name is an expansion
+(`$c w1 … w300`), an anonymous function's arguments, and a subscripted array
+assignment (`a[2,2]=(…)`, `N=(…)`). All of them now go through one helper
+(`emit_pack_argv`). Pinned by `shell_semantics_parity::word_lists_past_255_words`.
+
+---
+
+## #1195 — associative arrays enumerated in insertion order — fixed
+
+**Status:** `fixed` 2026-10-18.
+
+```
+$ zsh  -fc 'typeset -A h=(b 2 a 1 c 3); print -- "${h[@]}"'          → 3 2 1 (hash order)
+$ zshrs -fc '…same…'                                                 → 2 1 3   ✗
+$ bash -c 'declare -A h=([b]=2 [a]=1 [c]=3); echo "${!h[@]}"'        → c b a
+$ zshrs --bash -c '…same…'                                           → zsh's hash order   ✗
+$ ksh  -c 'typeset -A h=([b]=1 [B]=2 [10]=3); echo "${!h[@]}"'       → 10 B b
+```
+
+`subst::assoc_get` rebuilds zsh's bucket order from the insertion-ordered store,
+but the `"${h[@]}"` / `"${h[*]}"` splat fast paths and bash's `declare -p` read the
+store directly. They now go through `assoc_get`. Under `--bash` the order is bash's
+`hashlib.c` table: 1024 FNV-1 buckets, head insertion, and ×4 growth once
+`nentries >= nbuckets * 2`; this was checked against bash 5.3 with up to 9000 keys.
+Under `--ksh` keys are sorted by bytes. ksh93's `typeset -p` also quotes keys, and
+`printf %q` / `typeset -p` / `alias` quoting is now a port of ksh93u+m's `sh_fmtq`,
+including the `name=` prefix, leading `#`/`~`, and the locale's printable test (the
+C locale escapes every non-ASCII byte). Pinned by
+`shell_semantics_parity::assoc_value_splats_follow_hash_order`,
+`bash_shopt_parity::associative_arrays_enumerate_in_bash_hash_order` and
+`emulation_builtin_fmt_parity::associative_arrays_follow_ksh93_order_and_quoting`.
+
+---
+
 ## #1190 — `--bash`: a declared-but-unset variable listed as `declare -i z=""` — fixed
 
 **Status:** `fixed` 2026-10-18.

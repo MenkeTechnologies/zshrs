@@ -553,3 +553,30 @@ fn unset_name_splats_match_korn_shells() {
     }
     assert!(ran > 0, "neither ksh nor mksh is installed — the comparison never ran");
 }
+
+/// ksh93 keeps an associative array's keys sorted by bytes, and `typeset -p`
+/// quotes a key exactly as it quotes a value (sh_fmtq). ASCII only: the local
+/// reference may be AT&T 93u+, whose sh_fmtq treats every non-ASCII
+/// character as unprintable where the ksh93u+m zshrs follows does not.
+#[test]
+fn associative_arrays_follow_ksh93_order_and_quoting() {
+    let Some(refbin) = ksh() else {
+        eprintln!("SKIP ksh: not installed on this host");
+        return;
+    };
+    let zbin = zshrs_bin();
+    let z = zbin.to_str().expect("zshrs path is UTF-8");
+    for script in [
+        r#"typeset -A h=([b]=1 [B]=2 [10]=3 [9]=4 ["a b"]=6 [_x]=7 [a]=8 [-]=9); echo "${!h[@]}"; echo "${h[@]}"; for k in "${!h[@]}"; do printf '<%s>' "$k"; done; echo"#,
+        r##"typeset -A h=(["a b"]=1 ["*"]=2 [x=y]=3 ["]"]=4 [""]=5 ["\$v"]=6 ["it's"]=7 [-]=9 ["a\\b"]=10); typeset -p h"##,
+        r##"for s in "" a "a b" "x=a b" "x==y" "x=" "a.b" "#a" "a#" "~a" "a~" "it's" "a]" "a:b" "\$HOME"; do printf '%q\n' "$s"; done"##,
+    ] {
+        let r = run(&refbin, &["-c"], script);
+        let g = run(z, &["--ksh", "-f", "-c"], script);
+        assert_eq!(
+            (r.stdout.as_str(), r.exit),
+            (g.stdout.as_str(), g.exit),
+            "ksh vs zshrs --ksh\n  script: {script}"
+        );
+    }
+}

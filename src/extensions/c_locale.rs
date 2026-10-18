@@ -56,7 +56,7 @@ fn set_eilseq() {
 /// True when the current `LC_CTYPE` codeset is ASCII — the C/POSIX locale.
 /// Asked per call, because `LC_ALL=C cmd` and `LC_CTYPE=…` assignments
 /// change the locale at run time.
-fn codeset_is_ascii() -> bool {
+pub fn codeset_is_ascii() -> bool {
     // SAFETY: nl_langinfo returns a pointer to a NUL-terminated static
     // string (or NULL), valid until the next setlocale on this thread.
     let cs = unsafe { libc::nl_langinfo(libc::CODESET) };
@@ -114,6 +114,10 @@ type WintT = libc::c_uint;
 extern "C" {
     #[link_name = "iswalnum"]
     fn libc_iswalnum(wc: WintT) -> libc::c_int;
+    #[link_name = "iswalpha"]
+    fn libc_iswalpha(wc: WintT) -> libc::c_int;
+    #[link_name = "iswgraph"]
+    fn libc_iswgraph(wc: WintT) -> libc::c_int;
 }
 
 /// `iswalnum(3)` for a non-ASCII character, the test zsh's `wcsitype` makes
@@ -128,4 +132,26 @@ pub fn iswalnum(c: char) -> bool {
     std::sync::LazyLock::force(&crate::ported::utils::MB_LOCALE_READY);
     // SAFETY: iswalnum reads only its argument and the thread's locale.
     unsafe { libc_iswalnum(c as WintT) != 0 }
+}
+
+/// `iswalpha(3)`, with every character above 0x7f rejected under an ASCII
+/// codeset (where none of them decodes), like [`iswalnum`].
+pub fn iswalpha(c: char) -> bool {
+    if c as u32 > 0x7f && codeset_is_ascii() {
+        return false;
+    }
+    std::sync::LazyLock::force(&crate::ported::utils::MB_LOCALE_READY);
+    // SAFETY: iswalpha reads only its argument and the thread's locale.
+    unsafe { libc_iswalpha(c as WintT) != 0 }
+}
+
+/// `iswgraph(3)`, with every character above 0x7f rejected under an ASCII
+/// codeset, like [`iswalnum`].
+pub fn iswgraph(c: char) -> bool {
+    if c as u32 > 0x7f && codeset_is_ascii() {
+        return false;
+    }
+    std::sync::LazyLock::force(&crate::ported::utils::MB_LOCALE_READY);
+    // SAFETY: iswgraph reads only its argument and the thread's locale.
+    unsafe { libc_iswgraph(c as WintT) != 0 }
 }
