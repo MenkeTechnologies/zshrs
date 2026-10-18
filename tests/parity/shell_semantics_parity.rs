@@ -485,3 +485,34 @@ mod process_substitution_output_is_waited_for {
         assert_parity(r#"for i in 1 2; do print $i > >(cat); done; print end"#);
     }
 }
+
+/// The `[@]` splat of an UNSET name is an empty WORD (Src/subst.c:3603-3610
+/// leaves `isarr` at 0), so unquoted it is removed by prefork
+/// (c:184-187) and quoted it stays one empty word. An UNBRACED `$a[@]` only
+/// subscripts with KSH_ARRAYS unset (c:2800-2802), and quoted it keeps one
+/// word per element like `"${a[@]}"` (c:2916 `isarr = -1`), empty elements
+/// included (c:4387).
+mod unset_and_unbraced_splats {
+    use super::*;
+
+    #[test]
+    fn an_unquoted_splat_of_an_unset_name_is_no_word() {
+        assert_parity(r#"f(){ print $#; }; f ${nope[@]}; f ${nope[@]} "${nope[@]}"; f x${nope[@]} ${nope[@]}y"#);
+        assert_parity(r#"for w in ${nope[@]}; do print it; done; a=(${nope[@]}); print ${#a}"#);
+        assert_parity(r#"setopt shwordsplit; f(){ print $#; }; f ${nope[@]}"#);
+    }
+
+    #[test]
+    fn unbraced_splat_under_ksh_arrays_is_literal_text() {
+        assert_parity(r#"setopt ksharrays; a=(1 2); printf '<%s>' "$a[0]y" "$a[@]y" "$a[*]y" "$a[@]"; print"#);
+        assert_parity(r#"setopt ksharrays nonomatch; a=(1 2); printf '<%s>' $a[@] $a[*]; print"#);
+        assert_parity(r#"a=(1 2); f(){ setopt localoptions ksharrays nonomatch; printf '<%s>' $a[@]; print; }; f; printf '<%s>' $a[@]; print"#);
+    }
+
+    #[test]
+    fn quoted_unbraced_splat_keeps_its_elements() {
+        assert_parity(r#"a=(1 2); printf '<%s>' x"$a[@]"y x"$a[@]" "$a[@]"y "$a[@]""$a[@]" x"$a[*]"y; print"#);
+        assert_parity(r#"a=(1 '' 2); printf '<%s>' x"$a[@]"y; a=('' 1 ''); printf '<%s>' x"$a[@]"y "$a[@]"y; print"#);
+        assert_parity(r#"e=(); printf '<%s>' x"$e[@]"y "$e[@]"y; set -- p q; printf '<%s>' x"$argv[@]"y; print"#);
+    }
+}

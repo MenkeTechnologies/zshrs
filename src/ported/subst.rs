@@ -15305,6 +15305,18 @@ pub fn paramsubst(
                 // because a subscripted `${*[2,4]}` already had its
                 // shape decided by the slice dispatch above.
                 isarr = 1;
+            } else if is_strict_at_subscript
+                && !used_subexp
+                && (crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode())
+                && !vars_contains(&var_name)
+            {
+                // !!! BASH/KORN GATE (no C counterpart) !!! bash, ksh93 and
+                // mksh read `"${nope[@]}"` on an unset name as an EMPTY array:
+                // zero words, where zsh yields one empty word.
+                //   $ bash -c 'printf "<%s>" "${nope[@]}" "${nope[*]}" x'  → <><x>
+                isarr = -1;
+                value = String::new();
+                split_parts = Some(Vec::new());
             }
         }
         // c:Src/params.c:2288's SECOND half — `v->end = 1, v->scanflags = 0;`.
@@ -17850,9 +17862,21 @@ pub fn paramsubst(
                     // emitted ZERO words for the expansion where zsh emits one
                     // empty word.
                     value = String::new(); // c:3196
-                    split_parts = None; // c:3197 (aval no longer consulted)
-                    isarr = 0; // c:3198
-                    c3227_scalarized = true; // c:3198
+                    if (crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode())
+                        && matches!(splat_sub!(), Some("@"))
+                    {
+                        // !!! BASH/KORN GATE (no C counterpart) !!! the unused
+                        // alternate of a `[@]` splat stays an EMPTY array, so
+                        // `"${a[@]+w}"` is zero words, not one empty word:
+                        //   $ bash -c 'printf "<%s>" "${a[@]+w}" x'  → <x>
+                        split_parts = Some(Vec::new());
+                        isarr = -1;
+                        c3227_scalarized = false;
+                    } else {
+                        split_parts = None; // c:3197 (aval no longer consulted)
+                        isarr = 0; // c:3198
+                        c3227_scalarized = true; // c:3198
+                    }
                 }
                 // Seed split_parts so the downstream c:4245 auto-splat
                 // sees the substituted scalar, not the original array.
@@ -17973,9 +17997,21 @@ pub fn paramsubst(
                     // emitted ZERO words for the expansion where zsh emits one
                     // empty word.
                     value = String::new(); // c:3196
-                    split_parts = None; // c:3197 (aval no longer consulted)
-                    isarr = 0; // c:3198
-                    c3227_scalarized = true; // c:3198
+                    if (crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode())
+                        && matches!(splat_sub!(), Some("@"))
+                    {
+                        // !!! BASH/KORN GATE (no C counterpart) !!! the unused
+                        // alternate of a `[@]` splat stays an EMPTY array, so
+                        // `"${a[@]+w}"` is zero words, not one empty word:
+                        //   $ bash -c 'printf "<%s>" "${a[@]+w}" x'  → <x>
+                        split_parts = Some(Vec::new());
+                        isarr = -1;
+                        c3227_scalarized = false;
+                    } else {
+                        split_parts = None; // c:3197 (aval no longer consulted)
+                        isarr = 0; // c:3198
+                        c3227_scalarized = true; // c:3198
+                    }
                 }
                 // None OR empty: a flag-form/search subscript pre-seeds
                 // split_parts=Some([]) up front, which would otherwise
@@ -23318,7 +23354,20 @@ pub fn paramsubst(
                 let scalar: String =
                     String::from_utf8_lossy(&crate::ported::utils::unmetafy_str(&value))
                         .into_owned();
+                // An unset reference (undeclared, declared without a value, or
+                // an absent element) recreates as the bare declaration. A splat
+                // asks about the parameter itself: `a=()` is set, just empty.
+                let ref_unset = if bash_splat_ref {
+                    paramtab().read().ok().map_or(true, |t| {
+                        t.get(&var_name).map_or(true, |pm| {
+                            pm.node.flags as u32 & crate::ported::zsh_h::PM_UNSET != 0
+                        })
+                    })
+                } else {
+                    !is_set
+                };
                 let shape = match kind {
+                    _ if ref_unset => BashParamShape::Unset,
                     1 => BashParamShape::Indexed(&idx_items),
                     2 => BashParamShape::Assoc(&kv_items),
                     // A bare assoc name reads key "0"; when that key is absent
@@ -23333,10 +23382,12 @@ pub fn paramsubst(
                 if bash_at_assign {
                     let out = crate::dash_mode::bash_assignment_string(&var_name, &attrs, &shape);
                     if at_splat {
-                        let words = crate::dash_mode::bash_split_ifs_quote_aware(
-                            &out,
-                            vars_get("IFS").as_deref(),
-                        );
+                        // An unset name with no attributes splats to ZERO words.
+                        let words = if out.is_empty() {
+                            Vec::new()
+                        } else {
+                            crate::dash_mode::bash_split_ifs_quote_aware(&out, vars_get("IFS").as_deref())
+                        };
                         (words.join(" "), Some(words))
                     } else {
                         (out, None)
@@ -27758,7 +27809,12 @@ pub fn paramsubst(
                                           // c:Src/params.c:1724-1734 — a hash MATCHMANY subscript is array-shaped;
                                           // `flag_multi_parts` holds the matched elements getarg found.
         let splat_flag_multi = flag_multi_parts.is_some();
-        if !qt                                                // c:3950
+        // c:Src/params.c:2027-2029 — only `[@]` adds SCANPM_ISVAR_AT, and
+        // c:Src/subst.c:2916 makes that `isarr = -1`, which the quoted
+        // sepjoin at c:3032 (`qt && isarr > 0`) leaves alone: `"$a[@]"y`
+        // keeps one word per element inside double quotes, like `"${a[@]}"y`.
+        let quoted_at_splat = splat_full && subscript_str.as_deref() == Some("@");
+        if (!qt || quoted_at_splat)                           // c:3950
             && !ksharrays_bare // c:Src/params.c:2293-2296 — isarr=0, no splat
             && pf_flags & PREFORK_SINGLE == 0          // c:3950
             && (subscript_str.is_none() || splat_full || splat_range || splat_flag_multi) // c:3950
@@ -27868,7 +27924,11 @@ pub fn paramsubst(
                     return (result.clone(), prefix.chars().count(), vec![result]); // c:4287
                 }
                 let mut nodes: Vec<String> = Vec::with_capacity(arr.len()); // c:3950
+                // c:4387 — `if (qt && !*y && isarr != 2) y = dupstring(nulstring)`:
+                // a quoted empty element survives prefork's empty-node removal.
+                let nul = crate::ported::zsh_h::Nularg.to_string();
                 for (i, part) in arr.iter().enumerate() {
+                    let part = if qt && part.is_empty() { &nul } else { part };
                     // c:3950
                     let s = if arr.len() == 1 {
                         // c:3950

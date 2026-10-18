@@ -8800,6 +8800,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 );
                                 exec.set_last_status(1);
                             }
+                            // !!! BASH/KORN GATE (no C counterpart) !!! bash, ksh93 and
+                            // mksh splat an unset name as an EMPTY array — zero words
+                            // quoted or not — where zsh yields one empty word:
+                            //   $ bash -c 'printf "<%s>" "${nope[@]}" x'  → <x>
+                            if crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode() {
+                                return Value::array(Vec::new());
+                            }
                             // c:Src/subst.c:3480-3485 — an UNSET parameter takes the
                             // `vunset` arm: `val = dupstring("")` with isarr left at
                             // 0. That is a SCALAR empty, so plan9 keeps the
@@ -8878,6 +8885,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             return result;
         }
         let Value::Array(items) = &result else {
+            // c:Src/subst.c:184-187 — the unset parameter's scalar empty is
+            // still an empty WORD, and an unquoted one is removed:
+            // `f ${unset[@]}` passes no argument. A segment of a larger word
+            // leaves that test to the word's own end-of-word drop.
+            let whole_word = crate::ported::subst::PARAMSUBST_AFFIXES_DEFERRED.with(|c| c.get()) == 0;
+            if whole_word && result.to_str().is_empty() {
+                return Value::array(Vec::new());
+            }
             return result;
         };
         let elems: Vec<String> = items.iter().map(|v| v.to_str()).collect();

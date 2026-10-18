@@ -516,3 +516,40 @@ fn inherited_sig_ign_follows_each_reference_shell() {
         }
     }
 }
+
+// ===========================================================================
+// unset-name array splats (Korn shells)
+// ===========================================================================
+
+/// ksh93 and mksh splat an unset name as an EMPTY array: `"${nope[@]}"` and
+/// an unused `"${nope[@]+w}"` are zero words, and an unbraced `$a[@]` is
+/// `$a` followed by the literal `[@]` (KSH_ARRAYS). dash and ash have no
+/// arrays, so only the Korn shells of the matrix are compared; bash is pinned
+/// in `bash_shopt_parity`.
+#[test]
+fn unset_name_splats_match_korn_shells() {
+    let zbin = zshrs_bin();
+    let z = zbin.to_str().expect("zshrs path is UTF-8");
+    let scripts = [
+        r#"printf '<%s>' "${nope[@]}" "${nope}" "${nope[@]-e}" "${nope[@]+f}" ${nope[@]} "${#nope[@]}" "pre${nope[@]}post" "${nope[*]}" x; echo"#,
+        r#"set -A a 1 2; printf '<%s>' "$a[@]" $a[@] "$a[1]" $a[*] "$nope[@]" x; echo"#,
+    ];
+    let mut ran = 0usize;
+    for (flag, refbin, label) in [("--ksh", ksh(), "ksh"), ("--mksh", mksh(), "mksh")] {
+        let Some(refbin) = refbin else {
+            eprintln!("SKIP {label}: not installed on this host");
+            continue;
+        };
+        ran += 1;
+        for script in scripts {
+            let r = run(&refbin, &["-c"], script);
+            let g = run(z, &[flag, "-f", "-c"], script);
+            assert_eq!(
+                (r.stdout.as_str(), r.exit),
+                (g.stdout.as_str(), g.exit),
+                "{label} vs zshrs {flag}\n  script: {script}"
+            );
+        }
+    }
+    assert!(ran > 0, "neither ksh nor mksh is installed — the comparison never ran");
+}

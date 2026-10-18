@@ -513,3 +513,30 @@ fn array_attributes_apply_to_every_stored_element() {
         assert_bash_parity(bash, script);
     }
 }
+
+/// bash lists a declared-but-unset variable with no value (`declare -i z`,
+/// not `declare -i z=""`), and `${v@A}` recreates it the same way — or as
+/// nothing when it has no attributes. An unset name splats as an EMPTY array:
+/// `"${nope[@]}"` and an unused `"${a[@]+w}"` are zero words, where zsh
+/// yields one empty word.
+#[test]
+fn unset_parameters_list_and_splat_as_bash_does() {
+    let Some(bash) = bash_path() else {
+        eprintln!("SKIP: no bash >= 4 with $BASHOPTS found");
+        return;
+    };
+    for script in [
+        r#"declare -i z; declare -n r; declare -u u; declare -l a b; declare -p z r u a b"#,
+        r#"export ee; declare -x e; declare -r ro; declare v; declare -p ee e ro v; echo "${ee+set}""#,
+        r#"f(){ local v; local -i n; declare -p v n; }; f"#,
+        r#"declare -u U; declare -p U; U=ab; declare -p U; declare z=; declare -p z"#,
+        r#"declare -i z; declare v; printf '<%s>' "${z@A}" "${v@A}" "${nope@A}" "${nope[@]@A}" "${z@K}"; echo"#,
+        r#"a=(x); declare -a d; declare -A h; printf '<%s>' "${a[3]@A}" "${d[@]@A}" "${d@A}" "${h[@]@A}" "${h[x]@A}"; echo"#,
+        r#"a=(); declare -A g=(); printf '<%s>' "${a[@]@A}" "${a@A}" "${g[@]@A}"; echo"#,
+        r#"printf '<%s>' "${nope[@]}" "${nope}" "${nope[0]}" "${nope[@]:0}" "${nope[@]#x}" "${nope[@]:-d}" "${nope[@]-e}" "${nope[@]+f}" ${nope[@]} "${#nope[@]}" "${nope[@]@Q}" "pre${nope[@]}post" "${nope[*]}" x; echo"#,
+        r#"a=(); b=(1); printf '<%s>' "${a[@]+f}" "${a[@]:+f}" "${a[@]:+f}"y z"${a[@]+f}" "${a[*]+f}" "${b[@]+f}" "${b[@]:+f}"; echo"#,
+        r#"a=(1 2); printf '<%s>' "$a[@]" $a[@] "$a[1]" $a[*] "$nope[@]" x; echo"#,
+    ] {
+        assert_bash_parity(bash, script);
+    }
+}

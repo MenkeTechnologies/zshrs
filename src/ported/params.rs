@@ -16579,8 +16579,9 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
             }
             o
         };
-        // A declared but never assigned array lists bare: `declare -a a`, no `=()`.
-        if fl & (PM_HASHED | PM_ARRAY) != 0 && fl & PM_UNSET != 0 {
+        // A declared but never assigned parameter of any type lists bare:
+        // `declare -a a`, `declare -i z`, `declare -n r` -- no `=()` / `=""`.
+        if fl & PM_UNSET != 0 {
             println!("declare {} {}", flag_disp, nm);
             return;
         }

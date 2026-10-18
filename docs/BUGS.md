@@ -19,6 +19,89 @@ CI green pending the underlying fix.
 
 ---
 
+## #1190 — `--bash`: a declared-but-unset variable listed as `declare -i z=""` — fixed
+
+**Status:** `fixed` 2026-10-18.
+
+```
+$ bash        -c 'declare -i z; declare -p z; declare v; printf "<%s>" "${z@A}" "${v@A}"'
+declare -i z
+<declare -i z><>
+$ zshrs --bash -c '…same…'
+declare -i z=""                                                     ✗
+<declare -i z=''><v=''>                                             ✗
+```
+
+Only arrays had the bare form. Every type (`-i`, `-n`, `-x`, `-r`, `-u`, `-l`,
+plain, `local`) now lists without a value while `PM_UNSET` is set. `${v@A}` on an
+unset reference (undeclared, declared without a value, or an absent element such as
+`${a[3]@A}`) recreates the bare declaration, and is empty when there are no
+attributes. A splat asks about the parameter, so `a=(); ${a[@]@A}` is still
+`declare -a a=()`. Pinned by `bash_shopt_parity::unset_parameters_list_and_splat_as_bash_does`.
+
+---
+
+## #1191 — `--bash` / `--ksh` / `--mksh`: `"${nope[@]}"` on an unset name gave one empty word — fixed
+
+**Status:** `fixed` 2026-10-18.
+
+```
+$ bash -c 'printf "<%s>" "${nope[@]}" "${a[@]+w}" ${nope[@]} x'    → <x>
+$ zshrs --bash -c '…same…'                                         → <><><>x   ✗
+```
+
+bash, ksh93 and mksh treat an unset name as an empty array, so `"${nope[@]}"`, an
+unused `"${a[@]+w}"` / `"${a[@]:+w}"`, and `${nope[@]@A}` are zero words. zsh gives
+one empty word (`Src/subst.c:3603-3610`), and `--zsh` keeps that. A common bash
+idiom depends on it: `cmd "${extra_opts[@]}"` with `extra_opts` never assigned. The
+`BUILTIN_ARRAY_ALL` fast path, paramsubst's `[@]` fetch, and both alternate arms now
+produce the empty array under `bash_mode() || korn_mode()`. Pinned by
+`bash_shopt_parity::unset_parameters_list_and_splat_as_bash_does` and
+`emulation_builtin_fmt_parity::unset_name_splats_match_korn_shells`.
+
+---
+
+## #1192 — unquoted `${unset[@]}` kept an empty word — fixed
+
+**Status:** `fixed` 2026-10-18.
+
+```
+$ zsh   -fc 'f(){ print $#; }; f ${nope[@]}; for w in ${nope[@]}; do print it; done'   → 0
+$ zshrs -fc '…same…'                                                                 → 1
+                                                                                       it   ✗
+```
+
+The unset parameter's `[@]` read is a scalar empty (`Src/subst.c:3603-3610`), but
+an unquoted empty word is still removed by prefork (`c:184-187`).
+`BUILTIN_ARRAY_ALL` returned the empty string past its removal step, which handles
+only array results. A whole word now becomes zero words. A segment of a larger word
+(`x${nope[@]}`) still leaves the test to the word's end-of-word drop. Pinned by
+`shell_semantics_parity::unset_and_unbraced_splats`.
+
+---
+
+## #1193 — unbraced `$a[@]`: subscripted under KSH_ARRAYS, joined inside `"$a[@]"y` — fixed
+
+**Status:** `fixed` 2026-10-18.
+
+```
+$ zsh   -fc 'setopt ksharrays nonomatch; a=(1 2); printf "<%s>" $a[@]'   → <1[@]>
+$ zshrs -fc '…same…'                                                     → <1><2>       ✗
+$ zsh   -fc 'a=(1 "" 2); printf "<%s>" x"$a[@]"y'                        → <x1><><2y>
+$ zshrs -fc '…same…'                                                     → <x1  2y>     ✗
+```
+
+`fetchvalue` parses the bracket of an unbraced reference only with `KSH_ARRAYS` unset
+(`Src/subst.c:2800-2802`). The compile-time `$name[@]` / `$name[*]` splice fast path
+ignored the option, which is a runtime fact. It now branches on it and hands the
+`KSH_ARRAYS` case to the text expansion, which also fixes `--bash`, `--ksh` and
+`--mksh`, where `$a[@]` is `1[@]`. The runtime unbraced splat was gated on `!qt`.
+In C, `[@]` gives `isarr = -1` (`Src/params.c:2027-2029` → `Src/subst.c:2916`), which
+the quoted sepjoin at `c:3032` leaves alone, and a quoted empty element becomes
+`nulstring` (`c:4387`). Pinned by `shell_semantics_parity::unset_and_unbraced_splats`.
+
+---
+
 ## #1143 — a resize during a completion lost the prompt row instead of repainting it — fixed
 
 **Status:** `fixed` 2026-09-11.

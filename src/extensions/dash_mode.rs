@@ -2498,7 +2498,11 @@ pub fn bash_assignment_string(name: &str, attrs: &str, shape: &BashParamShape) -
         format!("declare -{} ", attrs)
     };
     match shape {
-        // An unset reference recreates as a bare declaration with no `=`.
+        // An unset reference recreates as a bare declaration with no `=`;
+        // without attributes there is nothing to declare, so it is empty:
+        //   $ bash -c 'declare -i z; declare v; printf "<%s>" "${z@A}" "${v@A}"'
+        //   <declare -i z><>
+        BashParamShape::Unset if attrs.is_empty() => String::new(),
         BashParamShape::Unset => format!("{}{}", decl, name),
         BashParamShape::Scalar(v) => format!("{}{}={}", decl, name, bash_quote_reusable(v)),
         BashParamShape::Indexed(items) => {

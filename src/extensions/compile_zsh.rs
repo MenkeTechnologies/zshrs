@@ -8921,6 +8921,28 @@ impl ZshCompiler {
                 if let Some(name) =
                     array_splice_ref(&untoked).filter(|_| !crate::dash_mode::dash_strict())
                 {
+                    // c:Src/subst.c:2800-2802 — fetchvalue parses the bracket of
+                    // an UNBRACED `$name[@]` only when `unset(KSHARRAYS)`; with
+                    // the option set (`setopt ksharrays`, bash, ksh) the `[@]`
+                    // is literal text after `$name`. The option is a run-time
+                    // fact, so that reading is a branch to the text expansion.
+                    let ksharrays_branch = (!untoked.starts_with("${")).then(|| {
+                        let opt = self.builder.add_constant(Value::str("ksharrays"));
+                        self.builder.emit(Op::LoadConst(opt), 0);
+                        self.builder
+                            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_OPTION_SET, 1), 0);
+                        let to_fast = self.builder.emit(Op::JumpIfFalse(0), 0);
+                        let text = self.builder.add_constant(Value::str(s));
+                        self.builder.emit(Op::LoadConst(text), 0);
+                        let mode = self.text_mode_for_context(self.text_base_mode(s));
+                        self.builder.emit(Op::LoadInt(mode as i64), 0);
+                        self.builder
+                            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 2), 0);
+                        let to_end = self.builder.emit(Op::Jump(0), 0);
+                        let fast = self.builder.current_pos();
+                        self.builder.patch_jump(to_fast, fast);
+                        to_end
+                    });
                     let idx = self.builder.add_constant(Value::str(name));
                     self.builder.emit(Op::LoadConst(idx), 0);
                     // c:Src/subst.c:4226 — `if (isarr && ssub) { val =
@@ -8996,6 +9018,10 @@ impl ZshCompiler {
                         2
                     };
                     self.builder.emit(Op::CallBuiltin(bid, join_argc), 0);
+                    if let Some(to_end) = ksharrays_branch {
+                        let end = self.builder.current_pos();
+                        self.builder.patch_jump(to_end, end);
+                    }
                     return;
                 }
             }
