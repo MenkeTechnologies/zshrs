@@ -2246,6 +2246,14 @@ impl ZshCompiler {
                 // Previous Rust port pushed CS_SUBSH which caused
                 // `( cmd )` traces to differ from zsh — fixed by
                 // dropping the push.
+                // c:Src/exec.c:2999-3008 — under job control the subshell is
+                // forked as a job (BUILTIN_SUBSH_FORK); the parent skips the body.
+                let subsh_text = tstr(&render_cmd_for_debug(&ZshCommand::Subsh(prog.clone()), true));
+                let subsh_text_const = self.builder.add_constant(Value::str(subsh_text));
+                self.builder.emit(Op::LoadConst(subsh_text_const), 0);
+                self.builder
+                    .emit(Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_SUBSH_FORK, 1), 0);
+                let subsh_forked = self.builder.emit(Op::JumpIfTrue(0), 0);
                 self.builder.emit(Op::SubshellBegin, 0);
                 let saved = std::mem::take(&mut self.return_patches);
                 // Same containment for the execlist `!breaks` gate: C
@@ -2297,6 +2305,7 @@ impl ZshCompiler {
                     }
                 }
                 self.builder.emit(Op::SubshellEnd, 0);
+                self.builder.patch_jump(subsh_forked, self.builder.current_pos());
                 // c:Src/exec.c — after a WC_SUBSH child exits, the
                 // parent checks errflag / set -e against the inner
                 // exit status. `set -e; (false); echo done` should

@@ -12846,6 +12846,75 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // !!! WARNING: RUST-ONLY HELPER — no C counterpart. Closest analog:
     // c:Src/exec.c:1628 `sublist_done:` DEBUG block + c:1370 `!breaks` list
     // gate. Pure bytecode plumbing: it only decides that both are no-ops.
+    // See BUILTIN_SUBSH_FORK.
+    vm.register_builtin(BUILTIN_SUBSH_FORK, |vm, _argc| {
+        use crate::ported::jobs;
+        use std::sync::atomic::Ordering;
+        let text = vm.pop().to_str();
+        let nested = with_executor(|e| !e.subshell_snapshots.is_empty());
+        if !crate::ported::zsh_h::jobbing()
+            || crate::exec_jobs::foreground_job_is_nested(nested)
+            || crate::ported::exec::subsh.load(Ordering::Relaxed) != 0
+            || crate::ported::exec::list_pipe_child.load(Ordering::Relaxed) != 0
+        {
+            return Value::Bool(false);
+        }
+        let table = jobs::JOBTAB.get_or_init(|| std::sync::Mutex::new(Vec::new()));
+        let pj = *jobs::THISJOB.get_or_init(|| std::sync::Mutex::new(-1)).lock().unwrap();
+        let held = crate::exec_jobs::execpline_slot_current();
+        let newjob = held.unwrap_or_else(|| jobs::initjob(&mut table.lock().unwrap_or_else(|e| e.into_inner())));
+        *jobs::THISJOB.get_or_init(|| std::sync::Mutex::new(-1)).lock().unwrap() = newjob as i32;
+        let _ = std::io::stdout().flush();
+        let _ = std::io::stderr().flush();
+        let pid = unsafe { libc::fork() };
+        if pid == 0 {
+            // c:2868 — the child: `entersubsh(ESUB_PGRP)` makes it the job's
+            // group leader and gives it the terminal.
+            forked_child_subsh_levels(); // c:Src/exec.c:1221
+            crate::ported::exec::entersubsh(crate::ported::exec::esub::PGRP, None);
+            let depth = with_executor(|e| e.subshell_snapshots.len()) + 1;
+            FORKED_SUBSH_DEPTH.with(|d| d.set(Some(depth)));
+            return Value::Bool(false);
+        }
+        if pid < 0 {
+            *jobs::THISJOB.get_or_init(|| std::sync::Mutex::new(-1)).lock().unwrap() = pj;
+            return Value::Bool(false);
+        }
+        // c:2853 — `addproc(pid, text, 0, &bgtime, esret.gleader, ...)`.
+        unsafe { libc::setpgid(pid, pid) };
+        {
+            let mut tab = table.lock().unwrap_or_else(|e| e.into_inner());
+            if newjob < tab.len() {
+                if tab[newjob].gleader == 0 {
+                    tab[newjob].gleader = pid;
+                }
+                let gl = tab[newjob].gleader;
+                jobs::addproc(&mut tab[newjob], pid, &text, false, Some(std::time::Instant::now()), gl, -1);
+            }
+        }
+        jobs::waitjobs(); // c:1835
+        let mut tab = table.lock().unwrap_or_else(|e| e.into_inner());
+        let stopped = tab.get(newjob).is_some_and(|j| (j.stat & crate::ported::zsh_h::STAT_STOPPED) != 0);
+        if !stopped {
+            if let Some(p) = tab.get(newjob).and_then(|j| j.procs.last()) {
+                let val = if p.is_signaled() {
+                    crate::dash_mode::signaled_status(p.term_sig()) // c:Src/jobs.c:489-490
+                } else {
+                    p.exit_status() // c:Src/jobs.c:494
+                };
+                crate::ported::builtin::LASTVAL.store(val, Ordering::Relaxed);
+            }
+            if held.is_none() && newjob < tab.len() {
+                jobs::deletejob(&mut tab, newjob, false); // c:1977-1979
+            }
+        }
+        drop(tab);
+        *jobs::THISJOB.get_or_init(|| std::sync::Mutex::new(-1)).lock().unwrap() = pj;
+        let status = crate::ported::builtin::LASTVAL.load(Ordering::Relaxed);
+        vm.last_status = status;
+        with_executor(|e| e.set_last_status(status));
+        Value::Bool(true)
+    });
     vm.register_builtin(BUILTIN_STMT_TAIL_FAST, |_vm, _argc| {
         use std::sync::atomic::Ordering;
         // c:Src/exec.c:1828-1829 — `if (newjob == list_pipe_job &&
@@ -19934,6 +20003,20 @@ pub const BUILTIN_COND_GLOB_EXPAND: u16 = 791;
 /// after `:`. No filename generation follows; the value is stored untokenized.
 pub const BUILTIN_ASSIGN_FILESUB: u16 = 793;
 
+/// c:Src/exec.c:2999-3008 + execcmd_fork (c:2853) — under job control a
+/// foreground `( … )` at the top of the command line forks, and the forked
+/// subshell is the job, so `^Z` stops it. Pops the job text; returns `true`
+/// in the parent, which has waited for the job and set the status (the
+/// compiled code jumps past the body), `false` in the child and whenever
+/// the subshell runs in process.
+pub const BUILTIN_SUBSH_FORK: u16 = 794;
+
+thread_local! {
+    /// `subshell_snapshots` depth of the `( … )` BUILTIN_SUBSH_FORK forked this
+    /// process for: its SubshellEnd is where the child `_exit`s.
+    static FORKED_SUBSH_DEPTH: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
 /// Reset the default-word glob-pending carrier at the START of a word
 /// whose source contains a glob metachar (so the flag never leaks from a
 /// prior word/statement). Paired with BUILTIN_DEFAULT_WORD_GLOB.
@@ -21892,6 +21975,20 @@ impl fusevm::ShellHost for ZshrsHost {
             with_executor(|exec| {
                 let _ = exec.execute_string_without_exit_hooks(&body);
             });
+        }
+        // The `( … )` BUILTIN_SUBSH_FORK forked this process for has finished:
+        // the child exits with the subshell's status (c:Src/exec.c:4383-4389).
+        let depth = with_executor(|exec| exec.subshell_snapshots.len());
+        if FORKED_SUBSH_DEPTH.with(|d| d.get()) == Some(depth) {
+            // An `exit N` in the body is the deferred exit below (8 bits).
+            let status = if crate::ported::builtin::EXIT_PENDING.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+                crate::ported::builtin::EXIT_VAL.load(std::sync::atomic::Ordering::Relaxed) & 0xFF
+            } else {
+                with_executor(|exec| exec.last_status())
+            };
+            let _ = std::io::stdout().flush();
+            let _ = std::io::stderr().flush();
+            unsafe { libc::_exit(status) };
         }
         with_executor(|exec| {
             // c:Src/exec.c::entersubsh — the subshell is a forked child, so a

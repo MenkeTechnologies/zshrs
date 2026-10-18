@@ -1361,7 +1361,8 @@ fn cmdarg_last_command_replaces_the_shell() {
 /// c:Src/exec.c:1110-1183 (entersubsh) + c:Src/jobs.c:642-650 (update_job)
 /// + c:Src/jobs.c:2617-2714 (bin_fg) — under job control a foreground
 /// command runs in its own process group with the terminal, so `^Z` stops it:
-/// the shell reports `zsh: suspended  <text>`, `$?` is 0200|SIGTSTP, the job
+/// the shell reports `zsh: suspended  <text>`, `$?` is 0200 (146 on
+/// macOS, 148 on Linux)|SIGTSTP, the job
 /// stays in the table, and `fg` reports it `continued` and waits for it.
 /// zshrs spawned the command in its own process group with SIGTSTP ignored,
 /// so `^Z` did nothing, and `fg` / `bg` only sent SIGCONT.
@@ -1380,9 +1381,21 @@ mod foreground_job_control {
         let d = driver(
             "/bin/sleep 3; print A${:-}=$?",
             "zpty -w w 'jobs; fg; print B${:-}=$?'; sleep 3.5; pump",
-            r#"[[ $all == *"zsh: suspended  /bin/sleep 3"* && $all == *A=146* && $all == *"[1]  + suspended  /bin/sleep 3"* && $all == *"[1]  + continued  /bin/sleep 3"* && $all == *B=0* ]] && print V=yes || print V=no"#,
+            r#"[[ $all == *"zsh: suspended  /bin/sleep 3"* && $all == *A=$(( 128 + $(kill -l TSTP) ))* && $all == *"[1]  + suspended  /bin/sleep 3"* && $all == *"[1]  + continued  /bin/sleep 3"* && $all == *B=0* ]] && print V=yes || print V=no"#,
         );
         assert_same_verdict(&d, "V", "^Z suspended the command and fg resumed it");
+    }
+
+    #[test]
+    fn ctrl_z_suspends_a_foreground_subshell() {
+        // c:Src/exec.c:2999-3008 — zsh forks `( … )` and the forked subshell
+        // is the job; zshrs ran it in process, so `^Z` reached nothing.
+        let d = driver(
+            "( /bin/sleep 3; print I${:-}N ); print A${:-}=$?",
+            "zpty -w w 'fg'; sleep 3.5; pump",
+            r#"[[ $all == *"zsh: suspended  ( /bin/sleep 3"* && $all == *A=$(( 128 + $(kill -l TSTP) ))* && $all == *"continued  ( /bin/sleep 3"* && $all == *IN* ]] && print V=yes || print V=no"#,
+        );
+        assert_same_verdict(&d, "V", "^Z suspended the subshell and fg resumed it");
     }
 
     #[test]
@@ -1417,7 +1430,7 @@ mod superjob {
     fn a_stop_inside_a_function_suspends_the_function() {
         let d = driver(
             r#"f() { sh -c 'kill -TSTP $$'; print A${:-}FTER=$? }; f; print N${:-}EXT"#,
-            r#"[[ $all == *"zsh: suspended"* && $all == *"[1]  + continued"* && $all == *AFTER=146* && $all != *NEXT* && $all == *RC=0* && $all == *END* ]] && print V=yes || print V=no"#,
+            r#"[[ $all == *"zsh: suspended"* && $all == *"[1]  + continued"* && $all == *AFTER=$(( 128 + $(kill -l TSTP) ))* && $all != *NEXT* && $all == *RC=0* && $all == *END* ]] && print V=yes || print V=no"#,
         );
         assert_same_verdict(&d, "V", "a stop inside a function suspended the function as one job");
     }
@@ -1426,7 +1439,7 @@ mod superjob {
     fn a_stop_inside_a_loop_resumes_the_loop() {
         let d = driver(
             r#"for i in 1 2; do sh -c 'kill -TSTP $$'; print I${:-}T$i=$?; done; print N${:-}EXT"#,
-            r#"[[ $all == *"zsh: suspended  sh -c"* && $all == *"[1]  + suspended  sh -c"* && $all == *IT1=146* && $all == *IT2=0* && $all != *NEXT* && $all == *END* ]] && print V=yes || print V=no"#,
+            r#"[[ $all == *"zsh: suspended  sh -c"* && $all == *"[1]  + suspended  sh -c"* && $all == *IT1=$(( 128 + $(kill -l TSTP) ))* && $all == *IT2=0* && $all != *NEXT* && $all == *END* ]] && print V=yes || print V=no"#,
         );
         assert_same_verdict(&d, "V", "a stop inside a loop resumed the rest of the loop after fg");
     }
