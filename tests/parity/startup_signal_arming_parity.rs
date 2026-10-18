@@ -218,18 +218,13 @@ fn untrapped_usr1_matches_zsh_on_both_c_paths() {
     assert_untrapped("USR1");
 }
 
-/// OPEN GAP, not a regression: zsh's SIGINT handler does not terminate
-/// the shell — it sets `errflag |= ERRFLAG_INT` (c:Src/signals.c:457) and
-/// execlist's `while (… && !errflag)` (c:Src/exec.c:1443) ends the list,
-/// so zsh exits NORMALLY with 130. zshrs emits no such per-statement gate
-/// for a top-level `-c` chunk, so installing the handler would let the
-/// rest of the list run (`print survived`, exit 0) — measurably worse
-/// than leaving SIGINT at its default disposition, which is what
-/// `startup_signals::init_dispatch_signals` does and why `$?` agrees at
-/// 130 while the wait status here does not (killed-by-2 vs exited-130).
-/// Un-ignore this the day the list gate lands.
+/// zsh's SIGINT handler does not terminate the shell: it sets
+/// `errflag |= ERRFLAG_INT` (c:Src/signals.c:457) and execlist's
+/// `while (… && !errflag)` (c:Src/exec.c:1443) ends the list, so zsh EXITS
+/// normally with 130 rather than dying by the signal. zshrs matches through
+/// the `BUILTIN_FATAL_ABORT_CHECK` list gate, which lets
+/// `init_dispatch_signals` install the handler as C does.
 #[test]
-#[ignore = "no top-level errflag list gate: zshrs dies from SIGINT where zsh exits 130 normally"]
 fn untrapped_int_matches_zsh_on_both_c_paths() {
     assert_untrapped("INT");
 }
