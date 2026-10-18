@@ -7748,6 +7748,7 @@ thread_local! {
 
 /// Port of `assignsparam()` from `Src/params.c:3193`.
 pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
+    crate::dash_mode::note_optind_assignment(s); // bash/ksh93 getopts reset hook
     let result_unused = ASSIGN_RESULT_UNUSED.replace(false);
     // c:3203 `if (!isident(s)) { zerr; errflag |= ERRFLAG_ERROR; return NULL; }`
     if !isident(s) {
@@ -11723,6 +11724,7 @@ pub fn assigniparam(s: &str, val: i64, flags: i32) -> Option<Param> {
 /// matching C exactly so integer-typed params get created with the
 /// right PM_INTEGER flag.
 pub fn setiparam(s: &str, val: i64) -> Option<Param> {
+    crate::dash_mode::note_optind_assignment(s); // bash/ksh93 getopts reset hook
     // c:3770-3771 — `mnumber{ .type = MN_INTEGER, .u.l = val }`.
     let mnval = mnumber {
         l: val,

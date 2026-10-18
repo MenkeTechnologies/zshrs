@@ -15068,6 +15068,7 @@ pub fn bin_getopts(
     let write_optind = |v: i64| {
         if optind_set {
             setiparam("OPTIND", v);
+            crate::dash_mode::clear_optind_assignment(); // getopts' own write
         }
     };
     let mut zoptind = if optind_set {

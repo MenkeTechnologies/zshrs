@@ -1553,16 +1553,37 @@ pub fn getopts_optind_internal(param_value: i64) -> i64 {
 /// drop-in modes and in the dash family, so zsh's own rule
 /// (`Src/builtin.c:5681-5685`) stands alone there.
 ///
-/// KNOWN GAP: bash hooks the ASSIGNMENT rather than comparing values, so it
-/// also resets when the assigned value equals the one it last reported —
-/// visible only mid-cluster (`getopts ab o -ab; OPTIND=1; getopts ab o -ab`
-/// → bash `a`, here `b`). Catching that needs an `$OPTIND` assignment hook in
-/// the parameter table; pinned by an ignored parity test rather than faked.
+/// bash and ksh93 hook the ASSIGNMENT rather than comparing values, so they
+/// also reset when the assigned value equals the one last reported, visible
+/// only mid-cluster (`getopts ab o -ab; OPTIND=1; getopts ab o -ab` → `a`).
+/// The parameter setters report such an assignment ([`note_optind_assignment`]).
 pub fn getopts_optind_user_reset(raw_param: i64) -> bool {
     if !posix_faithful() {
         return false;
     }
-    raw_param != GETOPTS_REPORTED.load(Ordering::Relaxed) as i64
+    let assigned = OPTIND_ASSIGNED.swap(false, Ordering::Relaxed);
+    assigned || raw_param != GETOPTS_REPORTED.load(Ordering::Relaxed) as i64
+}
+
+/// Set when a script assigns `$OPTIND` in a shell that resets `getopts` on the
+/// ASSIGNMENT rather than on a changed value: bash (`sv_optind` →
+/// `getopts_reset`), ksh93, and `/bin/sh` (bash in posix mode here). So `getopts ab o -ab; OPTIND=1; getopts ab o -ab`
+/// reparses `a` there, where dash and mksh carry on to `b`.
+static OPTIND_ASSIGNED: AtomicBool = AtomicBool::new(false);
+
+/// Record an assignment to `$OPTIND` (see [`OPTIND_ASSIGNED`]); a no-op
+/// outside the bash, ksh93 and sh personalities. Called by the parameter setters.
+#[inline]
+pub fn note_optind_assignment(name: &str) {
+    if (bash_mode() || ksh93_mode() || sh_mode()) && name == "OPTIND" {
+        OPTIND_ASSIGNED.store(true, Ordering::Relaxed);
+    }
+}
+
+/// `getopts` writes `$OPTIND` itself; that write is not a script reset.
+#[inline]
+pub fn clear_optind_assignment() {
+    OPTIND_ASSIGNED.store(false, Ordering::Relaxed);
 }
 
 /// POSIX end-of-options bookkeeping for `getopts`, which zsh does not do.

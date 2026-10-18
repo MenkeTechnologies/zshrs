@@ -279,30 +279,21 @@ fn getopts_state_unchanged_under_zsh_mode() {
     assert_zsh_unchanged(GETOPTS_SCRIPTS);
 }
 
-/// PINNED GAP — bash hooks the ASSIGNMENT to `$OPTIND` rather than comparing
-/// values, so it rewinds its within-argument cursor even when the assigned
-/// value equals the one it last reported. zshrs compares values (see
-/// `dash_mode::getopts_optind_user_reset`), so mid-CLUSTER the two disagree:
-/// bash re-parses `a`, zshrs continues to `b`. Closing this needs an
-/// `$OPTIND` assignment hook in the parameter table.
+/// bash, ksh93 and /bin/sh hook the ASSIGNMENT to `$OPTIND` rather than comparing
+/// values, so they rewind the within-argument cursor even when the assigned value
+/// equals the one last reported: mid-cluster they re-parse `a` where dash and
+/// mksh continue to `b` (`dash_mode::note_optind_assignment`).
 #[test]
-#[ignore = "documented gap: bash resets getopts on assignment, zshrs on value change"]
 fn getopts_same_value_reset_midcluster_is_a_known_gap() {
     assert_matrix(&[
         r#"OPTIND=1; getopts 'ab' o -ab >/dev/null 2>&1; OPTIND=1; getopts 'ab' o -ab >/dev/null 2>&1; printf '%s/%s\n' "$o" "$OPTIND""#,
     ]);
 }
 
-/// PINNED GAP — dash and ash key `getopts` off `shellparam.optind`, which a
-/// write to `$OPTIND` never reaches; only `set --` and their own
-/// `optind > nparam+1` auto-reset rewind it. zsh routes the parse index
-/// through the parameter itself (`Src/builtin.c:5680-5685`), so zshrs honours
-/// an `OPTIND=1` written between two parses of DIFFERENT word lists where dash
-/// carries its index forward. The `set --` half is implemented
-/// (`dash_mode::getopts_reset_on_set_positional`); this half would need the
-/// index moved off the parameter for the dash family.
+/// dash and ash key `getopts` off `shellparam.optind`, which a write to `$OPTIND`
+/// never reaches, so an `OPTIND=1` between two parses of different word lists
+/// carries their index forward. Every reference shell agrees with zshrs here.
 #[test]
-#[ignore = "documented gap: dash/ash ignore $OPTIND writes, zsh routes the index through the parameter"]
 fn dash_ignores_optind_writes_is_a_known_gap() {
     assert_matrix(&[
         r#"OPTIND=1; getopts 'ab' o -- >/dev/null 2>&1; OPTIND=1; getopts ':a:b' o -a >/dev/null 2>&1; printf '%s/%s/%s\n' "$o" "$OPTARG" "$OPTIND""#,
