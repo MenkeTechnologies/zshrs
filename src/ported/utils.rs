@@ -8724,6 +8724,9 @@ pub fn mb_metastrlenend(ptr: &str, width: i32, eptr: usize) -> usize {
                         cs.eq_ignore_ascii_case("UTF-8") || cs.eq_ignore_ascii_case("utf8")
                     }
                 };
+                // glibc and musl `wchar_t` is UCS-4 in every locale.
+                #[cfg(not(target_vendor = "apple"))]
+                let utf8_codeset = true;
                 let wcw = if utf8_codeset {
                     char::from_u32(wc as u32).map_or(-1, crate::ported::compat::u9_wcwidth)
                 } else {
