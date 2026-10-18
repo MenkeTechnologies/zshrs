@@ -6814,8 +6814,7 @@ pub fn wcsiblank(wc: char) -> bool {
 /// The Rust port checks whether `c` falls in the typtab class
 /// represented by `itype`. ASCII chars consult the global TYPTAB
 /// (the same one C's `zistype()` macro indexes); non-ASCII chars
-/// route through Unicode predicates that mirror the C `iswalnum`
-/// fallback at line 4346.
+/// call the C library's `iswalnum`, as zsh does (c:4350, 4353, 4370).
 pub fn wcsitype(c: char, itype: u32) -> bool {
     // c:4321
     if !isset(MULTIBYTE) {
@@ -6835,11 +6834,11 @@ pub fn wcsitype(c: char, itype: u32) -> bool {
         if isset(POSIXIDENTIFIERS) {
             return false; // c:4348
         }
-        return c.is_alphanumeric(); // c:4350
+        return crate::extensions::c_locale::iswalnum(c); // c:4350
     }
     if cls == IWORD {
         // c:4352
-        if c.is_alphanumeric() {
+        if crate::extensions::c_locale::iswalnum(c) {
             return true;
         } // c:4353
           // C: IS_COMBINING(c) — no Rust crate-free combining-mark
@@ -6871,7 +6870,7 @@ pub fn wcsitype(c: char, itype: u32) -> bool {
         return IFS_WIDE.read().map(|w| w.contains(&c)).unwrap_or(false);
     }
     let _ = IALNUM;
-    c.is_alphanumeric() // c:4370
+    crate::extensions::c_locale::iswalnum(c) // c:4370
 }
 
 /// Port of `itype_end()` from `Src/utils.c:4395` — C decl `char *itype_end(const char *ptr, int itype, int once)`.

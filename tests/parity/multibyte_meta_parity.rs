@@ -251,3 +251,41 @@ w=( ${(z)${(q)h}} )
     c.arg("--zsh");
     assert_eq!(run_c(&mut c), b"same\nsame\n", "zshrs diverged from zsh");
 }
+
+/// c:Src/utils.c:4347-4350 — a non-ASCII identifier character is whatever the
+/// C library's `iswalnum` says, not Unicode's alphanumeric class: macOS rejects
+/// letter-numbers (`Ⅻ`), other numbers (`½`, `²`) and alphabetic symbols (`Ⓐ`),
+/// so `Ⅻ=x` is a command word and `${Ⅻ}` a bad substitution there, while
+/// `é`, `中` or `٣` stay identifiers. Compared live against the reference
+/// shell, because the C library's class differs between platforms.
+/// docs/BUGS.md #1021.
+#[test]
+fn identifier_characters_follow_the_c_library() {
+    let Some(z) = zsh_path() else {
+        return;
+    };
+    for c in ["Ⅻ", "½", "²", "Ⓐ", "é", "中", "٣", "ß"] {
+        for s in [
+            format!("typeset {c}=x; print ok"),
+            format!("{c}=x; print -r -- ${c}"),
+            format!("print -r -- ${{{c}:-unset}}"),
+            format!("a{c}b=1; print -r -- $a{c}b"),
+        ] {
+            let both = |cmd: &mut Command| {
+                let o = cmd
+                    .args(["-f", "-c", &s])
+                    .env_remove("LC_CTYPE")
+                    .env_remove("LANG")
+                    .env_remove("ZSHRS_CACHE")
+                    .env("LC_ALL", LOCALE)
+                    .output()
+                    .expect("spawn shell");
+                (o.stdout, o.stderr)
+            };
+            let want = both(&mut Command::new(z));
+            let mut c = Command::new(zshrs_bin());
+            c.arg("--zsh");
+            assert_eq!(both(&mut c), want, "diverged from zsh on: {s}");
+        }
+    }
+}

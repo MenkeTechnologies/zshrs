@@ -5105,7 +5105,17 @@ operand fetch) and `${a:^h}` (assoc operand, C uses gethparam).
 
 ---
 
-## #1021 — multibyte (non-ASCII) identifier names rejected everywhere but `typeset` — partially fixed
+## #1021 — multibyte (non-ASCII) identifier names rejected everywhere but `typeset` — fixed (UTF-8 locales)
+
+**Update (2026-10-18).** The non-ASCII identifier test is now libc's `iswalnum` everywhere zsh's
+`wcsitype` uses it (c:Src/utils.c:4350, 4353, 4370): typeset names, assignment-word detection in the
+lexer, and the braced-name scan in paramsubst. Rust's Unicode `is_alphanumeric` had accepted characters
+that macOS's C library does not (`Ⅻ`, `½`, `²`, `Ⓐ`), so `typeset Ⅻ=x` succeeded where zsh says "not valid
+in this context". The wrapper lives in `extensions/c_locale.rs` and returns false for any non-ASCII
+character under an ASCII codeset. Pinned by `multibyte_meta_parity::identifier_characters_follow_the_c_library`.
+
+Still open: in the C locale zsh reads input bytes one at a time, so `é=x` is a command word there, while
+zshrs still decodes UTF-8 for its identifier scans.
 
 **Status:** `partially-fixed` 2026-07-18 — BRACED READ + BARE ASSIGNMENT legs
 FIXED and gated (`mbident` fuzz mode); bare `$日` READ (lexer) and

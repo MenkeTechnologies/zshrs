@@ -104,3 +104,28 @@ pub unsafe fn wcrtomb(
     }
     libc_wcrtomb(s, wc, ps)
 }
+
+/// libc `wint_t`: `unsigned int` on glibc/musl, `__int32_t` on Darwin.
+#[cfg(target_vendor = "apple")]
+type WintT = libc::c_int;
+#[cfg(not(target_vendor = "apple"))]
+type WintT = libc::c_uint;
+
+extern "C" {
+    #[link_name = "iswalnum"]
+    fn libc_iswalnum(wc: WintT) -> libc::c_int;
+}
+
+/// `iswalnum(3)` for a non-ASCII character, the test zsh's `wcsitype` makes
+/// (c:Src/utils.c:4350, 4353, 4370). Under an ASCII codeset no character above
+/// 0x7f decodes, so none is alphanumeric: `LC_ALL=C; é=x` is a command word,
+/// not an assignment. In every other locale the C library decides, and its
+/// class is narrower than Unicode's: macOS rejects `Ⅻ`, `½`, `²` and `Ⓐ`.
+pub fn iswalnum(c: char) -> bool {
+    if c as u32 > 0x7f && codeset_is_ascii() {
+        return false;
+    }
+    std::sync::LazyLock::force(&crate::ported::utils::MB_LOCALE_READY);
+    // SAFETY: iswalnum reads only its argument and the thread's locale.
+    unsafe { libc_iswalnum(c as WintT) != 0 }
+}

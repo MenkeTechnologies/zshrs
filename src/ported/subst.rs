@@ -3906,11 +3906,11 @@ pub fn paramsubst(
     // (iswalnum), so zsh accepts `${日}`, `${café}`, `${π}`. The name-scan
     // sites below decide ASCII with their existing checks; this closure adds
     // ONLY the non-ASCII names, leaving all ASCII parsing byte-identical.
-    // char::is_alphanumeric matches the faithful wcsitype port (utils.rs).
+    // libc iswalnum, as the wcsitype port (utils.rs) uses.
     // Bug #1021 in docs/BUGS.md (braced-read leg; bare `$日` needs lexer work).
     let is_mb_ident = |c: char| -> bool {
         !c.is_ascii()
-            && c.is_alphanumeric()
+            && crate::extensions::c_locale::iswalnum(c)
             && isset(crate::ported::zsh_h::MULTIBYTE)
             && !isset(crate::ported::zsh_h::POSIXIDENTIFIERS)
     };

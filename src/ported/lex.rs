@@ -5790,7 +5790,7 @@ fn is_valid_assignment_target(s: &str) -> bool {
             // Bug #1021 (assignment leg).
             let c_is_ident = (c.is_ascii() && crate::ztype_h::iident(c as u8))
                 || (!c.is_ascii()
-                    && c.is_alphanumeric()
+                    && crate::extensions::c_locale::iswalnum(c)
                     && isset(crate::ported::zsh_h::MULTIBYTE)
                     && !isset(crate::ported::zsh_h::POSIXIDENTIFIERS));
             let c_is_tok = crate::token_char::itok_char(c);
