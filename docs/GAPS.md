@@ -3151,11 +3151,12 @@ The following items have been investigated and confirmed as false positives or f
 - **CSH_NULL_GLOB error vs command-local stderr redirect** — narrow ordering edge, 2026-06-12 sweep D: `setopt cshnullglob; ls *nope* 2>/dev/null` — zsh emits `no match` during prefork on the SHELL's stderr (before the command's redirections apply), so `2>/dev/null` doesn't eat it; zshrs's per-command badcshglob boundary fires after the dup2, so the message is suppressed. All unredirected forms match (builtin abort + rc 1, external skip + continue, mixed success silence — pinned in `probe_sweep_2026_06_12_d`). Fix requires a word-expansion-complete hook before the redirect ops in the VM dispatch.
 - **`typeset -n` parity probes** — zshrs implements namerefs from the vendored master source (PM_NAMEREF, Src/params.c:6332); the zsh 5.9.1 oracle binary predates them and errors `bad option: -n`. Spec-over-oracle: pinned as a zshrs-behavior test (`bulk_g_nameref_typeset_n_zshrs_pin`), never as oracle-parity rows.
 
-The "Stub modules (loaded but limited)" section below now lists only `zsh/db_gdbm`; `zsh/cap`, `zsh/clone`, `zsh/curses` and `zsh/zftp` register their builtins (re-verified 2026-10-17). They are not active gaps in zshrs's compatibility floor; they're tracked separately because they have no real-world load on the daily-driver path. `zsh/mapfile` was previously in this list; it is now closed (read form implemented above).
+The "Stub modules (loaded but limited)" section below now lists only `zsh/db_gdbm`; `zsh/clone`, `zsh/curses` and `zsh/zftp` register their builtins, and `zsh/cap` does on a libcap build (re-verified 2026-10-17). They are not active gaps in zshrs's compatibility floor; they're tracked separately because they have no real-world load on the daily-driver path. `zsh/mapfile` was previously in this list; it is now closed (read form implemented above).
 
 ## Stub modules (loaded but limited)
 
-- `zsh/cap`, `zsh/clone`, `zsh/curses`, `zsh/zftp` — closed; after `zmodload`, `whence -w` reports `cap`, `getcap`, `setcap`, `clone`, `zcurses` and `zftp` as builtins, as zsh does (re-verified 2026-10-17 at `bd20494ab0`).
+- `zsh/clone`, `zsh/curses`, `zsh/zftp` — closed; after `zmodload`, `whence -w` reports `clone`, `zcurses` and `zftp` as builtins, as zsh does (re-verified 2026-10-17 at `bd20494ab0`).
+- `zsh/cap` — follows upstream 54669: built only with capability support (here, the libcap backend on Linux). Without it `zmodload zsh/cap` fails and `cap` / `getcap` / `setcap` are "command not found", as in a dev-tree zsh configured without `--enable-cap`.
 - `zsh/db_gdbm` — `ztie` correctly reports "GDBM support not compiled in" (no native gdbm dep). Acceptable stub behavior.
 - `zsh/files chown/chmod/chgrp` — works (proper error for nonexistent file).
 - `zsh/mapfile` — closed; `${mapfile[/path]}` magic assoc reads file bytes, composes with `(f)` flag for line-split. See "Closed (this session)" above.
