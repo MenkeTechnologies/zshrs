@@ -8712,6 +8712,27 @@ pub fn mb_metastrlenend(ptr: &str, width: i32, eptr: usize) -> usize {
                 // c:5715-5726 — WCWIDTH(wc); C turns "not printable" (-1)
                 // into 0 and adds nothing. WCWIDTH is u9_wcwidth in a
                 // --enable-unicode9 build (Src/zsh.h:3302).
+                // On macOS `wchar_t` is the locale's own encoding, not Unicode,
+                // outside a UTF-8 locale (a GB2312 `日` is not U+65E5), so the
+                // Unicode width table cannot be applied to it; ask libc, as a
+                // non-unicode9 zsh build does.
+                #[cfg(target_vendor = "apple")]
+                let utf8_codeset = unsafe {
+                    let cs = libc::nl_langinfo(libc::CODESET);
+                    !cs.is_null() && {
+                        let cs = std::ffi::CStr::from_ptr(cs).to_string_lossy();
+                        cs.eq_ignore_ascii_case("UTF-8") || cs.eq_ignore_ascii_case("utf8")
+                    }
+                };
+                let wcw = if utf8_codeset {
+                    char::from_u32(wc as u32).map_or(-1, crate::ported::compat::u9_wcwidth)
+                } else {
+                    extern "C" {
+                        fn wcwidth(c: libc::wchar_t) -> libc::c_int;
+                    }
+                    unsafe { wcwidth(wc) }
+                };
+                #[cfg(not(target_vendor = "apple"))]
                 let wcw = char::from_u32(wc as u32).map_or(-1, crate::ported::compat::u9_wcwidth);
                 if wcw > 0 {
                     let wcw = wcw as usize;
