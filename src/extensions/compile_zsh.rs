@@ -5108,8 +5108,10 @@ impl ZshCompiler {
                 Some(fusevm::op::redirect_op::WRITE)
             } else if r.rtype == REDIR_WRITENOW {
                 Some(fusevm::op::redirect_op::CLOBBER)
-            } else if r.rtype == REDIR_APP || r.rtype == REDIR_APPNOW {
+            } else if r.rtype == REDIR_APP {
                 Some(fusevm::op::redirect_op::APPEND)
+            } else if r.rtype == REDIR_APPNOW {
+                Some(crate::fusevm_bridge::redir_op_ext::APPEND_CLOBBER)
             } else if r.rtype == REDIR_MERGEOUT {
                 Some(fusevm::op::redirect_op::DUP_WRITE)
             } else if r.rtype == REDIR_READ {
@@ -5550,15 +5552,15 @@ impl ZshCompiler {
             REDIR_WRITE => fusevm::op::redirect_op::WRITE,
             REDIR_WRITENOW => fusevm::op::redirect_op::CLOBBER,
             REDIR_APP => fusevm::op::redirect_op::APPEND,
-            REDIR_APPNOW => fusevm::op::redirect_op::APPEND,
+            REDIR_APPNOW => crate::fusevm_bridge::redir_op_ext::APPEND_CLOBBER,
             REDIR_READ => fusevm::op::redirect_op::READ,
             REDIR_READWRITE => fusevm::op::redirect_op::READ_WRITE,
             REDIR_MERGEIN => fusevm::op::redirect_op::DUP_READ,
             REDIR_MERGEOUT => fusevm::op::redirect_op::DUP_WRITE,
             REDIR_ERRWRITE => fusevm::op::redirect_op::WRITE_BOTH,
-            REDIR_ERRWRITENOW => fusevm::op::redirect_op::WRITE_BOTH,
+            REDIR_ERRWRITENOW => crate::fusevm_bridge::redir_op_ext::CLOBBER_BOTH,
             REDIR_ERRAPP => fusevm::op::redirect_op::APPEND_BOTH,
-            REDIR_ERRAPPNOW => fusevm::op::redirect_op::APPEND_BOTH,
+            REDIR_ERRAPPNOW => crate::fusevm_bridge::redir_op_ext::APPEND_CLOBBER_BOTH,
             // c:Src/parse.c:2303-2320 — `< <(cmd)` / `> >(cmd)` / `<> <(cmd)`
             // carry REDIR_INPIPE / REDIR_OUTPIPE only when the redir comes from
             // decoded wordcode (.zwc); the AST parser keeps READ / WRITE. The

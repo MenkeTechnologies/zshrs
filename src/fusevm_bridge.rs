@@ -13106,8 +13106,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 target_fds.push(p);
             }
         }
-        let noclobber = opt_state_get("noclobber").unwrap_or(false)
-            || !opt_state_get("clobber").unwrap_or(true);
         for (i, (op_byte, target)) in entries.iter().enumerate() {
             let open_result: std::io::Result<i32> = match *op_byte {
                 r::DUP_WRITE | r::DUP_READ => {
@@ -13125,68 +13123,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         Err(_) => Err(std::io::Error::from_raw_os_error(libc::EBADF)),
                     }
                 }
-                r::WRITE => {
-                    // c:Src/exec.c clobber_open — noclobber applies
-                    // to multio file targets too; failure aborts the
-                    // remaining redirect list (execerr), so `setopt
-                    // noclobber; touch a; print x > a > b` errors on
-                    // `a` and never creates `b`.
-                    let target_meta = std::fs::metadata(target).ok();
-                    let target_is_regular_file = target_meta
-                        .as_ref()
-                        .map(|m| m.file_type().is_file())
-                        .unwrap_or(false);
-                    // c:Src/exec.c:2313 clobber_open — CLOBBER_EMPTY re-uses
-                    // an empty regular file under noclobber (same allowance
-                    // as the single-redirect path).
-                    let clobber_empty_ok = opt_state_get("clobberempty").unwrap_or(false)
-                        && target_meta.as_ref().map(|m| m.len() == 0).unwrap_or(false);
-                    if noclobber && target_is_regular_file && !clobber_empty_ok {
-                        eprintln!(
-                            "{}:{}: file exists: {}",
-                            shname(),
-                            crate::ported::lex::lineno(),
-                            target
-                        );
-                        for prev in &target_fds {
-                            unsafe {
-                                libc::close(*prev);
-                            }
-                        }
-                        with_executor(|exec| {
-                            exec.redirect_failed = true;
-                        });
-                        // Sink the upcoming command's output (mirrors
-                        // the single-redirect noclobber arm in
-                        // host_apply_redirect).
-                        if let Ok(file) = fs::OpenOptions::new().write(true).open("/dev/null") {
-                            let new_fd = file.into_raw_fd();
-                            unsafe {
-                                libc::dup2(new_fd, fd);
-                                libc::close(new_fd);
-                            }
-                        }
-                        return Value::Status(1);
-                    }
-                    fs::OpenOptions::new()
-                        .write(true)
-                        .create(true)
-                        .truncate(true)
-                        .open(target)
-                        .map(|f| f.into_raw_fd())
-                }
-                r::APPEND => fs::OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .append(true)
-                    .open(target)
-                    .map(|f| f.into_raw_fd()),
-                _ => fs::OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .truncate(true)
-                    .open(target)
-                    .map(|f| f.into_raw_fd()),
+                // c:Src/exec.c:3985-3995 — the same open as a single redirection:
+                // NO_CLOBBER applies to every file member, so `setopt noclobber;
+                // touch a; print x > a > b` errors on `a` and never creates `b`.
+                _ => open_write_redir(*op_byte, target).map(|f| f.into_raw_fd()),
             };
             match open_result {
                 Ok(tfd) => {
@@ -13223,6 +13163,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     with_executor(|exec| {
                         exec.redirect_failed = true;
                     });
+                    // Keep the abandoned command's output off the old fd until the
+                    // scope restores it, as redir_open_or_fail does; a bare `exec`
+                    // redirect leaves the fd alone (c:Src/exec.c:3735-3742).
+                    if !with_executor(|exec| exec.exec_redirs_permanent) {
+                        if let Ok(file) = fs::OpenOptions::new().write(true).open("/dev/null") {
+                            let new_fd = file.into_raw_fd();
+                            unsafe {
+                                libc::dup2(new_fd, fd);
+                                libc::close(new_fd);
+                            }
+                        }
+                    }
                     return Value::Status(1);
                 }
             }
@@ -22644,8 +22596,90 @@ impl fusevm::ShellHost for ZshrsHost {
 fn redir_is_write_file(op_byte: u8) -> bool {
     matches!(
         op_byte,
-        r::WRITE | r::APPEND | r::CLOBBER | r::READ_WRITE | r::WRITE_BOTH | r::APPEND_BOTH
+        r::WRITE
+            | r::APPEND
+            | r::CLOBBER
+            | r::READ_WRITE
+            | r::WRITE_BOTH
+            | r::APPEND_BOTH
+            | redir_op_ext::APPEND_CLOBBER
+            | redir_op_ext::CLOBBER_BOTH
+            | redir_op_ext::APPEND_CLOBBER_BOTH
     )
+}
+
+/// zshrs `Redirect` op bytes beyond fusevm's `redirect_op` set. fusevm hands
+/// the byte to the host untouched, and its set has no clobbering append or
+/// both-fds form, so those C types (`IS_CLOBBER_REDIR`, zsh.h:406) would
+/// otherwise lose the `|`/`!` that exempts them from NO_CLOBBER.
+pub(crate) mod redir_op_ext {
+    /// `>>|` / `>>!` — c:REDIR_APPNOW.
+    pub const APPEND_CLOBBER: u8 = 9;
+    /// `&>|` / `>&|` — c:REDIR_ERRWRITENOW.
+    pub const CLOBBER_BOTH: u8 = 10;
+    /// `&>>|` / `>>&|` — c:REDIR_ERRAPPNOW.
+    pub const APPEND_CLOBBER_BOTH: u8 = 11;
+}
+
+/// Whether `op_byte` sends one file to BOTH fd 1 and fd 2 (`IS_ERROR_REDIR`).
+fn redir_is_both(op_byte: u8) -> bool {
+    matches!(
+        op_byte,
+        r::WRITE_BOTH | r::APPEND_BOTH | redir_op_ext::CLOBBER_BOTH | redir_op_ext::APPEND_CLOBBER_BOTH
+    )
+}
+
+/// Open the file of a write-side redirection, port of the shared `default:`
+/// arm of execcmd's redirection loop (c:Src/exec.c:3985-3995): an append
+/// form opens `O_APPEND`, creating the file only under CLOBBER,
+/// APPEND_CREATE or a `|`/`!` spelling; every other form goes through
+/// `clobber_open`, which applies NO_CLOBBER and CLOBBER_EMPTY.
+fn open_write_redir(op_byte: u8, target: &str) -> std::io::Result<fs::File> {
+    use crate::ported::zsh_h::{
+        isset, IS_APPEND_REDIR, IS_CLOBBER_REDIR, APPENDCREATE, CLOBBER, REDIR_APP, REDIR_APPNOW,
+        REDIR_ERRAPP, REDIR_ERRAPPNOW, REDIR_ERRWRITE, REDIR_ERRWRITENOW, REDIR_WRITE,
+        REDIR_WRITENOW,
+    };
+    let typ = match op_byte {
+        r::WRITE => REDIR_WRITE,
+        r::CLOBBER => REDIR_WRITENOW,
+        r::APPEND => REDIR_APP,
+        redir_op_ext::APPEND_CLOBBER => REDIR_APPNOW,
+        r::WRITE_BOTH => REDIR_ERRWRITE,
+        redir_op_ext::CLOBBER_BOTH => REDIR_ERRWRITENOW,
+        r::APPEND_BOTH => REDIR_ERRAPP,
+        redir_op_ext::APPEND_CLOBBER_BOTH => REDIR_ERRAPPNOW,
+        _ => return Err(std::io::Error::from_raw_os_error(libc::EINVAL)),
+    };
+    let fd = if IS_APPEND_REDIR(typ) {
+        // c:3987-3991
+        let create = isset(CLOBBER) || isset(APPENDCREATE) || IS_CLOBBER_REDIR(typ);
+        let mode = libc::O_WRONLY | libc::O_APPEND | libc::O_NOCTTY | if create { libc::O_CREAT } else { 0 };
+        let path = std::ffi::CString::new(target).map_err(|_| std::io::Error::from_raw_os_error(libc::ENOENT))?;
+        unsafe { libc::open(path.as_ptr(), mode, 0o666 as libc::c_uint) }
+    } else {
+        // c:3993
+        crate::ported::exec::clobber_open(&crate::ported::zsh_h::redir {
+            typ,
+            flags: 0,
+            fd1: 1,
+            fd2: -1,
+            name: Some(target.to_string()),
+            varid: None,
+            here_terminator: None,
+            munged_here_terminator: None,
+        })
+    };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // Close-on-exec like the `fs::File` opens this replaces: callers dup2 the
+    // fd into place (which clears it on the copy) or hold it in the MULTIOS
+    // tee, which must not leak into the stage's exec'd command.
+    unsafe {
+        libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+        Ok(<fs::File as std::os::unix::io::FromRawFd>::from_raw_fd(fd))
+    }
 }
 
 fn redir_errno_msg(err: &std::io::Error) -> String {
@@ -22881,7 +22915,7 @@ impl ShellExecutor {
         // `&>` / `&>>` always target both fd 1 and fd 2 regardless of the
         // fd byte the parser supplied (the lexer's tokfd clamp makes the
         // raw value unreliable for these forms).
-        let fd: i32 = if matches!(op_byte, r::WRITE_BOTH | r::APPEND_BOTH) {
+        let fd: i32 = if redir_is_both(op_byte) {
             1
         } else {
             fd as i32
@@ -22962,7 +22996,7 @@ impl ShellExecutor {
         self.save_fd_for_scope(fd);
         // For `&>` / `&>>` also save fd 2 so the scope restores it after
         // the body. Otherwise stderr stays redirected past the command.
-        if matches!(op_byte, r::WRITE_BOTH | r::APPEND_BOTH) {
+        if redir_is_both(op_byte) {
             self.save_fd_for_scope(2);
         }
         // c:Src/exec.c:3722-3724 + 2447-2480 — MULTIOS split when this
@@ -22998,17 +23032,18 @@ impl ShellExecutor {
                         .map(|src| unsafe { libc::fcntl(src, libc::F_DUPFD_CLOEXEC, 10) })
                         .unwrap_or(-1)
                 }
-                r::WRITE | r::CLOBBER => fs::File::create(target)
-                    .map(|f| f.into_raw_fd())
-                    .unwrap_or(-1),
-                r::APPEND => fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(target)
-                    .map(|f| f.into_raw_fd())
-                    .unwrap_or(-1),
+                // A refused open (NO_CLOBBER, missing file for `>>`) is -1:
+                // the plain arm below repeats it and reports the error.
+                // c:Src/exec.c:4010 — `&>` / `>&FILE` join fd 1's multio too
+                // (`addfd(..., fn->fd1, fil, 1, ...)`); fd 2 just gets the file.
+                op if redir_is_write_file(op) && op != r::READ_WRITE => {
+                    open_write_redir(op_byte, target).map(|f| f.into_raw_fd()).unwrap_or(-1)
+                }
                 _ => -1,
             };
+            if new_target_fd >= 0 && redir_is_both(op_byte) {
+                unsafe { libc::dup2(new_target_fd, 2) }; // c:4011-4012 addfd(2, dfil)
+            }
             if new_target_fd >= 0 {
                 let pipe_dup = unsafe { libc::fcntl(1, libc::F_DUPFD_CLOEXEC, 10) };
                 match (pipe_dup >= 0).then(os_pipe::pipe) {
@@ -23054,15 +23089,30 @@ impl ShellExecutor {
                                 off += w as usize;
                             }
                         };
+                        // `&>`: the file is ALSO fd 2, written directly by the
+                        // command, and zsh's forked tee copies stdout into it only
+                        // after those direct writes (`{ echo out; echo err >&2 } &> f
+                        // | cat` leaves `err out` in f, 15/15 runs), so its copy is
+                        // deferred like the pipe's.
+                        let defer_target = redir_is_both(op_byte);
                         let handle = crate::signal_thread::spawn(move || {
                             let mut rd = read_end;
                             let mut buf = [0u8; 8192];
                             let mut pipe_pending: Vec<u8> = Vec::new();
+                            let mut target_pending: Vec<u8> = Vec::new();
                             loop {
                                 match std::io::Read::read(&mut rd, &mut buf) {
                                     Ok(0) | Err(_) => break,
                                     Ok(n) => {
-                                        write_now(new_target_fd, &buf[..n]);
+                                        if defer_target {
+                                            target_pending.extend_from_slice(&buf[..n]);
+                                            if target_pending.len() >= 65536 {
+                                                write_now(new_target_fd, &target_pending);
+                                                target_pending.clear();
+                                            }
+                                        } else {
+                                            write_now(new_target_fd, &buf[..n]);
+                                        }
                                         pipe_pending.extend_from_slice(&buf[..n]);
                                         if pipe_pending.len() >= 65536 {
                                             write_now(pipe_dup, &pipe_pending);
@@ -23071,6 +23121,7 @@ impl ShellExecutor {
                                     }
                                 }
                             }
+                            write_now(new_target_fd, &target_pending);
                             write_now(pipe_dup, &pipe_pending);
                             unsafe {
                                 libc::close(pipe_dup);
@@ -23112,115 +23163,12 @@ impl ShellExecutor {
             }
         }
         match op_byte {
-            r::WRITE => {
-                // Honor `setopt noclobber`: refuse to overwrite an
-                // existing regular file unless `>!` / `>|` (CLOBBER).
-                // zsh internally stores the inverted-name `clobber`
-                // (default ON); `setopt noclobber` writes
-                // `clobber=false`. Honor both keys.
-                //
-                // c:Src/exec.c:2241-2245 clobber_open recover path:
-                // after O_EXCL fails, reopen and `if (!S_ISREG(...))
-                // return fd;` — non-regular targets (char/block-
-                // special, FIFO, socket) bypass the noclobber check.
-                // Bug #30 in docs/BUGS.md: this bridge-side check did
-                // a bare `Path::exists()` and treated `/dev/null` as
-                // a protected file, breaking `setopt no_clobber; echo
-                // hi > /dev/null` and every `2> /dev/null` idiom.
-                // Add a regular-file stat gate that matches the C
-                // semantic. The canonical clobber_open at
-                // src/ported/exec.rs:2123 already handles this; the
-                // bridge duplicates a stripped-down version here and
-                // must mirror the same check.
-                let noclobber = opt_state_get("noclobber").unwrap_or(false)
-                    || !opt_state_get("clobber").unwrap_or(true);
-                let target_meta = std::fs::metadata(target).ok();
-                let target_is_regular_file = target_meta
-                    .as_ref()
-                    .map(|m| m.file_type().is_file())
-                    .unwrap_or(false);
-                // c:Src/exec.c:2313 clobber_open — CLOBBER_EMPTY permits
-                // re-using an EMPTY regular file under noclobber: `setopt
-                // noclobber clobberempty; : >f; echo hi >f` overwrites f.
-                // The inline bridge check ignored this and errored.
-                let clobber_empty_ok = opt_state_get("clobberempty").unwrap_or(false)
-                    && target_meta.as_ref().map(|m| m.len() == 0).unwrap_or(false);
-                if noclobber && target_is_regular_file && !clobber_empty_ok {
-                    eprintln!(
-                        "{}:{}: file exists: {}",
-                        shname(),
-                        crate::ported::lex::lineno(),
-                        target
-                    );
-                    self.set_last_status(1);
-                    // c:Src/exec.c — set redirect_failed so the scope-end
-                    // hook (`with_redirects_end` in this file) forces
-                    // $? to 1 regardless of the still-running command's
-                    // own exit. Without this the next command (e.g.
-                    // `echo x` writing to /dev/null below) succeeds
-                    // and overwrites the redirect-failure status,
-                    // making noclobber unobservable from $?.
-                    self.redirect_failed = true;
-                    // Sink the upcoming command's stdout to /dev/null
-                    // so we don't leak its output to the terminal.
-                    // zsh skips the command entirely; we approximate by
-                    // discarding the output (the redirect target was
-                    // the user's chosen sink, but with noclobber the
-                    // file is protected — discarding matches the
-                    // user's intent better than printing to terminal).
-                    if let Ok(file) = fs::OpenOptions::new().write(true).open("/dev/null") {
-                        let new_fd = file.into_raw_fd();
-                        unsafe {
-                            libc::dup2(new_fd, fd);
-                            libc::close(new_fd);
-                        }
-                    }
-                    return;
-                }
-                if !Self::redir_open_or_fail(
-                    fd,
-                    fs::File::create(target),
-                    target,
-                    &mut self.redirect_failed,
-                ) {
-                    self.set_last_status(1);
-                }
-            }
-            r::CLOBBER => {
-                if !Self::redir_open_or_fail(
-                    fd,
-                    fs::File::create(target),
-                    target,
-                    &mut self.redirect_failed,
-                ) {
-                    self.set_last_status(1);
-                }
-            }
-            r::APPEND => {
-                // c:Src/exec.c:3989-3990 — `>>` honors NO_CLOBBER+!APPENDCREATE
-                // by opening O_APPEND|O_WRONLY WITHOUT O_CREAT, so missing
-                // files yield ENOENT. zsh source:
-                //   if (!isset(CLOBBER) && !isset(APPENDCREATE) &&
-                //       !IS_CLOBBER_REDIR(fn->type))
-                //       mode = O_WRONLY|O_APPEND|O_NOCTTY;
-                //   else mode = O_WRONLY|O_APPEND|O_CREAT|O_NOCTTY;
-                // (IS_CLOBBER_REDIR — `>>!`/`>>|` — is currently flattened
-                // to plain APPEND at compile time in
-                // src/extensions/compile_zsh.rs:1654-1655, so the bang/pipe
-                // forms can't be distinguished here yet.)
-                let noclobber = opt_state_get("noclobber").unwrap_or(false)
-                    || !opt_state_get("clobber").unwrap_or(true);
-                let append_create = opt_state_get("appendcreate").unwrap_or(false)
-                    || opt_state_get("append_create").unwrap_or(false);
-                let open_result = if noclobber && !append_create {
-                    fs::OpenOptions::new().append(true).open(target) // no create
-                } else {
-                    fs::OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(target)
-                };
-                if !Self::redir_open_or_fail(fd, open_result, target, &mut self.redirect_failed) {
+            // c:Src/exec.c:3985-3995 — one open for every write-to-file form;
+            // `open_write_redir` applies NO_CLOBBER, CLOBBER_EMPTY and
+            // APPEND_CREATE exactly as C does, and a refusal takes
+            // redir_open_or_fail's `file exists: f` / execerr path.
+            r::WRITE | r::CLOBBER | r::APPEND | redir_op_ext::APPEND_CLOBBER => {
+                if !Self::redir_open_or_fail(fd, open_write_redir(op_byte, target), target, &mut self.redirect_failed) {
                     self.set_last_status(1);
                 }
             }
@@ -23305,7 +23253,7 @@ impl ShellExecutor {
                     // routes BOTH fd 1 and fd 2 there. Reached only
                     // for dynamic words (`>&$var`); static filenames
                     // were converted at compile time.
-                    self.redir_errwrite(fs::File::create(target), target);
+                    self.redir_errwrite(open_write_redir(r::WRITE_BOTH, target), target);
                 } else {
                     // c:Src/glob.c:2185 — MERGEIN non-number:
                     // `zerr("file number expected")`.
@@ -23314,14 +23262,8 @@ impl ShellExecutor {
                     self.redirect_failed = true;
                 }
             }
-            r::WRITE_BOTH => {
-                self.redir_errwrite(fs::File::create(target), target);
-            }
-            r::APPEND_BOTH => {
-                self.redir_errwrite(
-                    fs::OpenOptions::new().create(true).append(true).open(target),
-                    target,
-                );
+            r::WRITE_BOTH | r::APPEND_BOTH | redir_op_ext::CLOBBER_BOTH | redir_op_ext::APPEND_CLOBBER_BOTH => {
+                self.redir_errwrite(open_write_redir(op_byte, target), target);
             }
             _ => {}
         }

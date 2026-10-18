@@ -207,3 +207,54 @@ mod no_clobber_alias {
         );
     }
 }
+
+/// Every write-to-file redirection takes the same open (c:Src/exec.c:3985-3995):
+/// `clobber_open` for the truncating forms, `O_APPEND` without `O_CREAT` for the
+/// appending ones, and only a `|`/`!` spelling is exempt. zshrs checked plain `>`
+/// alone, so `&>`, `>&FILE`, `> f | cmd` and `&>>` overwrote or created files zsh
+/// refuses to touch. docs/BUGS.md #1180.
+mod noclobber_every_write_form {
+    use super::*;
+
+    fn with_old(script: &str) {
+        let d = tdir();
+        std::fs::write(d.path().join("f"), "old\n").unwrap();
+        assert_parity_in(d.path(), script);
+    }
+
+    #[test]
+    fn both_fd_forms_refuse_an_existing_file() {
+        with_old("setopt noclobber; echo x &> f 2>/dev/null; echo rc=$?; cat f");
+        with_old("setopt noclobber; echo x >& f 2>/dev/null; echo rc=$?; cat f");
+        with_old("setopt noclobber; e=f; echo x >& $e 2>/dev/null; echo rc=$?; cat f");
+    }
+
+    #[test]
+    fn a_pipeline_stage_refuses_and_writes_neither_target() {
+        with_old("setopt noclobber; { echo x > f | cat } 2>/dev/null; echo rc=$?; cat f");
+        with_old("setopt noclobber; { echo x &> f | cat } 2>/dev/null; echo rc=$?; cat f");
+    }
+
+    #[test]
+    fn append_forms_need_the_file_unless_forced() {
+        let d = tdir();
+        assert_parity_in(d.path(), "setopt noclobber; echo x &>> g 2>/dev/null; echo rc=$?; ls g 2>/dev/null");
+        assert_parity_in(d.path(), "setopt noclobber; echo x >>| g; echo rc=$?; cat g");
+        assert_parity_in(d.path(), "setopt noclobber; echo x &>>| h; echo rc=$?; cat h");
+        assert_parity_in(d.path(), "setopt noclobber appendcreate; echo x >> i; echo rc=$?; cat i");
+    }
+
+    #[test]
+    fn forced_both_fd_forms_overwrite() {
+        with_old("setopt noclobber; echo x &>| f; echo rc=$?; cat f");
+        with_old("setopt noclobber; echo x >&| f; echo rc=$?; cat f");
+    }
+
+    /// c:Src/exec.c:4010 — the `&>` file joins fd 1's MULTIOS like `>` does,
+    /// so a pipeline stage sends its output to the file AND the pipe.
+    #[test]
+    fn both_fd_form_in_a_pipeline_tees_into_the_pipe() {
+        with_old("echo x &> f | cat; echo rc=$?; cat f");
+        with_old("{ echo out; echo err >&2 } &> f | cat; cat f");
+    }
+}

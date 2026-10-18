@@ -61353,9 +61353,9 @@ checks `BUILTINS_DISABLED` — the plugin arm needs the same gate. C masks a dis
 lookup that precedes execution (`builtintab->getnode`, c:Src/exec.c:3495; `gethashnode` returns NULL for
 a `DISABLED` node, c:Src/hashtable.c:231-243), so `disable NAME` must fall through to PATH exactly as `disable git` already does for a native command.
 
-## #1180 — `noclobber` does not protect a file from `&>`, `>&` or a `>` that joins a pipe — open
+## #1180 — `noclobber` does not protect a file from `&>`, `>&` or a `>` that joins a pipe — fixed
 
-**Status:** `open`, isolated 2026-10-14 at v0.13.42.
+**Status:** `fixed` 2026-10-17, isolated 2026-10-14 at v0.13.42.
 
 ```console
 echo old > f; setopt noclobber; <form>; print rc=$?; cat f
@@ -61383,6 +61383,21 @@ in `fusevm_bridge.rs`. Three other openers reach the same file with `fs::File::c
 !APPEND_CREATE rule that the `r::APPEND` arm already ports (c:Src/exec.c:3989-3990). In C every one of
 these goes through `clobber_open` / the same append mode selection, so the fix is to route them through
 the existing check rather than add three more copies of it.
+
+**Resolution.** One opener, `open_write_redir` in `fusevm_bridge.rs`, ports that shared branch
+(c:Src/exec.c:3985-3995): append forms open `O_APPEND`, adding `O_CREAT` only under CLOBBER,
+APPEND_CREATE or a `|`/`!` spelling; every other form goes through the ported `clobber_open`. All
+five openers use it (both `r::WRITE` copies, both-fds, dynamic `>& $var`, the pipe-MULTIOS path), and
+the two inline checks are gone. fusevm's op set had no clobbering append or both-fds form, so
+`>>|`, `&>|` and `&>>|` had been flattened to their checked forms and lost the exemption.
+`redir_op_ext` adds zshrs op bytes for them (fusevm passes the byte through untouched).
+
+Measuring against the dev-tree oracle turned up one more divergence, also fixed: an `&>` file joins
+fd 1's MULTIOS (c:4010), so `echo x &> f | cat` tees into the pipe. zshrs had sent it to the file
+only. The file copy is deferred like the pipe copy, because zsh's forked tee writes it after the
+command's direct fd-2 writes (`{ echo out; echo err >&2 } &> f | cat` leaves `err out`, 15/15).
+26 NO_CLOBBER/APPEND_CREATE/CLOBBER_EMPTY spellings now match. Pinned by
+`noclobber_parity::noclobber_every_write_form`: 4 of its 5 tests fail on the pre-fix binary.
 
 ## #1181 — real-shell drop-ins diverged from their reference shells on ~60 dialect details — fixed
 
