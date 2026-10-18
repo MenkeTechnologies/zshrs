@@ -1388,7 +1388,13 @@ pub fn zshrs_main() {
             zsh::ported::utils::zerr("--emulate: argument required"); // c:464
             std::process::exit(1); // c:465
         }
-        if emu_idx != 1 {
+        // `--zsh` / `--zsh-compat` select zshrs's own drop-in mode and are not
+        // zsh options, so they do not count as preceding `--emulate`.
+        let preceding = args[1..emu_idx]
+            .iter()
+            .filter(|a| *a != "--zsh" && *a != "--zsh-compat")
+            .count();
+        if preceding != 0 {
             zsh::ported::utils::zerr("--emulate: must precede other options"); // c:468
             std::process::exit(1); // c:469
         }

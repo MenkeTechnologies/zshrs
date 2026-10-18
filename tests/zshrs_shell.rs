@@ -17457,3 +17457,16 @@ fn version_flag_reports_zsh_when_run_as_zsh() {
     let own = Command::new(zshrs_bin()).arg("--version").output().expect("spawn");
     assert!(String::from_utf8_lossy(&own.stdout).starts_with("zshrs "), "{own:?}");
 }
+
+#[test]
+fn emulate_may_follow_the_zsh_mode_flag() {
+    // c:Src/init.c:466-469 — `--emulate` must be the first zsh option. `--zsh`
+    // selects zshrs's drop-in mode and is not a zsh option, so it does not
+    // count; a real option before `--emulate` still does.
+    let (status, out, _) =
+        run_zshrs_with_args(&["--zsh", "--emulate", "sh", "-f", "-c", "[[ -o shwordsplit ]] && echo sh"]);
+    assert_eq!((status, out.as_str()), (0, "sh\n"));
+    let (status, _, err) = run_zshrs_with_args(&["-f", "--emulate", "sh", "-c", "echo x"]);
+    assert_eq!(status, 1);
+    assert!(err.contains("--emulate: must precede other options"), "got: {err}");
+}
