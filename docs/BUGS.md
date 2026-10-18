@@ -508,9 +508,9 @@ completes through a pty.
 
 ---
 
-## #1121 — the `[[ … ]]` parse-error diagnostic prints the substituted word, not its source text — open
+## #1121 — the `[[ … ]]` parse-error diagnostic prints the substituted word, not its source text — fixed
 
-**Status:** `open`, isolated 2026-08-29.
+**Status:** `fixed` (confirmed 2026-10-17 against the dev-tree oracle: `$t`, `${t}`, `"$t"`, `$(echo hi)` and `a$t\b` are all reported in their source spelling; the pin `substituted_word_is_reported_with_its_source_spelling` now runs live), isolated 2026-08-29.
 
 `[[ word word ]]` with no operator is a parse error, and the message names the
 offending word. zsh reports the RAW parse-tree word, so the source spelling

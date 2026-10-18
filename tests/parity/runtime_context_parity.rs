@@ -344,23 +344,15 @@ mod cond_parse_errors {
         assert_stderr_parity(r#"[[ lit f ]]"#);
     }
 
-    /// Any word carrying a substitution diverges: zsh prints the SOURCE text,
-    /// zshrs prints it stripped to the bare parameter name.
-    ///
-    ///     [[ $t f ]]      zsh `$t`     zshrs `t`
-    ///     [[ ${t} f ]]    zsh `${t}`   zshrs `t`
-    ///     [[ "$t" f ]]    zsh `"$t"`   zshrs `t`
-    ///     [[ $arr f ]]    zsh `$arr`   zshrs `arr`
-    ///
-    /// The literal case above agrees, so the message plumbing is right and
-    /// only the word's provenance is lost — the diagnostic is being built from
-    /// the expanded/untokenized word instead of the raw one. See BUGS.md #1121.
+    /// A word carrying a substitution is reported in its SOURCE spelling, as
+    /// zsh does: `[[ $t f ]]` says `$t`, not the bare name `t` (BUGS.md #1121).
     #[test]
-    #[ignore = "open gap: the cond parse-error diagnostic prints the substituted word rather \
-than its source text — `[[ $t f ]]` reports `t` where zsh reports `$t`. Literal words agree, so \
-only the raw-word provenance is missing. BUGS.md #1121."]
     fn substituted_word_is_reported_with_its_source_spelling() {
         assert_stderr_parity(r#"t=x; [[ $t f ]]"#);
+        assert_stderr_parity(r#"t=x; [[ ${t} f ]]"#);
+        assert_stderr_parity(r#"t=x; [[ "$t" f ]]"#);
+        assert_stderr_parity(r#"[[ $(echo hi) f ]]"#);
+        assert_stderr_parity(r#"t=x; [[ a$t\b f ]]"#);
     }
 }
 
