@@ -3185,7 +3185,9 @@ pub fn getjob(s: &str, prog: &str) -> i32 {
             // c:2076
             if !prog.is_empty() && !posixbuiltins {
                 // c:2077
-                zwarnnam(prog, "no current job"); // c:2078
+                // c:2078 (upstream 54294) — `"%%%c: no such job", *s ? *s : '%'`.
+                let which = s_bytes.get(idx).map_or('%', |&b| b as char);
+                zwarnnam(prog, &format!("%{which}: no such job"));
             }
             return -1; // c:2079-2080
         }
@@ -3198,7 +3200,7 @@ pub fn getjob(s: &str, prog: &str) -> i32 {
             // c:2087
             if !prog.is_empty() && !posixbuiltins {
                 // c:2088
-                zwarnnam(prog, "no previous job"); // c:2089
+                zwarnnam(prog, "%-: no such job"); // c:2089 (upstream 54294)
             }
             return -1; // c:2090-2091
         }

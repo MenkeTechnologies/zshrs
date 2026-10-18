@@ -41113,7 +41113,12 @@ printf "'%s' " "${a[@]}"
 
 ---
 
-## #393 — `jobs` builtin returns rc=1 instead of rc=127 on unknown-job — script error-classification breaks
+## #393 — `jobs` builtin returns rc=1 instead of rc=127 on unknown-job — script error-classification breaks — fixed
+
+**Update (2026-10-17).** Both shells now return 127. The dev tree also reworded the current and previous
+job misses to name the spec (`%%: no such job`, `%+: no such job`, `%-: no such job`; upstream 54294,
+Src/jobs.c getjob), where zshrs still printed 5.9's "no current job" / "no previous job". Ported, and
+pinned by `shell_semantics_parity::jobs_current_previous_spec_messages`.
 
 **Status:** `fixed` 2026-06-03 — two-point fix in
 `src/ported/jobs.rs`: `getjob` now strips the leading `%`
@@ -47684,7 +47689,15 @@ pipestatus=[0 1 0] PIPESTATUS=[0 1 0]
 
 ---
 
-## #475 — bash-only builtins shipped in `--zsh` mode (`caller`/`help`/`complete`/`compopt`/`mapfile`)
+## #475 — bash-only builtins shipped in `--zsh` mode (`caller`/`help`/`complete`/`compopt`/`mapfile`) — fixed
+
+**Resolution (2026-10-17).** The literal-name gates were already in place, but a name resolved at run
+time still ran the bash builtin: `c=caller; $c` returned 1 and `c=help; $c` printed zshrs's help. Two
+dispatch paths skipped the gates: the host table in `call_function`, and the registered-builtin fallback
+for a dynamic head (`BUILTIN_EXEC_DYNAMIC`). Both now ask `zsh_lacks_bash_builtin`, and every gate reports
+through `report_zsh_command_not_found` (`zerr`), so the message carries zsh's context (`(eval):1:`,
+`f:`) instead of a hard-coded `zsh:1:`. A user function of the same name still runs. Pinned by
+`shell_semantics_parity::bash_only_builtins_are_absent`.
 
 **Status:** `fixed` 2026-06-05 — all 7 bash-only builtins
 (caller/help/complete/compgen/compopt/mapfile/readarray)
@@ -49686,7 +49699,12 @@ done
 
 ---
 
-## #504 — bash-only `mapfile`/`readarray` shipped as builtins in `--zsh` mode
+## #504 — bash-only `mapfile`/`readarray` shipped as builtins in `--zsh` mode — fixed
+
+**Resolution (2026-10-17).** `readarray` reported itself as `mapfile` (`command not found: mapfile`).
+fusevm's by-name fallback in `CallFunction` maps both names to the one `BUILTIN_MAPFILE` opcode, whose
+handler cannot tell them apart. The `call_function` gate from #475 now answers first, with the name the
+user typed.
 
 **Status:** `fixed` 2026-06-05 — compile path now routes
 `mapfile`/`readarray`/`compopt` through `Op::CallFunction` in

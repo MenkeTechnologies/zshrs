@@ -404,3 +404,36 @@ mod globsubst_file_expansion_on_assignment {
         assert_parity(r#"HOME=/hh; set -- '~/p'; y=$~1; print -r -- "[$y]""#);
     }
 }
+
+/// zsh has no `caller`, `help`, `mapfile`, `readarray` or `compopt`: in
+/// `--zsh` each misses like any unknown command (Src/exec.c:903), with the
+/// script / `(eval)` / function context in the message, however the name is
+/// reached, while a user function of that name still runs. docs/BUGS.md
+/// #475, #504.
+mod bash_only_builtins_are_absent {
+    use super::*;
+
+    #[test]
+    fn literal_and_runtime_names_miss() {
+        assert_parity(r#"{ caller; print $?; help; print $?; readarray; print $?; compopt; print $? } 2>&1"#);
+        assert_parity(r#"{ c=caller; $c; print $?; c=help; $c; print $?; c=readarray; $c; print $? } 2>&1"#);
+        assert_parity(r#"{ eval caller; f() { c=mapfile; $c; print $? }; f } 2>&1"#);
+    }
+
+    #[test]
+    fn a_user_function_of_that_name_still_runs() {
+        assert_parity(r#"help() { print mine }; help; c=help; $c"#);
+    }
+}
+
+/// `jobs %%` / `%+` / `%` / `%-` with no such job: the dev tree reports the
+/// spec, `%%: no such job` (upstream 54294, Src/jobs.c getjob), not 5.9's
+/// "no current job". docs/BUGS.md #393.
+mod jobs_current_previous_spec_messages {
+    use super::*;
+
+    #[test]
+    fn no_current_or_previous_job_names_the_spec() {
+        assert_parity(r#"jobs %% 2>&1; jobs %+ 2>&1; jobs % 2>&1; jobs %- 2>&1; print $?"#);
+    }
+}

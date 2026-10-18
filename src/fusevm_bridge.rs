@@ -1480,9 +1480,8 @@ pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
     if crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed)
         && matches!(name, "compopt" | "mapfile" | "readarray")
     {
-        eprintln!("zsh:1: command not found: {}", name);
         let _ = args;
-        return 127;
+        return report_zsh_command_not_found(name);
     }
     // c:Src/exec.c:2700-2724 resolvebuiltin — autoloaded-builtin stub
     // (registered by `zmodload -ab MOD NAME`, Src/module.c:426
@@ -1541,9 +1540,8 @@ pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
             })
             .unwrap_or(false)
     {
-        eprintln!("zsh:1: command not found: {}", name);
         let _ = args;
-        return 127;
+        return report_zsh_command_not_found(name);
     }
     // c:Src/Modules/files.c:806-824 — zsh/files registers `chmod`,
     // `chown`, `chgrp`, `ln`, `mkdir`, `mv`, `rm`, `rmdir`, `sync`
@@ -3082,9 +3080,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // to `mapfile` (the more-common spelling); both produce
         // identical diagnostics in any case.
         if crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed) {
-            eprintln!("zsh:1: command not found: mapfile");
             let _ = args;
-            return Value::Status(127);
+            return Value::Status(report_zsh_command_not_found("mapfile"));
         }
         // Non-zsh modes (bash drop-in): mapfile / readarray reads lines
         // from stdin (or `-u fd`) into an array. Handled by the ported
@@ -4159,9 +4156,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed) {
             // No user function, and `compgen` is a bash-only builtin, so in a
             // zsh-emulation shell it genuinely does not exist.
-            eprintln!("zsh:1: command not found: compgen");
             let _ = args;
-            return Value::Status(127);
+            return Value::Status(report_zsh_command_not_found("compgen"));
         }
         let status = with_executor(|exec| exec.builtin_compgen(&args));
         Value::Status(status)
@@ -4179,9 +4175,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             return Value::Status(status);
         }
         if crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed) {
-            eprintln!("zsh:1: command not found: complete");
             let _ = args;
-            return Value::Status(127);
+            return Value::Status(report_zsh_command_not_found("complete"));
         }
         let status = with_executor(|exec| exec.builtin_complete(&args));
         Value::Status(status)
@@ -4418,8 +4413,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if with_executor(|exec| exec.function_exists("compdef")) {
             return Value::Status(with_executor(|exec| exec.builtin_compdef(&args)));
         }
-        eprintln!("zsh:1: command not found: compdef");
-        Value::Status(127)
+        Value::Status(report_zsh_command_not_found("compdef"))
     });
 
     vm.register_builtin(BUILTIN_COMPINIT, |vm, argc| {
@@ -4438,9 +4432,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // function entry existing (which `autoload -Uz compinit` creates);
         // once the user has autoloaded/defined it, run zshrs's implementation.
         if !with_executor(|exec| exec.function_exists("compinit")) {
-            eprintln!("zsh:1: command not found: compinit");
             let _ = args;
-            return Value::Status(127);
+            return Value::Status(report_zsh_command_not_found("compinit"));
         }
         Value::Status(with_executor(|exec| exec.builtin_compinit(&args)))
     });
@@ -4478,9 +4471,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // mode emit the canonical "command not found" diagnostic
         // and rc=127 matching zsh's external-command-lookup miss.
         if crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed) {
-            eprintln!("zsh:1: command not found: caller");
             let _ = args;
-            return Value::Status(127);
+            return Value::Status(report_zsh_command_not_found("caller"));
         }
         Value::Status(with_executor(|exec| exec.builtin_caller(&args)))
     });
@@ -4490,9 +4482,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // c:Bug #475 — `help` is a bash-only builtin. Same gate as
         // BUILTIN_CALLER above.
         if crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed) {
-            eprintln!("zsh:1: command not found: help");
             let _ = args;
-            return Value::Status(127);
+            return Value::Status(report_zsh_command_not_found("help"));
         }
         Value::Status(with_executor(|exec| exec.builtin_help(&args)))
     });
@@ -14073,7 +14064,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let is_fn = with_executor(|e| e.function_exists(head));
             let is_ported =
                 crate::ported::builtin::createbuiltintable().contains_key(head.as_str());
-            if !is_fn && !is_ported {
+            if !is_fn && !is_ported && !zsh_lacks_bash_builtin(head) {
                 let status = run_daemon_builtin(head, &args[1..])
                     .or_else(|| try_run_registered_builtin(head, &args[1..]));
                 if let Some(status) = status {
@@ -22230,6 +22221,16 @@ impl fusevm::ShellHost for ZshrsHost {
         } else {
             args
         };
+        // c:Src/exec.c:903 — zsh has no `caller`, `help`, `mapfile`, `readarray`
+        // or `compopt`, so with no user function of that name `--zsh` answers the
+        // way zsh's command lookup does. Gated HERE because a name resolved at run
+        // time (`c=caller; $c`) reaches neither the per-opcode gates nor the
+        // compile-time ones: zshrs's host table holds these bash builtins, and
+        // fusevm's by-name fallback maps `readarray` onto the `mapfile` opcode.
+        // Bugs #475, #504.
+        if zsh_lacks_bash_builtin(name) && !with_executor(|exec| exec.function_exists(name)) {
+            return Some(report_zsh_command_not_found(name));
+        }
         // An alias is gone from the text by now; the compiler left its name behind.
         if let Some(status) = intercept_alias_origin(name, &args) {
             return Some(status);
@@ -22611,6 +22612,29 @@ impl fusevm::ShellHost for ZshrsHost {
 /// over the fusevm redirect op bytes compile_zsh lowers those types to:
 /// `>`/`>|` (WRITE/CLOBBER), `>>`/`>>|` (APPEND), `>&`/`&>` and their append
 /// forms (WRITE_BOTH/APPEND_BOTH, compile_zsh.rs REDIR_ERRWRITE..), `<>`.
+/// A bash builtin zshrs carries for `--bash` that zsh does not have: in `--zsh`
+/// the name must miss the way zsh's command lookup misses it (Bugs #475, #504).
+fn zsh_lacks_bash_builtin(name: &str) -> bool {
+    crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed)
+        && matches!(name, "caller" | "help" | "mapfile" | "readarray" | "compopt")
+}
+
+/// zsh's command-lookup miss for `name` (c:Src/exec.c:903, `%s` through
+/// nicezputs): the diagnostic with the current script/function context, and
+/// status 127. The error flag is not left set: the shell carries on.
+fn report_zsh_command_not_found(name: &str) -> i32 {
+    crate::ported::utils::zerr(&format!(
+        "command not found: {}",
+        crate::ported::utils::nicedupstring(name)
+    ));
+    crate::ported::utils::errflag.fetch_and(
+        !crate::ported::zsh_h::ERRFLAG_ERROR,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    with_executor(|exec| exec.set_last_status(127));
+    127
+}
+
 fn redir_is_write_file(op_byte: u8) -> bool {
     matches!(
         op_byte,
