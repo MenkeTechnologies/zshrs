@@ -378,7 +378,7 @@ pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) {
                             Some(d) => d.to_string(),
                             None => break,
                         };
-                        let expanded = xpandbraces(&cur, false); // c:171
+                        let expanded = xpandbraces(&cur, isset(crate::ported::zsh_h::BRACECCL)); // c:171 (hasbraces reads BRACECCL, c:Src/glob.c:2049)
                         // bash: an EMPTY unquoted brace alternative is a null word and
                         // is removed (`echo {,a}` -> `a`); zsh keeps it (keep = 1).
                         let expanded: Vec<String> = if crate::dash_mode::bash_mode() && !had_quote_marker && expanded.len() > 1 {
@@ -17283,7 +17283,13 @@ pub fn paramsubst(
                     }
                 } else {
                     let __gs = gs_save(); // c:Src/subst.c:3231-3232
-                    value = singsub(default);
+                    // c:3256-3258 — `multsub(&val, spbreak ? PREFORK_SINGLE : PREFORK_NOSHWORDSPLIT,
+                    // NULL, …)`, not singsub: without PREFORK_SINGLE, prefork brace-expands
+                    // the word and the result is joined, so `${x:={a,b}}` assigns "a b".
+                    let spbreak = !suppress_split
+                        && (force_split
+                            || (pf_flags & PREFORK_SHWORDSPLIT != 0 && pf_flags & PREFORK_SINGLE == 0 && !qt));
+                    value = multsub_operand(default, if spbreak { PREFORK_SINGLE } else { PREFORK_NOSHWORDSPLIT }).0;
                     gs_restore(__gs); // c:Src/subst.c:3231-3232
                     // c:Src/subst.c:3272-3273 — array assign with `spsep ||
                     // spbreak` splits via `sepsplit(val, spsep, 0, 1)`: on the
@@ -17458,7 +17464,13 @@ pub fn paramsubst(
                         }
                     } else {
                         let __gs = gs_save(); // c:Src/subst.c:3231-3232
-                        value = singsub(default);
+                        // c:3256-3258 — `multsub(&val, spbreak ? PREFORK_SINGLE : PREFORK_NOSHWORDSPLIT,
+                        // NULL, …)`, not singsub: without PREFORK_SINGLE, prefork brace-expands
+                        // the word and the result is joined, so `${x:={a,b}}` assigns "a b".
+                        let spbreak = !suppress_split
+                            && (force_split
+                                || (pf_flags & PREFORK_SHWORDSPLIT != 0 && pf_flags & PREFORK_SINGLE == 0 && !qt));
+                        value = multsub_operand(default, if spbreak { PREFORK_SINGLE } else { PREFORK_NOSHWORDSPLIT }).0;
                         gs_restore(__gs); // c:Src/subst.c:3231-3232
                         let split_arrasg = |v: &str| -> Vec<String> {
                             // c:3273-3293 — same field rule as the `::=` arm above.
@@ -17619,7 +17631,13 @@ pub fn paramsubst(
                         }
                     } else {
                         let __gs = gs_save(); // c:Src/subst.c:3231-3232
-                        value = singsub(default);
+                        // c:3256-3258 — `multsub(&val, spbreak ? PREFORK_SINGLE : PREFORK_NOSHWORDSPLIT,
+                        // NULL, …)`, not singsub: without PREFORK_SINGLE, prefork brace-expands
+                        // the word and the result is joined, so `${x:={a,b}}` assigns "a b".
+                        let spbreak = !suppress_split
+                            && (force_split
+                                || (pf_flags & PREFORK_SHWORDSPLIT != 0 && pf_flags & PREFORK_SINGLE == 0 && !qt));
+                        value = multsub_operand(default, if spbreak { PREFORK_SINGLE } else { PREFORK_NOSHWORDSPLIT }).0;
                         gs_restore(__gs); // c:Src/subst.c:3231-3232
                         let split_arrasg = |v: &str| -> Vec<String> {
                             // c:3273-3293 — same field rule as the `::=` arm above.

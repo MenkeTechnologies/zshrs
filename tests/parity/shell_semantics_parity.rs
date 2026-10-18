@@ -338,3 +338,35 @@ mod loop_exit_status {
         assert_parity(r#"n=0; while (( n++ < 3 )); do false; done; print rc=$?; while false; do :; done; print rc=$?"#);
     }
 }
+
+/// The word of `${x=word}`, `${x:=word}` and `${x::=word}` goes through
+/// `multsub(&val, spbreak ? PREFORK_SINGLE : PREFORK_NOSHWORDSPLIT, NULL, …)`
+/// (Src/subst.c:3256-3258), not a single-word expansion, so prefork brace-
+/// expands it and joins the words: `${x:={a,b}}` assigns "a b". prefork's
+/// `hasbraces` also honours BRACE_CCL (Src/glob.c:2049) for an operand.
+/// docs/BUGS.md #647.
+mod brace_expansion_in_operands {
+    use super::*;
+
+    #[test]
+    fn assign_default_forms_brace_expand_their_word() {
+        assert_parity(r#"print -r -- ${x:={a,b}}; print -r -- "[$x]""#);
+        assert_parity(r#"print -r -- ${x={a,b}} ${y::=pre{a,b}post}; print -r -- "[$x] [$y]""#);
+        assert_parity(r#"x=; print -r -- ${x:={1..3}}; print -r -- "[$x]""#);
+        assert_parity(r#"v=w; print -r -- ${x:=$v{1,2}}; print -r -- "[$x]""#);
+    }
+
+    #[test]
+    fn quoting_and_options_still_suppress_it() {
+        assert_parity(r#"print -r -- "${x:={a,b}}"; print -r -- "[$x]""#);
+        assert_parity(r#"print -r -- ${x:='{a,b}'} ${y:=\{a,b\}}; print -r -- "[$x] [$y]""#);
+        assert_parity(r#"setopt ignorebraces; print -r -- ${x:={a,b}}; print -r -- "[$x]""#);
+        assert_parity(r#"setopt shwordsplit; print -r -- ${x:={a,b}}; print -r -- "[$x]""#);
+        assert_parity(r#"x=keep; print -r -- ${x:={a,b}}; print -r -- "[$x]""#);
+    }
+
+    #[test]
+    fn brace_ccl_applies_to_an_operand() {
+        assert_parity(r#"setopt braceccl; print -r -- ${x:-{ab}} ${y:={a-c}}; print -r -- "[$y]""#);
+    }
+}

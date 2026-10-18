@@ -6717,9 +6717,15 @@ error); the default `argv` source is unchanged.
 
 ---
 
-## #647 — brace expansion inside a `${x:-word}` default doesn't fire
+## #647 — brace expansion inside a `${x:-word}` default doesn't fire — fixed
 
-**Status:** `port-bug`
+**Status:** `fixed`. The `:-` / `:+` forms were fixed earlier. Confirmed 2026-10-17 against the dev-tree
+oracle that `=`, `:=` and `::=` still did not brace-expand (`${x:={a,b}}` → `{a,b}`, zsh `a b`):
+their scalar arm called `singsub` (PREFORK_SINGLE) where C calls
+`multsub(&val, spbreak ? PREFORK_SINGLE : PREFORK_NOSHWORDSPLIT, NULL, …)` (c:Src/subst.c:3256-3258).
+prefork also passed a hard-coded `false` for BRACE_CCL, so `setopt braceccl; ${x:-{ab}}` stayed `{ab}`
+(c:Src/glob.c:2049 reads the option). Both fixed and pinned in
+`shell_semantics_parity::brace_expansion_in_operands`.
 
 **Reproducer:**
 
