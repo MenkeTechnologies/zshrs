@@ -155,3 +155,46 @@ pub fn iswgraph(c: char) -> bool {
     // SAFETY: iswgraph reads only its argument and the thread's locale.
     unsafe { libc_iswgraph(c as WintT) != 0 }
 }
+
+/// Opaque storage for a C `regex_t`: 32 bytes on Darwin, 64 on glibc, so 256
+/// with pointer alignment holds any libc's.
+#[repr(C, align(16))]
+struct RegexStorage([u8; 256]);
+
+extern "C" {
+    #[link_name = "regcomp"]
+    fn libc_regcomp(preg: *mut RegexStorage, pattern: *const libc::c_char, cflags: libc::c_int) -> libc::c_int;
+    #[link_name = "regerror"]
+    fn libc_regerror(
+        errcode: libc::c_int,
+        preg: *const RegexStorage,
+        errbuf: *mut libc::c_char,
+        errbuf_size: libc::size_t,
+    ) -> libc::size_t;
+    #[link_name = "regfree"]
+    fn libc_regfree(preg: *mut RegexStorage);
+}
+
+/// The C library's `regerror(3)` text for `pattern` compiled as POSIX ERE
+/// (`REG_EXTENDED`, plus `REG_ICASE` when `icase`), or None when `regcomp(3)`
+/// accepts it — the diagnostic zsh's `zregex_regerrwarn` prints
+/// (c:Src/Modules/regex.c:79-81).
+pub fn regcomp_error(pattern: &str, icase: bool) -> Option<String> {
+    const REG_EXTENDED: libc::c_int = 1; // identical on BSD and glibc
+    const REG_ICASE: libc::c_int = 2;
+    let pat = std::ffi::CString::new(pattern).ok()?;
+    let mut re = RegexStorage([0; 256]);
+    let flags = REG_EXTENDED | if icase { REG_ICASE } else { 0 };
+    // SAFETY: `re` outlives the calls and is larger than any libc's regex_t;
+    // regfree runs only after a successful regcomp.
+    unsafe {
+        let rc = libc_regcomp(&mut re, pat.as_ptr(), flags);
+        if rc == 0 {
+            libc_regfree(&mut re);
+            return None;
+        }
+        let mut buf = [0 as libc::c_char; 256];
+        libc_regerror(rc, &re, buf.as_mut_ptr(), buf.len());
+        Some(CStr::from_ptr(buf.as_ptr()).to_string_lossy().into_owned())
+    }
+}

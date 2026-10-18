@@ -45124,6 +45124,8 @@ done
 
 ## #437 — regex-compile error diagnostic missing details — `failed to compile regex` without specific reason
 
+**Resolution (2026-10-18).** `=~` now asks the C library: `regcomp(3)` with `REG_EXTENDED` (plus `REG_ICASE` under NO_CASE_MATCH) decides whether the pattern is a valid ERE, and `regerror(3)` supplies the message, as in `Src/Modules/regex.c:78-81`. The wording therefore matches zsh on each platform (`brackets ([ ]) not balanced`, `invalid repetition count(s)`, …). Patterns BSD libc rejects but the old translation accepted (`a**`, `(a|)`, `[[:nope:]]`, `x{99999}`) are now errors, and a `)` with no open group is literal (`RE_UNMATCHED_RIGHT_PAREN_ORD` in glibc, the same in BSD libc) instead of a compile error. Matching still runs on the RE2 translation. `regex_t` is declared as opaque, over-sized storage (`c_locale::regcomp_error`), because the `libc` crate does not declare `regcomp` for linux-gnu. Pinned by `shell_semantics_parity::regex_compile_follows_the_c_library`.
+
 **Status:** `fixed` 2026-06-04 ([src/ported/modules/regex.rs](../src/ported/modules/regex.rs)).
 
 **Root cause** — `zcond_regex_match`'s compile-error branch passed a generic

@@ -102,78 +102,23 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
     //   * `\w` / `\s` / `\b` and friends are libc-CONDITIONAL: glibc honours
     //     them as GNU operators, BSD libc does not. See `gnu_ere_escape`.
     //
-    // Calling regcomp directly would be the literal port, but `libc` does not
-    // declare regcomp for linux-gnu and keeps every regex_t field private, so
-    // FFI here would neither build on the Linux targets nor be layout-stable.
-    // Instead the pattern is translated into the RE2 dialect that expresses the
-    // SAME ERE semantics, and the constructs ERE rejects are rejected here.
+    // c:78-81 — regcomp(3) decides what is a valid ERE, and its regerror(3)
+    // text is the diagnostic (zregex_regerrwarn → zwarn, so the prefix is
+    // `zsh:1:`). The C library is asked directly, so its own dialect rules
+    // apply — BSD rejects an empty (sub)expression where glibc accepts one.
+    // Matching runs on the pattern translated into the RE2 dialect below,
+    // which expresses the same ERE semantics.
     let casematch = isset(CASEMATCH);
+    if let Some(msg) = crate::extensions::c_locale::regcomp_error(rhre, !casematch) {
+        crate::ported::utils::zwarn(&format!("failed to compile regex: {msg}"));
+        return 0; // c:81 break;
+    }
     let pat_for_compile = if !casematch {
         // c:75
         format!("(?i){}", rhre) // c:76 REG_ICASE
     } else {
         rhre.to_string()
     };
-
-    // c:Src/Modules/regex.c regcomp — BSD libc's ERE rejects an empty
-    // pattern with REG_EMPTY (`empty (sub)expression`). Rust's
-    // regex crate ACCEPTS an empty pattern as "matches everywhere", which
-    // is what glibc's regcomp does too (`[[ hello =~ "" ]]` is 0 there),
-    // so the rejection is BSD-only.
-    #[cfg(not(target_env = "gnu"))]
-    if rhre.is_empty() {
-        crate::ported::utils::zwarn("failed to compile regex: empty (sub)expression");
-        return 0;
-    }
-    // c:78 — regcomp(3): in ERE a `(` immediately followed by a repetition
-    // operator is a repetition with NO OPERAND, which regcomp rejects with
-    // "repetition-operator operand invalid". RE2 instead reads `(?…` as a group
-    // modifier — `(?i)`, `(?<name>…)`, `(?:…)` — and compiles it happily, so
-    // without this check zshrs accepted (and matched) patterns zsh refuses.
-    // Backslash-escaped parens and parens inside a bracket expression are
-    // ordinary characters and do not open a group.
-    let ere_rejects = {
-        let b: Vec<char> = rhre.chars().collect();
-        let mut i = 0usize;
-        let mut in_bracket = false;
-        let mut bad = false;
-        while i < b.len() {
-            let c = b[i];
-            if in_bracket {
-                // A `]` that is the FIRST character of the bracket expression is
-                // an ordinary member, not the terminator.
-                if c == ']' {
-                    in_bracket = false;
-                }
-                i += 1;
-                continue;
-            }
-            match c {
-                '\\' => i += 2, // escaped: the next char is literal
-                '[' => {
-                    in_bracket = true;
-                    i += 1;
-                    // `[]…]` and `[^]…]` — a leading `]` is a member.
-                    if i < b.len() && b[i] == '^' {
-                        i += 1;
-                    }
-                    if i < b.len() && b[i] == ']' {
-                        i += 1;
-                    }
-                }
-                '(' if i + 1 < b.len() && matches!(b[i + 1], '?' | '*' | '+') => {
-                    bad = true;
-                    break;
-                }
-                _ => i += 1,
-            }
-        }
-        bad
-    };
-    if ere_rejects {
-        crate::ported::utils::zwarn("failed to compile regex: repetition-operator operand invalid");
-        return 0; // c:81 break;
-    }
     // c:78 — regcomp(3) POSIX-ERE semantics the RE2 dialect does not share:
     // backslash-before-ordinary is a LITERAL (so `\d` is `d`, not a digit
     // class), and inside `[...]` a backslash is an ordinary class member
@@ -181,8 +126,6 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
     // operator escapes are lifted back out of that literal rule first —
     // see `gnu_ere_escape`.
     let pat_for_compile = crate::ported::modules::regex::posix_ere_bracket_escape(&pat_for_compile);
-    // c:79-81 zregex_regerrwarn — `failed to compile regex: <msg>` via zwarn
-    // (the `zsh:1:` prefix comes from zwarn's default path).
     let compile_failed = |raw: String| {
         let detail = raw
             .lines()
@@ -190,7 +133,7 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
             .find_map(|l| l.trim().strip_prefix("error: "))
             .map(|s| s.to_string())
             .unwrap_or_else(|| raw.replace('\n', " "));
-        crate::ported::utils::zwarn(&format!("failed to compile regex: {}", detail));
+        crate::ported::utils::zwarn(&format!("failed to compile regex: {detail}"));
     };
     // c:78 regcomp + c:92 regexec, as the byte range of each group (`[0]` is
     // the whole match, None for a group that did not participate) plus
@@ -1456,6 +1399,7 @@ pub fn posix_ere_bracket_escape(pat: &str) -> String {
     let chars: Vec<char> = pat.chars().collect();
     let mut out = String::with_capacity(pat.len() + 8);
     let mut i = 0;
+    let mut paren_depth = 0usize;
     // POSIX ERE special characters — the only ones for which a backslash is
     // meaningful. For ANY other character, ERE says `\X` is just the literal X,
     // so `\d` is the letter `d`. `\w` / `\s` / `\b` are the exception on glibc
@@ -1595,6 +1539,15 @@ pub fn posix_ere_bracket_escape(pat: &str) -> String {
             continue;
         }
         if c != '[' {
+            // A `)` with no open group is an ordinary character in both libcs'
+            // ERE (glibc RE_UNMATCHED_RIGHT_PAREN_ORD; BSD likewise): `a)` matches
+            // the text `a)`. RE2 rejects it, so it is escaped.
+            match c {
+                '(' => paren_depth += 1,
+                ')' if paren_depth == 0 => out.push('\\'),
+                ')' => paren_depth -= 1,
+                _ => {}
+            }
             out.push(c);
             i += 1;
             continue;

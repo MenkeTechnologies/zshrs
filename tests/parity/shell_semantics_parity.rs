@@ -558,3 +558,14 @@ mod word_lists_past_255_words {
         assert_parity(&format!("set -- x y; 2=({w}); print $# $2"));
     }
 }
+
+/// `=~` hands its pattern to regcomp(3), which decides what is a valid ERE and
+/// whose regerror(3) text is the diagnostic (Src/Modules/regex.c:78-81). A `)`
+/// with no open group is an ordinary character.
+#[test]
+fn regex_compile_follows_the_c_library() {
+    assert_parity(
+        r#"for p in '[' 'a{2,1}' '(?i)AB' '(' '*a' 'a**' '\' '[[:nope:]]' 'a{1' 'x{99999}' '[z-a]' x; do [[ x =~ $p ]]; print rc=$?; done 2>&1 | cut -d: -f3-"#,
+    );
+    assert_parity(r#"for t in 'a)' 'a)b' 'x)'; do [[ $t =~ "${t%?}\)?" ]] && [[ $t =~ "$t" ]]; print "$? $MATCH"; done; [[ 'x)' =~ '(x))' ]]; print $? $MATCH $match"#);
+}
