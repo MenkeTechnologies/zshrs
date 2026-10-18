@@ -2638,6 +2638,11 @@ pub fn cd_get_dest(nam: &str, argv: &[String], _hard: bool, func: i32) -> Option
                 // Empty DIRSTACK → fall through to HOME below.
             }
         }
+        // c:881-884 — `if (!home) { zwarnnam(nam, "HOME not set"); return NULL; }`.
+        if crate::ported::params::HOME_NULL.load(Relaxed) && !EMULATION(EMULATE_ZSH) {
+            zwarnnam(nam, "HOME not set");
+            return None;
+        }
         // c:880-884 — fall through to $HOME.
         // `home` (c:885) is a C global filled from the passwd entry at startup, never
         // NULL; `unset HOME` leaves it empty and `cd` then does nothing, silently.
@@ -14798,8 +14803,8 @@ pub fn bin_print(
             // !!! DROP-IN GATE (no C counterpart) !!! bash, ksh93, mksh, dash and /bin/sh
             // report a failed write (`echo a 1>&-`) with status 1; zsh answers 0.
             let flushed = lk.flush();
-            if (flushed.is_err() || crate::stdout_ferror::take_stdout_ferror() != 0)
-                && (crate::dash_mode::bash_mode() || crate::dash_mode::posix_faithful())
+            if (crate::dash_mode::bash_mode() || crate::dash_mode::posix_faithful())
+                && (flushed.is_err() || crate::stdout_ferror::take_stdout_ferror() != 0)
             {
                 return 1;
             }

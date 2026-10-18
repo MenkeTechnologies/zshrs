@@ -1090,6 +1090,11 @@ fn process_entry_init() {
 }
 
 fn main() {
+    // C's `home` is NULL when the shell starts without `$HOME`, which `cd` reports (c:881).
+    zsh::ported::params::HOME_NULL.store(
+        std::env::var_os("HOME").is_none(),
+        std::sync::atomic::Ordering::Relaxed,
+    );
     zshrs_main();
 }
 

@@ -74,7 +74,7 @@ use fusevm::Value;
 use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
 use std::env;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -14574,6 +14574,11 @@ pub fn homegetfn(_pm: &param) -> String {
     home_lock().lock().expect("home poisoned").clone()
 }
 
+/// C's `home` global is NULL (not `""`) until something sets it: a non-zsh emulation started
+/// without `$HOME` leaves it NULL, which makes a bare `cd` fail with "HOME not set" (c:881),
+/// whereas a later `unset HOME` leaves `""` and `cd` does nothing.
+pub static HOME_NULL: AtomicBool = AtomicBool::new(false);
+
 /// Port of `homesetfn()` from `Src/params.c:5118`. C body:
 /// ```c
 /// zsfree(home);
@@ -14584,6 +14589,9 @@ pub fn homegetfn(_pm: &param) -> String {
 /// finddir(NULL);
 /// ```
 pub fn homesetfn(_pm: &mut param, x: String) {
+    if !x.is_empty() {
+        HOME_NULL.store(false, Ordering::Relaxed);
+    }
     // c:5121-5126 — CHASELINKS path resolves symlinks before storing.
     // Falls through to the plain `x` store when CHASELINKS is off or
     // xsymlink fails.
