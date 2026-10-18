@@ -19121,11 +19121,11 @@ pub fn bin_trap(
                 combined.push((idx, TrapEntry::Str(name, String::new())));
             }
         }
-        // !!! BASH-MODE GATE (no C counterpart) !!! bash lists a signal that was
-        // ignored on entry as `trap -- '' SIGNAME` (bash-5.3 builtins/trap.def:302),
-        // whether or not the script ever named it. BUGS.md #1109.
+        // !!! EMULATION GATE (no C counterpart) !!! a signal ignored on entry lists
+        // as `trap -- '' SIG`: always in bash (bash-5.3 builtins/trap.def:302), in
+        // ksh93 once a trap command has named it, never in /bin/sh. BUGS.md #1109.
         for sig in 1..=crate::ported::signals_h::SIGCOUNT {
-            if crate::startup_signals::bash_hard_ignored(sig) {
+            if crate::startup_signals::hard_ignored_listed(sig) {
                 combined.retain(|(i, _)| *i != sig);
                 combined.push((sig, TrapEntry::Str(crate::ported::jobs::getsigname(sig), String::new())));
             }
@@ -19247,9 +19247,12 @@ pub fn bin_trap(
             }
         }
         for sig in to_clear {
-            // bash: a signal ignored on entry cannot be reset, silently
-            // (bash-5.3 trap.c:954-957). BUGS.md #1109.
-            if crate::startup_signals::bash_hard_ignored(sig) {
+            // bash, ksh93, /bin/sh: a signal ignored on entry cannot be reset,
+            // silently (bash-5.3 trap.c:954-957). BUGS.md #1109.
+            if crate::startup_signals::hard_ignored(sig) {
+                if start < argv.len() {
+                    crate::startup_signals::note_hard_ignored_named(sig);
+                }
                 continue;
             }
             // c:7388 / c:7397 — `unsettrap(sig)`. C's unsettrap
@@ -19391,9 +19394,10 @@ pub fn bin_trap(
             trap_install_error = 1;
             break;
         }
-        // bash: a signal ignored on entry cannot be trapped, and no error is
-        // reported (bash-5.3 trap.c:850-853, :1001-1004). BUGS.md #1109.
-        if crate::startup_signals::bash_hard_ignored(sig) {
+        // bash, ksh93, /bin/sh: a signal ignored on entry cannot be trapped, and
+        // no error is reported (bash-5.3 trap.c:850-853, :1001-1004). BUGS.md #1109.
+        if crate::startup_signals::hard_ignored(sig) {
+            crate::startup_signals::note_hard_ignored_named(sig);
             continue;
         }
         // c:Src/signals.c — C zsh stores traps in a fixed array

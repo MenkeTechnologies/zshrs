@@ -1046,13 +1046,11 @@ is left out because Rust's runtime ignores it before `main`. In a non-interactiv
 `$(…)`. An interactive bash may trap them and lists nothing, so the gate is `!interact()`.
 `inherited_sig_ign_is_listed_by_bash` runs live. zsh mode does not take the new gate.
 
-Still open: ksh93 and `/bin/sh` (bash 3.2 in posix mode) also refuse to trap an inherited
-ignore, and zshrs `--ksh`/`--sh` do not.
-
-    $ (trap '' USR1; ksh -c "trap ':' USR1; trap")       -> trap -- '' USR1
-    $ (trap '' USR1; zshrs --ksh -c "trap ':' USR1; trap") -> trap -- : USR1
-    $ (trap '' USR1; /bin/sh -c "trap ':' USR1; trap")   -> (nothing)
-    $ (trap '' USR1; zshrs --sh -c "trap ':' USR1; trap")  -> trap -- ':' USR1
+Follow-up (2026-10-18): ksh93 and `/bin/sh` (bash 3.2 in posix mode) refuse such a trap too, and now
+so do zshrs `--ksh` and `--sh` (`startup_signals::hard_ignored`). Their listings differ from bash: ksh93
+shows the signal as `''` only after a `trap` command has named it; `/bin/sh` never shows it. Pinned
+by `emulation_builtin_fmt_parity::inherited_sig_ign_follows_each_reference_shell`, which sets up the
+inherited ignore itself.
 
 ---
 

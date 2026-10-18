@@ -36,7 +36,7 @@
 /// so recording it unconditionally made every POSIX-family drop-in
 /// print a QUIT line the real shell never prints. bash's variant is a
 /// different shape (every inherited ignore, SIG names) and is ported
-/// separately as [`bash_hard_ignored`].
+/// separately as [`hard_ignored`].
 #[cfg(unix)]
 fn zsh_mode_only() -> bool {
     !crate::dash_mode::posix_faithful() && !crate::dash_mode::bash_mode()
@@ -251,17 +251,16 @@ pub fn snapshot_inherited_ignores() {
 #[cfg(not(unix))]
 pub fn snapshot_inherited_ignores() {}
 
-/// Whether `sig` is hard-ignored in the bash sense (BUGS.md #1109).
-///
-/// bash's `SIG_HARD_IGNORE`: a signal ignored on entry to a NON-interactive
-/// shell "cannot be trapped or reset, but no error is reported when
-/// attempting to do so" (bash-5.3 `trap.c:850-853`, `:954-957`,
-/// `:1001-1004`), and the trap listing shows it as `trap -- '' SIGNAME`
-/// (`builtins/trap.def:302-303`). An interactive bash may trap it and
-/// lists nothing for it. zsh, dash and mksh have no such rule.
+/// Whether `sig` is hard-ignored: a signal ignored on entry to a
+/// NON-interactive bash, ksh93 or `/bin/sh` "cannot be trapped or reset, but
+/// no error is reported when attempting to do so" (bash-5.3 `trap.c:850-853`,
+/// `:954-957`, `:1001-1004`; ksh93 and bash-posix `/bin/sh` measured the same).
+/// An interactive shell may trap it. zsh, dash and mksh have no such rule.
+/// BUGS.md #1109.
 #[cfg(unix)]
-pub fn bash_hard_ignored(sig: i32) -> bool {
-    crate::dash_mode::bash_mode()
+pub fn hard_ignored(sig: i32) -> bool {
+    use crate::dash_mode::{bash_mode, ksh93_mode, sh_mode};
+    (bash_mode() || ksh93_mode() || sh_mode())
         && !crate::ported::zsh_h::interact()
         && (1..64).contains(&sig)
         && INHERITED_IGNORED.load(std::sync::atomic::Ordering::Relaxed) & (1u64 << sig) != 0
@@ -269,6 +268,26 @@ pub fn bash_hard_ignored(sig: i32) -> bool {
 
 /// Non-unix stub: nothing is ever inherited as ignored.
 #[cfg(not(unix))]
-pub fn bash_hard_ignored(_sig: i32) -> bool {
+pub fn hard_ignored(_sig: i32) -> bool {
     false
+}
+
+/// Hard-ignored signals a `trap` command has named (bit N = signal N).
+static HARD_IGNORED_NAMED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Record that a `trap` command named hard-ignored `sig` (set, `''` or `-`).
+pub fn note_hard_ignored_named(sig: i32) {
+    if (1..64).contains(&sig) {
+        HARD_IGNORED_NAMED.fetch_or(1u64 << sig, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Whether the trap listing shows hard-ignored `sig` as `trap -- '' SIG`.
+/// bash always does (`builtins/trap.def:302-303`); ksh93 only once a `trap`
+/// command has named the signal; `/bin/sh` never does.
+pub fn hard_ignored_listed(sig: i32) -> bool {
+    hard_ignored(sig)
+        && (crate::dash_mode::bash_mode()
+            || (crate::dash_mode::ksh93_mode()
+                && HARD_IGNORED_NAMED.load(std::sync::atomic::Ordering::Relaxed) & (1u64 << sig) != 0))
 }

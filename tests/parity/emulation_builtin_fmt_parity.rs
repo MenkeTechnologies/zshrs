@@ -475,3 +475,44 @@ fn emulate_option_is_zsh_running_emulate() {
     both(&["-f", "--emulate", "sh"], None);
     both(&["--emulate"], None);
 }
+
+/// A signal ignored on entry to a non-interactive shell cannot be trapped or
+/// reset in bash, ksh93 and `/bin/sh`, and each lists it differently: bash
+/// always (`trap -- '' SIGUSR1`), ksh93 once a `trap` command has named it,
+/// `/bin/sh` never. dash and mksh trap it normally. The inherited `SIG_IGN` is
+/// set up explicitly by a wrapper, not left to how the harness was launched.
+/// docs/BUGS.md #1109.
+#[test]
+fn inherited_sig_ign_follows_each_reference_shell() {
+    let mut legs = targets();
+    legs.push(("--sh", Path::new("/bin/sh").exists().then(|| "/bin/sh".to_string()), "sh"));
+    let zbin = zshrs_bin();
+    let z = zbin.to_str().expect("zshrs path is UTF-8");
+    let ignoring = |argv: &[&str], script: &str| -> Out {
+        let mut full = vec!["-c", "trap '' USR1; exec \"$@\"", "wrap"];
+        full.extend_from_slice(argv);
+        full.push(script);
+        run("/bin/sh", &full, "")
+    };
+    for (flag, refbin, label) in legs {
+        let Some(refbin) = refbin else {
+            continue;
+        };
+        for script in [
+            "trap",
+            "trap ':' USR1; trap",
+            "trap '' USR1; trap",
+            "trap ':' USR1; trap - USR1; trap",
+            "trap ':' USR1 TERM; trap",
+            "trap ':' USR1; kill -USR1 $$; echo alive",
+        ] {
+            let r = ignoring(&[&refbin, "-c"], script);
+            let g = ignoring(&[z, flag, "-f", "-c"], script);
+            assert_eq!(
+                (r.stdout.as_str(), r.exit),
+                (g.stdout.as_str(), g.exit),
+                "{label} vs zshrs {flag}: {script}"
+            );
+        }
+    }
+}
