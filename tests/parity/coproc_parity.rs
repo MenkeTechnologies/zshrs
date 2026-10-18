@@ -211,3 +211,16 @@ fn coproc_as_a_later_chain_element() {
     assert_parity("true && coproc cat; jobs; kill %1");
     assert_parity("false || coproc cat; print -p hi; read -p l; print $l; kill %1");
 }
+
+#[test]
+fn coproc_with_a_trailing_ampersand_is_the_job_itself() {
+    // c:Src/exec.c:1764-1765 — the coproc flag already runs the pipeline
+    // Z_ASYNC, and a trailing `&` adds nothing: one fork, one job, wired to
+    // `print -p` / `read -p`. zshrs wrapped the list in a further `&` job, so
+    // the job it recorded was the intermediate child that started the coproc
+    // and exited at once: `jobs` listed nothing and `print -p` had no
+    // coprocess. A coproc also keeps its job under `&!`.
+    assert_parity("coproc cat & print -p hi; read -p l; print $l; jobs; kill %1");
+    assert_parity("coproc cat &! jobs; print -p hi; read -p l; print $l; kill %1");
+    assert_parity("true && coproc cat & jobs; kill %1");
+}

@@ -1158,7 +1158,7 @@ impl ZshCompiler {
         self.builder.patch_jump(prologue_fast, prologue_fast_at);
 
         // ZshList = sublist + flags (async / disown).
-        if list.flags.async_ && !list.sublist.flags.coproc {
+        if list.flags.async_ {
             // c:Src/parse.c:660-667 — `&` / `&!` set Z_ASYNC on the LIST
             // code, and execlist hands that `ltype` ONLY to the chain's
             // final (WC_SUBLIST_END) pipeline (c:Src/exec.c:1545). Every
@@ -1167,38 +1167,12 @@ impl ZshCompiler {
             // `sleep 1 && echo x &` sleeps in the foreground, and
             // `sleep 1 || true &` short-circuits and never makes a job.
             self.compile_sublist_impl(&list.sublist, Some(list.flags.disown));
-        } else if list.flags.async_ {
-            // `coproc … &` — the coproc flag already forces Z_ASYNC inside
-            // execpline (c:Src/exec.c:1764-1765). Compile the sublist into
-            // a sub-chunk + emit BUILTIN_RUN_BG.
-            let mut sub = self.sub_compiler();
-            sub.compile_sublist(&list.sublist);
-            let sub_end = sub.builder.current_pos();
-            for patch in std::mem::take(&mut sub.return_patches) {
-                sub.builder.patch_jump(patch, sub_end);
-            }
-            let sub_chunk = sub.builder.build();
-            let sub_idx = self.builder.add_sub_chunk(sub_chunk);
-            // c:Src/exec.c:2061-2064 — the job text is
-            // `getjobtext(state->prog, state->pc)` taken at the PIPE, past
-            // the sublist code, so the `coproc ` prefix gettext2 prints for
-            // WC_SUBLIST_COPROC (c:Src/text.c:466-467) is not part of it.
-            // c:Src/text.c:342 — `untokenize(jbuf)` over the finished buffer.
-            let job_text = tstr(&render_pipe_for_debug(&list.sublist.pipe, true));
-            let text_const = self.builder.add_constant(Value::str(&job_text));
-            self.builder.emit(Op::LoadConst(text_const), 0);
-            self.builder.emit(Op::LoadInt(sub_idx as i64), 0);
-            self.builder.emit(Op::LoadInt(1), 0); // one proc for the whole sublist
-            // `&|` / `&!` (disown): pass the flag so BUILTIN_RUN_BG deletes the
-            // job (C exec.c:1752-1758) instead of announcing it via spawnjob.
-            // Without this, `cmd &|` inside a function/`zle -F` handler leaked a
-            // `[N] pid` line — e.g. zinit-turbo's `rustup completions zsh … &|`
-            // spewed into the prompt where real zsh is silent.
-            self.builder
-                .emit(Op::LoadInt(i64::from(list.flags.disown)), 0);
-            self.builder
-                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_RUN_BG, 4), 0);
-            self.builder.emit(Op::SetStatus, 0);
+            // A `coproc` element is already Z_ASYNC (c:Src/exec.c:1764-1765)
+            // and is the job itself; wrapping the list in a further `&` job
+            // forked twice, so the job zshrs recorded was the intermediate
+            // child that started the coproc and exited at once (`coproc sleep
+            // 5 & jobs` listed nothing). A coproc ignores `&!`: it is not
+            // deleted from the job table (`coproc sleep 2 &!; jobs` lists it).
         } else {
             self.compile_sublist(&list.sublist);
         }
@@ -1428,6 +1402,10 @@ impl ZshCompiler {
                 };
                 if pipe_coprocs[i + 1] {
                     self.compile_coproc_pipe(pipes[i + 1]);
+                } else if let (true, Some(disown)) = (i + 1 == ops.len(), async_tail) {
+                    // c:Src/exec.c:1545 — the final element takes the list's
+                    // Z_ASYNC.
+                    self.emit_async_pipe(pipes[i + 1], disown);
                 } else {
                     self.compile_execpline(pipes[i + 1], pipe_nots[i + 1]);
                 }
@@ -1544,7 +1522,8 @@ impl ZshCompiler {
             // c:Src/exec.c:1545 — the final element of an async list is the
             // only one that gets Z_ASYNC; its status is execpline's
             // `lastval = 0` (c:1818), never negated and never checked.
-            if i == ops.len() - 1 {
+            // A coproc element is its own Z_ASYNC job (handled below).
+            if i == ops.len() - 1 && !pipe_coprocs[i + 1] {
                 if let Some(disown) = async_tail {
                     self.emit_async_pipe(pipes[i + 1], disown);
                     self.builder.patch_jump(skip, self.builder.current_pos());
