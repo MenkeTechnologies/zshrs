@@ -2568,7 +2568,29 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                     // same as an unterminated `{ … }` block anywhere else.
                     return LEXERR;
                 }
-                if (isset(IGNOREBRACES) && !cmdsubst) || sub {
+                if in_brace_param > 0 && !sub && crate::dash_mode::bash_mode() {
+                    // !!! BASH GATE (no C counterpart) !!! Inside `${...}` bash
+                    // nests only on `${`; a bare `{` is an ordinary character and the
+                    // FIRST `}` closes the expansion (`v=; echo ${v:-{a}}` is `{a`
+                    // then a literal `}`). zsh counts every brace, so bash-completion's
+                    // `${o%%[<{().[]*}` ended in "closing brace expected". Inside an
+                    // open `[...]` the brace is a bracket member, so it is quoted the
+                    // way `[\{]` is: a bare one there does not match.
+                    let in_bracket = LEX_LEXBUF.with_borrow(|b| {
+                        let chars: Vec<char> = b.as_str().chars().collect();
+                        let start = (1..chars.len())
+                            .rev()
+                            .find(|&i| chars[i] == Inbrace && chars[i - 1] == Stringg)
+                            .map_or(0, |i| i + 1);
+                        let open = chars[start..].iter().filter(|&&c| c == Inbrack).count();
+                        let shut = chars[start..].iter().filter(|&&c| c == Outbrack).count();
+                        open > shut
+                    });
+                    if in_bracket {
+                        add(Bnull);
+                    }
+                    add('{');
+                } else if (isset(IGNOREBRACES) && !cmdsubst) || sub {
                     add('{');
                 } else {
                     if LEX_LEXBUF.with_borrow(|b| b.len) == 0 && LEX_INCMDPOS.get() {

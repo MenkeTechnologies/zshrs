@@ -2906,3 +2906,26 @@ fn bash_regex_rhs_may_start_with_a_double_paren() {
     let (ec, out) = run_mode("--bash", "((1+1==2)) && echo m");
     assert_eq!((ec, out.as_str()), (0, "m\n"));
 }
+
+/// bash nests inside `${...}` only on `${`: a bare `{` is an ordinary
+/// character and the first `}` closes the expansion. zsh counted every brace,
+/// so `${o%%[<{().[]*}` (bash-completion's `_parse_help`) ended in "closing
+/// brace expected" and, being unterminated, swallowed the rest of the file.
+/// Inside `[...]` the brace is a bracket member and must still match.
+#[test]
+fn bash_param_braces_nest_only_on_dollar_brace() {
+    if zshrs_bin().is_none() {
+        return;
+    }
+    for (script, want) in [
+        (r#"o='--foo(bar)'; echo "${o%%[<{().[]*}""#, "--foo\n"),
+        (r#"o='a{b'; echo "${o%%[{]*}""#, "a\n"),
+        (r#"o='a{b'; echo "${o//[{]/X}" "${o#a[{]}""#, "aXb b\n"),
+        (r#"v=; echo "${v:-{a}}""#, "{a}\n"),
+        (r#"v=x; echo "${v:+{}}""#, "{}\n"),
+        (r#"w='a{b}c'; echo "${w%%\{*}""#, "a\n"),
+    ] {
+        let (ec, out) = run_mode("--bash", script);
+        assert_eq!((ec, out.as_str()), (0, want), "script: {script}");
+    }
+}
