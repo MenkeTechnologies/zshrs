@@ -1243,6 +1243,11 @@ unmeasured otherwise (see TODO list at end of this section).
 - Cold client launch (daemon already running): <5ms (mmap + connect + handshake).
 - Tab completion lookup: ~150-200ns end-to-end (perfect-hash mmap dereference).
 - Inline autosuggest: <2ms IPC roundtrip including FTS query.
+  `suggest` and the history slab of `complete` search the newest `RECENT_PREFIX_WINDOW`
+  (50,000) history rows only (`daemon/history.rs`): a prefix match has no index, and
+  over a multi-million-row `history.db` it read every row, seconds per call. Measured on
+  a 13.6M-row, 5.5 GB database: `suggest` 2.3 s → 29 ms, `complete` 410 ms → 29 ms p50
+  (still above the <2ms target).
 - Syntax highlight per keystroke: <2ms IPC roundtrip including parse.
 - 100 parallel clients share <30 MB RSS attributable to images (page-cache shared across mmaps).
 - Per-client cache overhead: <5 MB.

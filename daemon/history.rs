@@ -140,6 +140,15 @@ pub fn count(conn: &Connection) -> rusqlite::Result<i64> {
 ///  - `prefix`:   prefix LIKE (`%...`)
 ///  - none of the above: raw recent listing
 #[allow(clippy::too_many_arguments)]
+/// How many of the NEWEST rows the `recent_prefix` mode looks through. The
+/// interactive ops (`suggest`, the history slab of `complete`) answer on every
+/// keystroke and want the most recent line with a given start; a plain prefix
+/// match has no index to use, so on a multi-million-row `history.db` it read
+/// every row (seconds per call). A suggestion older than this many commands is
+/// not worth showing, and `history_query` with mode `prefix` still searches
+/// everything.
+pub const RECENT_PREFIX_WINDOW: i64 = 50_000;
+
 pub fn query(
     conn: &Connection,
     filter: Option<&str>,
@@ -150,11 +159,20 @@ pub fn query(
     limit: i64,
     descending: bool,
 ) -> rusqlite::Result<Vec<HistoryRow>> {
-    let mut sql = String::from(
-        "SELECT h.id, h.line, h.ts_ns, h.exit_code, h.cwd, h.duration_ns, h.sessid, h.hostname, h.shell_id \
-         FROM history h",
-    );
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    // `recent_prefix` filters the newest rows only: the window is cut from the
+    // time index FIRST, then matched, so the cost is bounded by the window and
+    // not by the size of the table.
+    let from = if mode == "recent_prefix" {
+        params.push(Box::new(RECENT_PREFIX_WINDOW));
+        "(SELECT * FROM history ORDER BY ts_ns DESC, id DESC LIMIT ?) h"
+    } else {
+        "history h"
+    };
+    let mut sql = format!(
+        "SELECT h.id, h.line, h.ts_ns, h.exit_code, h.cwd, h.duration_ns, h.sessid, h.hostname, h.shell_id \
+         FROM {from}"
+    );
     let mut conds: Vec<String> = Vec::new();
 
     if let Some(f) = filter {
@@ -168,7 +186,7 @@ pub fn query(
                 conds.push("h.line LIKE ?".to_string());
                 params.push(Box::new(format!("%{}%", f)));
             }
-            "prefix" => {
+            "prefix" | "recent_prefix" => {
                 conds.push("h.line LIKE ?".to_string());
                 params.push(Box::new(format!("{}%", f)));
             }
@@ -391,6 +409,30 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    // `recent_prefix` is bounded by the newest rows: an old match beyond the
+    // window is not found, a recent one is, and plain `prefix` still finds both.
+    #[test]
+    fn recent_prefix_looks_only_at_the_newest_rows() {
+        let (_tmp, _p, conn) = fresh();
+        conn.execute_batch("BEGIN").unwrap();
+        append(&conn, "git old", 1, Some(0), Some("/tmp"), None, None, None, None).unwrap();
+        for i in 0..RECENT_PREFIX_WINDOW {
+            append(&conn, "ls", 10 + i, Some(0), Some("/tmp"), None, None, None, None).unwrap();
+        }
+        append(&conn, "git recent", 10 + RECENT_PREFIX_WINDOW, Some(0), Some("/tmp"), None, None, None, None).unwrap();
+        conn.execute_batch("COMMIT").unwrap();
+
+        let lines = |mode: &str| -> Vec<String> {
+            query(&conn, Some("git "), mode, None, None, None, 10, true)
+                .unwrap()
+                .into_iter()
+                .map(|r| r.line)
+                .collect()
+        };
+        assert_eq!(lines("recent_prefix"), ["git recent"]);
+        assert_eq!(lines("prefix"), ["git recent", "git old"]);
     }
 
     #[test]

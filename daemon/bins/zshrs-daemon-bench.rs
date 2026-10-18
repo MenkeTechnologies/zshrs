@@ -79,7 +79,12 @@ fn main() {
         ("info", json!({})),
         ("watcher_stats", json!({})),
     ] {
+        // Each op reports as it starts: a slow one is visible instead of the
+        // whole run looking hung.
+        eprintln!("bench: {name} x{runs}");
+        let started = Instant::now();
         let stats = measure(&mut client, name, args_for_op, runs);
+        eprintln!("bench: {name} done in {:.1}s", started.elapsed().as_secs_f64());
         report.insert(name.into(), stats);
     }
 

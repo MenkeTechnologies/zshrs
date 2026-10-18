@@ -806,7 +806,7 @@ async fn op_complete(state: &Arc<DaemonState>, args: Value) -> OpResult {
             super::history::query(
                 conn,
                 Some(&prefix),
-                "prefix",
+                "recent_prefix",
                 None,
                 None,
                 None,
@@ -846,7 +846,7 @@ async fn op_suggest(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let row_opt = if let Some(c) = &cwd {
         state
             .with_history(|conn| {
-                super::history::query(conn, Some(&prefix), "prefix", Some(c), None, None, 1, true)
+                super::history::query(conn, Some(&prefix), "recent_prefix", Some(c), None, None, 1, true)
             })
             .map_err(|e: rusqlite::Error| ErrPayload::new("history_query", e.to_string()))?
             .into_iter()
@@ -857,7 +857,7 @@ async fn op_suggest(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let row_opt = if row_opt.is_none() {
         state
             .with_history(|conn| {
-                super::history::query(conn, Some(&prefix), "prefix", None, None, None, 1, true)
+                super::history::query(conn, Some(&prefix), "recent_prefix", None, None, None, 1, true)
             })
             .map_err(|e: rusqlite::Error| ErrPayload::new("history_query", e.to_string()))?
             .into_iter()
