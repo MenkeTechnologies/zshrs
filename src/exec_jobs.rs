@@ -566,6 +566,12 @@ pub fn execpline_slot_current() -> Option<usize> {
     HELD_SLOTS.with(|h| h.borrow().last().map(|s| s.slot))
 }
 
+/// The job slot of the outermost running pipeline — the top-level pipeline
+/// of the command line, C's `list_pipe_job` (c:Src/exec.c:1796) — if held.
+pub fn execpline_slot_outermost() -> Option<usize> {
+    HELD_SLOTS.with(|h| h.borrow().first().map(|s| s.slot))
+}
+
 /// Delete the job slots held from position `start` on, innermost first, and
 /// put `thisjob` back to what it was before the outermost of them opened.
 fn release_held_slots(start: usize) {

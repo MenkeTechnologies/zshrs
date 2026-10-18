@@ -1395,3 +1395,39 @@ mod foreground_job_control {
         assert_same_verdict(&d, "V", "bg continued the suspended command");
     }
 }
+
+/// c:Src/exec.c:1912-2010 + c:Src/jobs.c:281-298 (handle_sub) — a command
+/// stopped inside a function, `{ … }` or loop makes the rest of that
+/// construct a superjob: the shell forks, the child waits stopped, the
+/// parent abandons the rest of the line (`echo next` never runs), and `fg`
+/// resumes the stopped command and then the child, which runs the rest of the
+/// construct. zshrs left the stopped command as a job of its own and carried
+/// on with the function.
+mod superjob {
+    use crate::zpty_probe::{assert_same_verdict, sq, OPEN_PUMPED};
+
+    fn driver(line: &str, verdict: &str) -> String {
+        format!(
+            "{OPEN_PUMPED}\nzpty -w w ':'; pump\nzpty -w w {}; pump\nzpty -w w 'jobs; fg'; pump\nzpty -w w 'print R${{:-}}C=$?; jobs; print E${{:-}}ND'; pump\nzpty -d w 2>/dev/null\n{verdict}\n",
+            sq(line)
+        )
+    }
+
+    #[test]
+    fn a_stop_inside_a_function_suspends_the_function() {
+        let d = driver(
+            r#"f() { sh -c 'kill -TSTP $$'; print A${:-}FTER=$? }; f; print N${:-}EXT"#,
+            r#"[[ $all == *"zsh: suspended"* && $all == *"[1]  + continued"* && $all == *AFTER=146* && $all != *NEXT* && $all == *RC=0* && $all == *END* ]] && print V=yes || print V=no"#,
+        );
+        assert_same_verdict(&d, "V", "a stop inside a function suspended the function as one job");
+    }
+
+    #[test]
+    fn a_stop_inside_a_loop_resumes_the_loop() {
+        let d = driver(
+            r#"for i in 1 2; do sh -c 'kill -TSTP $$'; print I${:-}T$i=$?; done; print N${:-}EXT"#,
+            r#"[[ $all == *"zsh: suspended  sh -c"* && $all == *"[1]  + suspended  sh -c"* && $all == *IT1=146* && $all == *IT2=0* && $all != *NEXT* && $all == *END* ]] && print V=yes || print V=no"#,
+        );
+        assert_same_verdict(&d, "V", "a stop inside a loop resumed the rest of the loop after fg");
+    }
+}

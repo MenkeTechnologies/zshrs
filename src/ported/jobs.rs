@@ -3755,6 +3755,11 @@ pub fn bin_fg(
                     // c:2514 stat
                     continue;
                 }
+                // printjob c:1163-1164 — `if (jn->stat & STAT_NOPRINT)
+                // skip_print = 1;`: a superjob's subjob is not listed.
+                if (j.stat & stat::NOPRINT) != 0 {
+                    continue;
+                }
                 let stopped = j.is_stopped();
                 // c:2515-2519 — flag filtering.
                 if (!r_only && !s_only)
@@ -3776,7 +3781,16 @@ pub fn bin_fg(
                     } else {
                         None
                     };
-                    let s = printjob(j, job, lng, curjob_opt, prevjob_opt, false);
+                    // printjob c:1171-1185 — a superjob whose subjob still has
+                    // processes is reported as the subjob (its text and state).
+                    let shown = if (j.stat & stat::SUPERJOB) != 0 && j.other > 0 {
+                        t.get(j.other as usize)
+                            .filter(|s| !s.procs.is_empty() || !s.auxprocs.is_empty())
+                            .unwrap_or(j)
+                    } else {
+                        j
+                    };
+                    let s = printjob(shown, job, lng, curjob_opt, prevjob_opt, false);
                     if !s.is_empty() {
                         println!("{}", s);
                     }

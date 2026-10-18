@@ -469,19 +469,14 @@ pub extern "C" fn zhandler(sig: libc::c_int) {
                         for (pid, status) in reaped {
                             let _ = crate::ported::jobs::update_bg_job(&mut guard, pid, status);
                         }
-                        // c:Src/jobs.c:635-643 — update_job's tail reports a
-                        // finished job from the async (signal) path ONLY when
-                        // `isset(NOTIFY)` (a background job is never `thisjob`,
-                        // so the `job == thisjob` half never applies here). With
-                        // NOTIFY unset the completion is left STAT_CHANGED and
-                        // reported by preprompt()'s `if (unset(NOTIFY)) scanjobs()`
-                        // (utils.rs:1736) at the NEXT real prompt — never mid-ZLE.
-                        // Without this gate the handler spewed `[1] done …` lines
-                        // into the editor during e.g. zinit-turbo loading, which
-                        // real zsh (NOTIFY off) never does.
-                        if isset(crate::ported::zsh_h::NOTIFY) {
-                            crate::ported::jobs::scanjobs(&mut guard);
-                        }
+                        // c:Src/jobs.c:646-650 — update_job (above) reports the
+                        // job that changed, when `isset(NOTIFY)`; with NOTIFY
+                        // unset the change is left STAT_CHANGED for preprompt's
+                        // `if (unset(NOTIFY)) scanjobs()` (utils.rs). The handler
+                        // used to scan EVERY job here too, which C does not:
+                        // a superjob, whose STAT_CHANGED the stop report leaves
+                        // set (printjob clears its subjob's), was re-reported on
+                        // every later SIGCHLD.
                     }
                 }
             }

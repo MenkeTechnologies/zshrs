@@ -12828,6 +12828,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // gate. Pure bytecode plumbing: it only decides that both are no-ops.
     vm.register_builtin(BUILTIN_STMT_TAIL_FAST, |_vm, _argc| {
         use std::sync::atomic::Ordering;
+        // c:Src/exec.c:1828-1829 — `if (newjob == list_pipe_job &&
+        // list_pipe_child) _exit(0);`: the shell superjob_fork made has run
+        // the rest of the top-level pipeline once the statement just finished
+        // is no longer nested in it.
+        if crate::ported::exec::list_pipe_child.load(Ordering::Relaxed) != 0
+            && !crate::exec_jobs::foreground_job_is_nested(false)
+        {
+            let _ = std::io::stdout().flush();
+            let _ = std::io::stderr().flush();
+            unsafe { libc::_exit(0) };
+        }
         if crate::ported::builtin::BREAKS.load(Ordering::SeqCst) != 0 {
             return Value::Bool(false);
         }
@@ -18484,9 +18495,136 @@ pub(crate) fn execcmd_simple_job(args: Vec<String>, had_redirs: bool, job_text: 
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = pj;
     }
+    // c:Src/exec.c:1912-1916 — a job stopped while another pipeline executes
+    // (a function body, `{ … }`, a loop) becomes the subjob of a superjob.
+    {
+        use std::sync::atomic::Ordering;
+        let stopped = crate::ported::jobs::JOBTAB
+            .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(newjob)
+            .is_some_and(|j| (j.stat & crate::ported::zsh_h::STAT_STOPPED) != 0);
+        if stopped
+            && crate::ported::exec::list_pipe_child.load(Ordering::Relaxed) == 0
+            && crate::ported::exec::subsh.load(Ordering::Relaxed) == 0
+            && crate::ported::zsh_h::jobbing()
+            && crate::exec_jobs::foreground_job_is_nested(with_executor(|e| !e.subshell_snapshots.is_empty()))
+        {
+            superjob_fork(newjob);
+        }
+    }
     let status = crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed);
     crate::ported::jobs::waitonejob(-1);
     status
+}
+
+/// c:Src/exec.c:1917-2010 — "A pipeline with the shell handling the right
+/// hand side was stopped. We'll fork to allow it to continue."
+///
+/// The parent makes a superjob whose one process is the forked shell (the
+/// subjob is the stopped command) and abandons the rest of the command line
+/// (`errflag`, `breaks = loops`). The child leads a process group of its own,
+/// stops itself, and once `fg` / `bg` continue it after the subjob finishes
+/// (handle_sub, Src/jobs.c:281-298) runs the rest of the construct, exiting
+/// at the end of the top-level pipeline (see BUILTIN_STMT_TAIL_FAST, c:1828).
+///
+/// !!! WARNING: RUST-ONLY SHAPE !!! C's `list_pipe_job` is the top-level
+/// pipeline's own job; the VM keeps none, so the superjob is a fresh slot and
+/// "the end of the top-level pipeline" is the first statement tail that is no
+/// longer nested (exec_jobs::foreground_job_is_nested).
+fn superjob_fork(sub: usize) {
+    use crate::ported::jobs::{self, stat};
+    use std::sync::atomic::Ordering;
+    let mut synch = [0 as libc::c_int; 2];
+    if unsafe { libc::pipe(synch.as_mut_ptr()) } < 0 {
+        return; // c:1926-1939 — the job just stays stopped
+    }
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+    match unsafe { libc::fork() } {
+        -1 => unsafe {
+            libc::close(synch[0]);
+            libc::close(synch[1]);
+        },
+        0 => {
+            // c:1980-2008 — the child.
+            unsafe { libc::close(synch[0]) };
+            forked_child_subsh_levels(); // c:Src/exec.c:1221
+            crate::ported::exec::entersubsh(crate::ported::exec::esub::ASYNC, None); // c:1981
+            let me = unsafe { libc::getpid() };
+            unsafe { libc::setpgid(0, me) }; // c:1996 `setpgrp(0L, mypgrp = getpid())`
+            crate::ported::modules::clone::mypgrp.store(me, Ordering::Relaxed);
+            *jobs::MYPGRP.get_or_init(|| std::sync::Mutex::new(0)).lock().unwrap() = me;
+            unsafe {
+                libc::close(synch[1]); // c:1997
+                libc::kill(me, libc::SIGSTOP); // c:1998
+            }
+            crate::ported::exec::list_pipe.store(0, Ordering::Relaxed); // c:1999
+            crate::ported::exec::list_pipe_child.store(1, Ordering::Relaxed); // c:2000
+            crate::ported::options::opt_state_set("interactive", false); // c:2001
+            // c:2031-2034 — `if (list_pipe_child ...) deletejob(jn, 0)`: the
+            // stopped command is the parent's child, not this shell's.
+            let table = jobs::JOBTAB.get_or_init(|| std::sync::Mutex::new(Vec::new()));
+            let mut tab = table.lock().unwrap_or_else(|e| e.into_inner());
+            if sub < tab.len() {
+                jobs::deletejob(&mut tab, sub, false);
+            }
+        }
+        pid => {
+            // c:1940-1977 — the parent: job control is here.
+            unsafe { libc::close(synch[1]) };
+            let mut dummy = [0u8; 1];
+            let _ = crate::ported::utils::read_loop(synch[0], &mut dummy); // c:1963
+            unsafe { libc::close(synch[0]) };
+            // Collect the child's own SIGSTOP (c:1998) before it is a job's
+            // process: C copies the subjob's stop status over it afterwards
+            // (c:1867-1874), so the superjob reads `suspended`, not
+            // `suspended (signal)`.
+            let mut st: libc::c_int = 0;
+            while unsafe { libc::waitpid(pid, &mut st, libc::WUNTRACED) } == -1
+                && std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR)
+            {}
+            let table = jobs::JOBTAB.get_or_init(|| std::sync::Mutex::new(Vec::new()));
+            let mut tab = table.lock().unwrap_or_else(|e| e.into_inner());
+            if sub >= tab.len() {
+                return;
+            }
+            // c:1844-1879 — the superjob, led by the forked shell (SUBLEADER):
+            // the top-level pipeline's own job (list_pipe_job, c:1968).
+            let sup = crate::exec_jobs::execpline_slot_outermost()
+                .filter(|&s| s != sub && s < tab.len() && tab[s].procs.is_empty())
+                .unwrap_or_else(|| jobs::initjob(&mut tab));
+            let text = String::new();
+            tab[sup].procs.push(crate::ported::zsh_h::process {
+                pid,
+                text,
+                status: (libc::SIGTSTP << 8) | 0x7f, // c:1867-1874 — the subjob's stop status
+                ti: Default::default(),
+                bgtime: Some(std::time::Instant::now()),
+                endtime: None,
+            });
+            tab[sup].gleader = pid; // c:1850
+            tab[sup].other = sub as i32; // c:1968
+            tab[sup].stat &= !(stat::DONE | stat::NOPRINT); // c:1876
+            tab[sup].stat |= stat::SUPERJOB | stat::SUBLEADER | stat::STOPPED | stat::CHANGED | stat::LOCKED | stat::INUSE; // c:1851, 1969, 1877
+            tab[sub].stat |= stat::SUBJOB | stat::NOPRINT; // c:1970
+            tab[sub].other = pid; // c:1971 — "see zsh.h"
+            // c:1842 — `curjob = newjob`; prevjob keeps what update_job gave it
+            // when the subjob stopped (c:643-644).
+            *jobs::CURJOB.get_or_init(|| std::sync::Mutex::new(-1)).lock().unwrap() = sup as i32;
+            // c:1879 — `printjob(jn, !!isset(LONGLISTJOBS), 1)` with thisjob = the superjob.
+            let pj = *jobs::THISJOB.get_or_init(|| std::sync::Mutex::new(-1)).lock().unwrap();
+            *jobs::THISJOB.get_or_init(|| std::sync::Mutex::new(-1)).lock().unwrap() = sup as i32;
+            let lng = i32::from(crate::ported::zsh_h::isset(crate::ported::zsh_h::LONGLISTJOBS));
+            crate::exec_jobs::printjob_synch(&mut tab, sup, lng, 1);
+            *jobs::THISJOB.get_or_init(|| std::sync::Mutex::new(-1)).lock().unwrap() = pj;
+            drop(tab);
+            // c:1960-1961 — abandon the rest of the command line.
+            crate::ported::utils::errflag.fetch_or(crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
+            crate::ported::builtin::BREAKS.store(crate::ported::builtin::LOOPS.load(Ordering::Relaxed), Ordering::Relaxed);
+        }
+    }
 }
 
 
@@ -18679,10 +18817,20 @@ pub(crate) fn foreground_status(
 /// `vm_helper::execute_external_bg`, which has a pid but no `Child`.
 pub(crate) fn wait_pid_status(pid: libc::pid_t) -> std::io::Result<std::process::ExitStatus> {
     use std::os::unix::process::ExitStatusExt as _;
+    // c:Src/jobs.c:1750-1751 — `if (subsh) killjb(jn, SIGCONT);`: "keep
+    // stopped grandchildren running when we ourselves are a subshell" (the
+    // shell a superjob forked, say). Elsewhere a stopped child is waited for
+    // until it is continued, as zwaitjob does without job control.
+    let in_subsh = crate::ported::exec::subsh.load(std::sync::atomic::Ordering::Relaxed) != 0;
+    let flags = if in_subsh { libc::WUNTRACED } else { 0 };
     loop {
         let mut raw: libc::c_int = 0;
         let mut ru: libc::rusage = unsafe { std::mem::zeroed() };
-        if unsafe { libc::wait4(pid, &mut raw, 0, &mut ru) } == pid {
+        if unsafe { libc::wait4(pid, &mut raw, flags, &mut ru) } == pid {
+            if libc::WIFSTOPPED(raw) {
+                unsafe { libc::kill(pid, libc::SIGCONT) };
+                continue;
+            }
             let usec = |tv: libc::timeval| tv.tv_sec as u64 * 1_000_000 + tv.tv_usec as u64;
             fg_child_times_add(usec(ru.ru_utime), usec(ru.ru_stime));
             return Ok(std::process::ExitStatus::from_raw(raw));
