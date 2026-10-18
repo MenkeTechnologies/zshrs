@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-10-18T03:59:08.225048+00:00
+Generated: 2026-10-18T06:48:06.654832+00:00
 
 ## Method
 
@@ -86,13 +86,13 @@ python3 scripts/gen_port_stubs.py
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
-| 7536 | `unmeta` | 4 | 35 | 11% |
-| 8457 | `mb_metacharlenconv_r` | 5 | 32 | 15% |
+| 7535 | `unmeta` | 4 | 35 | 11% |
+| 8456 | `mb_metacharlenconv_r` | 5 | 32 | 15% |
 | 113 | `set_widearray` | 6 | 30 | 20% |
-| 7371 | `metafy` | 11 | 54 | 20% |
+| 7370 | `metafy` | 11 | 54 | 20% |
 | 3974 | `timespec_diff_us` | 5 | 18 | 27% |
 | 1726 | `delprepromptfn` | 4 | 14 | 28% |
-| 7911 | `niceztrlen` | 4 | 14 | 28% |
+| 7910 | `niceztrlen` | 4 | 14 | 28% |
 
 ### `src/ported/zle/zle_keymap.rs` — 3 stubs
 

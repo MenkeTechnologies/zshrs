@@ -9298,8 +9298,10 @@ so the call routes through `CallFunction` → `dispatch_function_call`
     builtin_id resolution chain; when the name matches, force
     `builtin_id = None` so the normal command path runs.
 
-Bash-compat `caller`/`help` keep firing when no user function
-shadows them (`zshrs --zsh -c 'caller'` → `0 main`).
+Superseded by #475: zsh mode no longer has `caller` or `help` at all, by any
+name (`zshrs --zsh -c 'caller'` → `zsh:1: command not found: caller`,
+status 127, as in zsh). They remain bash builtins in `--bash`; a user function
+of the same name still runs in either mode.
 
 ---
 
