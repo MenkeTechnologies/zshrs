@@ -916,6 +916,10 @@ mod initial_env {
 /// `zshrs FILE` left the process through `std::process::exit` and its
 /// compiled program was never written to `scripts.rkyv`).
 fn process_entry_init() {
+    // Read the inherited signal dispositions before anything below installs
+    // or resets one (the SIGPIPE reset further down, the init_signals replay).
+    // bash's trap builtin needs the original SIG_IGN set (BUGS.md #1109).
+    zsh::startup_signals::snapshot_inherited_ignores();
     // c:Src/init.c:1121 — `zgettime_monotonic_if_available(&shtimer);
     // /* init $SECONDS */`. C stamps `shtimer` once, at shell start.
     // zshrs's analog is a lazily-primed OnceLock

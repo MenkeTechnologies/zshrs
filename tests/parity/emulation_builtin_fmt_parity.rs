@@ -355,8 +355,8 @@ fn trap_listing_matches_reference_shells() {
     assert_matrix(TRAP_SCRIPTS);
 }
 
-/// An inherited `SIG_IGN` disposition is LISTED by `trap` in bash but not by
-/// zshrs `--bash`. docs/BUGS.md #1109.
+/// An inherited `SIG_IGN` disposition is LISTED by `trap` in bash, and a
+/// non-interactive bash refuses to trap or reset it. docs/BUGS.md #1109.
 ///
 /// Not a test artefact: it is exactly what cargo's harness produces, since it
 /// ignores SIGINT/SIGQUIT and the shell under test inherits that. Reproduced
@@ -367,8 +367,7 @@ fn trap_listing_matches_reference_shells() {
 /// trap -- ':' SIGHUP
 /// trap -- '' SIGINT
 /// trap -- '' SIGQUIT
-/// $ (trap '' INT QUIT; zshrs --bash -c "trap ':' HUP; trap")
-/// trap -- ':' SIGHUP
+/// $ (trap '' INT QUIT; zshrs --bash -c "trap ':' HUP; trap")   -> identical
 /// ```
 ///
 /// zsh mode is NOT affected and needs no fix — zsh lists the inherited ignore
@@ -381,7 +380,6 @@ fn trap_listing_matches_reference_shells() {
 ///
 /// dash lists neither, and `--dash` matches. So the gap is the bash leg alone.
 #[test]
-#[ignore = "BUGS.md #1109 — an inherited SIG_IGN is listed by bash's `trap` but not by zshrs --bash; zsh and dash legs already match"]
 fn inherited_sig_ign_is_listed_by_bash() {
     // Only meaningful when the PARENT ignores these — under cargo's harness it
     // does. Standalone (no inherited ignore) both shells agree and this passes

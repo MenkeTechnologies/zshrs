@@ -35,8 +35,8 @@
 ///   sh    nothing
 /// so recording it unconditionally made every POSIX-family drop-in
 /// print a QUIT line the real shell never prints. bash's variant is a
-/// different shape (both signals, SIG names) and is not implemented
-/// here — it would need its own port rather than reusing zsh's.
+/// different shape (every inherited ignore, SIG names) and is ported
+/// separately as [`bash_hard_ignored`].
 #[cfg(unix)]
 fn zsh_mode_only() -> bool {
     !crate::dash_mode::posix_faithful() && !crate::dash_mode::bash_mode()
@@ -212,3 +212,63 @@ pub fn init_dispatch_signals() {
 /// Non-unix stub: none of these signals exist.
 #[cfg(not(unix))]
 pub fn init_dispatch_signals() {}
+
+/// Signals that arrived with a `SIG_IGN` disposition (bit N = signal N),
+/// captured by [`snapshot_inherited_ignores`] before the shell installs a
+/// single handler of its own.
+#[cfg(unix)]
+static INHERITED_IGNORED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Record which signals the shell inherited as `SIG_IGN`.
+///
+/// Port of bash's `GETORIGSIG` (bash-5.3 `trap.c:134-140`), which reads
+/// each signal's original disposition and marks an inherited `SIG_IGN`
+/// as `SIG_HARD_IGNORE`. bash reads them lazily; reading them all here,
+/// first thing in `main`, gives the same answer because nothing has
+/// touched a disposition yet.
+///
+/// SIGPIPE is skipped: Rust's runtime sets it to `SIG_IGN` before `main`
+/// runs, so its inherited disposition can no longer be read.
+#[cfg(unix)]
+pub fn snapshot_inherited_ignores() {
+    let mut mask = 0u64;
+    for sig in 1..=crate::ported::signals_h::SIGCOUNT.min(63) {
+        if sig == libc::SIGPIPE {
+            continue;
+        }
+        let ignored = unsafe {
+            let mut act: libc::sigaction = std::mem::zeroed();
+            libc::sigaction(sig, std::ptr::null(), &mut act) == 0 && act.sa_sigaction == libc::SIG_IGN
+        };
+        if ignored {
+            mask |= 1u64 << sig;
+        }
+    }
+    INHERITED_IGNORED.store(mask, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Non-unix stub: there are no inherited dispositions to read.
+#[cfg(not(unix))]
+pub fn snapshot_inherited_ignores() {}
+
+/// Whether `sig` is hard-ignored in the bash sense (BUGS.md #1109).
+///
+/// bash's `SIG_HARD_IGNORE`: a signal ignored on entry to a NON-interactive
+/// shell "cannot be trapped or reset, but no error is reported when
+/// attempting to do so" (bash-5.3 `trap.c:850-853`, `:954-957`,
+/// `:1001-1004`), and the trap listing shows it as `trap -- '' SIGNAME`
+/// (`builtins/trap.def:302-303`). An interactive bash may trap it and
+/// lists nothing for it. zsh, dash and mksh have no such rule.
+#[cfg(unix)]
+pub fn bash_hard_ignored(sig: i32) -> bool {
+    crate::dash_mode::bash_mode()
+        && !crate::ported::zsh_h::interact()
+        && (1..64).contains(&sig)
+        && INHERITED_IGNORED.load(std::sync::atomic::Ordering::Relaxed) & (1u64 << sig) != 0
+}
+
+/// Non-unix stub: nothing is ever inherited as ignored.
+#[cfg(not(unix))]
+pub fn bash_hard_ignored(_sig: i32) -> bool {
+    false
+}

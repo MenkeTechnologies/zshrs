@@ -983,9 +983,9 @@ applied `entersubsh`'s trap reset (`entersubsh_reset_traps`, c:Src/exec.c:1127-1
 
 ---
 
-## #1109 — an inherited `SIG_IGN` is not honoured in `--bash` mode — open
+## #1109 — an inherited `SIG_IGN` is not honoured in `--bash` mode — fixed
 
-**Status:** `port-bug`, found 2026-08-28. Surfaced by a new emulation test that passed
+**Status:** `fixed` 2026-10-17, found 2026-08-28. Surfaced by a new emulation test that passed
 standalone and failed under cargo's harness — the harness ignores SIGINT/SIGQUIT, and the shell
 under test inherits that disposition.
 
@@ -1035,6 +1035,24 @@ $ (trap '' INT QUIT; cargo test --test parity inherited_sig_ign -- --ignored)
 **Do NOT "fix" this by widening the filter.** Dropping the divergent lines from the format test
 would make both symptoms invisible; the filter deliberately removes only the empty-body form
 for a signal the script does not name.
+
+**Resolution.** Ported bash's `SIG_HARD_IGNORE` (bash-5.3 `trap.c:134-140`). The start of
+`process_entry_init` records every signal the process inherited as `SIG_IGN`
+(`startup_signals::snapshot_inherited_ignores`), before the shell touches a disposition. SIGPIPE
+is left out because Rust's runtime ignores it before `main`. In a non-interactive `--bash`,
+`bin_trap` then does what bash does for those signals: it silently skips a trap install
+(`trap.c:850-853`) or a reset (`:954-957`), and the listing prints each one as
+`trap -- '' SIGNAME` (`builtins/trap.def:302`) in the shell, its functions, subshells and
+`$(…)`. An interactive bash may trap them and lists nothing, so the gate is `!interact()`.
+`inherited_sig_ign_is_listed_by_bash` runs live. zsh mode does not take the new gate.
+
+Still open: ksh93 and `/bin/sh` (bash 3.2 in posix mode) also refuse to trap an inherited
+ignore, and zshrs `--ksh`/`--sh` do not.
+
+    $ (trap '' USR1; ksh -c "trap ':' USR1; trap")       -> trap -- '' USR1
+    $ (trap '' USR1; zshrs --ksh -c "trap ':' USR1; trap") -> trap -- : USR1
+    $ (trap '' USR1; /bin/sh -c "trap ':' USR1; trap")   -> (nothing)
+    $ (trap '' USR1; zshrs --sh -c "trap ':' USR1; trap")  -> trap -- ':' USR1
 
 ---
 
