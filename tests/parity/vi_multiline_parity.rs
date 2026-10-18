@@ -179,27 +179,10 @@ fn one_u_undoes_the_last_edit() {
     assert_same_dump(&three_edits_then_undo(1), "vicmd u once after three edits");
 }
 
-/// Two `u` in a row reach the edit before that.
-///
-/// OPEN DIVERGENCE, not a flake. With three insert sessions on the line,
-/// the second `u` is a no-op in zshrs while zsh unwinds the rest of the
-/// line:
-///
-///     zsh    BUF=[]        CUR=[0]
-///     zshrs  BUF=[aaabbb]  CUR=[5]
-///
-/// The first `u` agrees exactly (see the case above), so the change
-/// records and the first step of the chain are right; what stops is the
-/// walk. `undo` follows CH_PREV backward from `curchange`
-/// (zle_utils.c:1630) and `mergeundo` sets those flags at ESC — the
-/// remaining gap is which records end up flagged when the FIRST insert
-/// session was never opened by `startvitext` (typing at the initial viins
-/// prompt latches no `vistartchange`), so C merges it into the group and
-/// this port does not.
-///
-/// Ignored so the suite stays honest about what passes; delete the
-/// attribute with the fix.
-#[ignore = "open: the CH_PREV chain stops after one step — see the doc comment"]
+/// Two `u` in a row reach the edit before that: with three insert sessions
+/// on the line, `undo` follows CH_PREV backward from `curchange`
+/// (zle_utils.c:1630) through the records `mergeundo` grouped at each ESC,
+/// and zsh ends at `BUF=[] CUR=[0]`.
 #[test]
 fn two_u_chain_back_two_edits() {
     assert_same_dump(&three_edits_then_undo(2), "vicmd u twice after three edits");
@@ -208,9 +191,6 @@ fn two_u_chain_back_two_edits() {
 /// Three `u` unwind every edit. Pressing `u` more times than there are
 /// changes must also agree — zsh stops at the oldest change rather than
 /// emptying the buffer.
-///
-/// Blocked on the same chain gap as `two_u_chain_back_two_edits`.
-#[ignore = "open: the CH_PREV chain stops after one step — see two_u_chain_back_two_edits"]
 #[test]
 fn u_past_the_oldest_change_stops_where_zsh_stops() {
     assert_same_dump(&three_edits_then_undo(5), "vicmd u five times after three edits");
