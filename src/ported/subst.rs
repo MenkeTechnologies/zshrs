@@ -10792,12 +10792,14 @@ pub fn paramsubst(
                 // combos (`(re)`, `(ie)`) keep their group — they're
                 // handled by the search closure (which also accepts
                 // `e` as the exact-match modifier).
+                // An EMPTY group `()` sets no flag either, so `${a[()]}` is the empty
+                // numeric subscript `${a[]}` ("bad math expression: empty string").
                 let sub: &str = {
                     let t = sub
                         .strip_prefix('(')
                         .and_then(|r| r.find(')').map(|c| (&r[..c], &r[c + 1..])));
                     match t {
-                        Some((grp, rest)) if !grp.is_empty() && grp.chars().all(|c| c == 'e') => {
+                        Some((grp, rest)) if grp.chars().all(|c| c == 'e') => {
                             rest
                         }
                         _ => sub,

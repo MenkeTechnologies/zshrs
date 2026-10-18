@@ -437,3 +437,26 @@ mod jobs_current_previous_spec_messages {
         assert_parity(r#"jobs %% 2>&1; jobs %+ 2>&1; jobs % 2>&1; jobs %- 2>&1; print $?"#);
     }
 }
+
+/// An empty parenthesised operand is an error, not 0. `(( () ))` used to be
+/// stripped to the empty expression (status 1, silent): execarith evaluates the
+/// text between `((` and `))` as written (Src/exec.c:5302-5308), so the error
+/// context also keeps its trailing blank. An empty subscript flag group sets no
+/// flag, so `${a[()]}` is the empty numeric operand (Src/params.c:1405 getarg,
+/// c:1635 mathevalarg). docs/BUGS.md #527, #1035.
+mod empty_parenthesised_operands {
+    use super::*;
+
+    #[test]
+    fn arithmetic_command_rejects_an_empty_group() {
+        assert_parity(r#"{ (( () )); print rc=$?; (( ( ) )); print rc=$?; (( (()) )); print rc=$? } 2>&1"#);
+        assert_parity(r#"{ (( 1 + () )); print rc=$?; (( ()+1 )); print rc=$?; (( (1) )); print rc=$? } 2>&1"#);
+    }
+
+    #[test]
+    fn empty_subscript_flag_group_is_an_empty_index() {
+        assert_parity(r#"a=(1 2 3); { print -r -- ${a[()]}; print rc=$? } 2>&1"#);
+        assert_parity(r#"a=(1 2 3); print -r -- ${a[()2]} ${a[()-1]} ${a[()1+1]} ${a[()2,3]}"#);
+        assert_parity(r#"{ print -r -- ${${:-a b}[()]}; print rc=$? } 2>&1"#);
+    }
+}

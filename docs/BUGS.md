@@ -4475,7 +4475,13 @@ divergences/500-seed.
 
 ---
 
-## #1035 — empty / omitted array-subscript index silently accepted (wrong data, no error) — partially fixed
+## #1035 — empty / omitted array-subscript index silently accepted (wrong data, no error) — fixed
+
+**Update (2026-10-18).** The last open form, `${a[()]}`, now errors like `${a[]}`: an empty subscript
+flag group sets no flag, so getarg goes on to the numeric operand (c:Src/params.c:1405, c:1635
+`mathevalarg`), which rejects `""`. Fixed on the named-array arm (the empty group is consumed like an
+all-`e` group), in `getarg` (subexp results) and for range operands. Pinned by
+`shell_semantics_parity::empty_parenthesised_operands`.
 
 **Status:** `partially-fixed` 2026-07-18 — the RANGE-bound cases (`${a[,N]}`,
 `${a[N,]}`, `${a[,]}` for both arrays and scalar char-slices, incl. the nested
@@ -51392,7 +51398,14 @@ zsh error — making the bug harder to find.
 
 ---
 
-## #527 — `(( () ))` empty math expression silently rc=1 — zsh: "bad math expression: operand expected" rc=2
+## #527 — `(( () ))` empty math expression silently rc=1 — zsh: "bad math expression: operand expected" rc=2 — fixed
+
+**Resolution (2026-10-18).** The `(( ))` compiler trimmed the text and stripped "balanced wrapper"
+parentheses before evaluating, which turned `()` into the empty expression. The interpreted evaluator
+and its compile-time pre-check now get the raw text between `((` and `))`, as execarith evaluates it
+(c:Src/exec.c:5302-5308). The wrapper-stripped form still feeds the compiled fast path, where a wrapper
+changes no value. Error contexts keep their trailing blank (`` `) ' ``). Pinned by
+`shell_semantics_parity::empty_parenthesised_operands`.
 
 **Status:** `fixed` 2026-06-03 — repro no longer reproduces. zshrs's math
 parser now emits the canonical `bad math expression: operand expected at

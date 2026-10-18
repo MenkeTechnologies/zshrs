@@ -3435,7 +3435,15 @@ pub(crate) fn getarg<'a>(
     // `${${(s::)use[$i]}[(r)[dUurRtT]]}` answered non-empty for every
     // character and appended `$func` to every allargs key, dropping the
     // specs whose key has no `f`/`p` variant (`functions -W`, `autoload -k`).
-    if rest.starts_with(')') {
+    if let Some(after) = rest.strip_prefix(')') {
+        // c:1405-1635 — an EMPTY flag group sets no flag, so getarg goes on to
+        // the numeric operand (c:1635 `mathevalarg`). With nothing after the
+        // group that operand is empty: "bad math expression: empty string"
+        // (c:Src/math.c:1530-1532), for `${a[()]}` as for `${s[()]}`.
+        if after.trim().is_empty() {
+            let _ = crate::ported::math::mathevalarg(after);
+            return Some(getarg_out::Value(Value::str("")));
+        }
         return None;
     }
     // Flag scanner per zshparam(1) "Subscript Flags" /
@@ -4955,6 +4963,22 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
     // else through the canonical evaluator so both outcomes survive.
     let evalarg = |t: &str| -> i64 {
         if pm_is_array_value && (t.starts_with('(') || t.starts_with(crate::ported::zsh_h::Inpar)) {
+            // c:Src/params.c:1405 getarg consumes the flag group; only a search flag
+            // (`r R k K`, c:1431-1448, or `i I`, c:1449) makes it a search. With none,
+            // the rest is the ordinary numeric operand (c:1635 `mathevalarg`), so `${a[()]}` hands
+            // mathevalarg "" and gets "bad math expression: empty string".
+            let close = t.find(|c| c == ')' || c == crate::ported::zsh_h::Outpar);
+            let searches = close.is_some_and(|e| t[1..e].chars().any(|c| "rRiIkK".contains(c)));
+            if !searches {
+                if let Some(e) = close {
+                    let rest = &t[e + 1..];
+                    let r = match rest.parse::<i64>() {
+                        Ok(n) => n,
+                        Err(_) => crate::ported::math::mathevalarg(rest), // c:1635
+                    };
+                    return if isset(KSHARRAYS) && r >= 0 { r + 1 } else { r };
+                }
+            }
             if let Some(r) = array_search_r(t, &search_arr) {
                 return r; // c:1736-1760
             }

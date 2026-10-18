@@ -14180,6 +14180,13 @@ impl ZshCompiler {
             break;
         }
         let inner_arith = inner_arith_owned.as_str();
+        // c:Src/exec.c:5302-5308 — execarith evaluates the text between `((` and `))`
+        // as written. The wrapper-stripped form above only feeds the compiled fast
+        // path (where a wrapper changes no value); the interpreted evaluator and its
+        // pre-check get the raw text, so `(( () ))` is still an empty operand
+        // ("operand expected at `) '", status 2) and every error context keeps
+        // its trailing blank.
+        let raw_arith = untoked.as_str();
         if subscripted_arith_assign_check(inner_arith)
             || subscripted_arith_compound_check(inner_arith)
         {
@@ -14188,7 +14195,7 @@ impl ZshCompiler {
             // arith eval which handles read-modify-write through
             // BUILTIN_ARITH_EVAL → evaluate_arithmetic. ArithCompiler
             // can't write back through arr[idx] for compound forms.
-            let idx_const = self.builder.add_constant(Value::str(inner_arith));
+            let idx_const = self.builder.add_constant(Value::str(raw_arith));
             self.builder.emit(Op::LoadConst(idx_const), 0);
             self.builder
                 .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_EVAL, 1), 0);
@@ -14226,7 +14233,7 @@ impl ZshCompiler {
         // `arith_uncompilable_reason`.
         let needs_eval = crate::arith_compiler::arith_uncompilable_reason(inner_arith).is_some();
         if needs_eval {
-            let idx_const = self.builder.add_constant(Value::str(inner_arith));
+            let idx_const = self.builder.add_constant(Value::str(raw_arith));
             self.builder.emit(Op::LoadConst(idx_const), 0);
             self.builder
                 .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_EVAL, 1), 0);
@@ -14255,7 +14262,7 @@ impl ZshCompiler {
         // assignment at COMPILE TIME with a=undefined, creating b
         // as PM_INTEGER(0); the runtime arith then saw b already
         // PM_INTEGER and truncated Float(1.5) → 1. Bug #617.
-        let pre_check = crate::ported::math::mathevali_noeval(inner_arith);
+        let pre_check = crate::ported::math::mathevali_noeval(raw_arith);
         if pre_check.is_err() {
             // Clear errflag set by the pre-check zerr (we re-fire
             // it at runtime via BUILTIN_ARITH_EVAL so the user
@@ -14264,7 +14271,7 @@ impl ZshCompiler {
                 !crate::ported::zsh_h::ERRFLAG_ERROR,
                 std::sync::atomic::Ordering::Relaxed,
             );
-            let idx_const = self.builder.add_constant(Value::str(inner_arith));
+            let idx_const = self.builder.add_constant(Value::str(raw_arith));
             self.builder.emit(Op::LoadConst(idx_const), 0);
             self.builder
                 .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_EVAL, 1), 0);
