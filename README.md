@@ -1041,7 +1041,7 @@ cargo test --test ztst_runner -- --nocapture   # per-file chunk tallies
 
 **2,612 of 2,796 chunks pass**; 123 fail, 61 skip across 77 files
 (`ZTST_TIMEOUT_MS=20000`, debug build, `main` at `ac1f990a20` plus the
-`5cdd9381c5` fixes,). This corpus tracks zsh's development tree and has no oracle,
+`5cdd9381c5` fixes). This corpus tracks zsh's development tree and has no oracle,
 so it also scores assertions a released zsh fails: run through
 `scripts/ztst_compsys.py --baseline` on the same tree, zsh 5.9.2 passes 2 of
 `K01nameref`'s 133 assertions. The oracle-backed figure is the one to quote.
