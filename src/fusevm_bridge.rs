@@ -7879,6 +7879,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // creates the literal file `*.txt`, and `wc -c < *.txt` errors
     // "no such file or directory: *.txt". Bug #36 follow-up in
     // docs/BUGS.md.
+    vm.register_builtin(BUILTIN_ASSIGN_FILESUB, |vm, _argc| {
+        let raw = vm.pop().to_str();
+        // c:178 — with SH_FILE_EXPANSION the file pass ran before substitution.
+        if crate::ported::zsh_h::isset(crate::ported::zsh_h::SHFILEEXPANSION) {
+            return Value::str(raw);
+        }
+        let mut tok = raw;
+        crate::ported::glob::shtokenize(&mut tok);
+        let expanded = crate::ported::subst::filesub(&tok, crate::ported::zsh_h::PREFORK_ASSIGN);
+        Value::str(crate::ported::lex::untokenize(&expanded))
+    });
     vm.register_builtin(BUILTIN_COND_GLOB_EXPAND, |vm, _argc| {
         let raw = vm.pop();
         if !crate::ported::zsh_h::isset(crate::ported::zsh_h::EXTENDEDGLOB) {
@@ -19621,6 +19632,13 @@ pub const BUILTIN_REDIR_GLOB_EXPAND: u16 = 628;
 /// `nobareglob = 1`, so with the option off the word is plain `singsub`
 /// output: literal, untokenized. Same stack shape as BUILTIN_GLOB_EXPAND.
 pub const BUILTIN_COND_GLOB_EXPAND: u16 = 791;
+
+/// prefork's second file-expansion pass over a GLOB_SUBST value in a scalar
+/// assignment (c:Src/subst.c:178-182 with `PREFORK_ASSIGN`, the flags
+/// c:Src/exec.c:2603 passes): the `~` flag shtokenizes the substituted value,
+/// so `filesub` expands a leading `~` or `=cmd` and, for an assignment, a `~`
+/// after `:`. No filename generation follows; the value is stored untokenized.
+pub const BUILTIN_ASSIGN_FILESUB: u16 = 793;
 
 /// Reset the default-word glob-pending carrier at the START of a word
 /// whose source contains a glob metachar (so the flag never leaks from a

@@ -370,3 +370,37 @@ mod brace_expansion_in_operands {
         assert_parity(r#"setopt braceccl; print -r -- ${x:-{ab}} ${y:={a-c}}; print -r -- "[$y]""#);
     }
 }
+
+/// The `~` flag (GLOB_SUBST) shtokenizes the substituted value, so prefork's
+/// file pass (Src/subst.c:178-182) expands a leading `~` or `=cmd` and, in an
+/// assignment (`PREFORK_ASSIGN`, Src/exec.c:2603), a `~` after `:`. No filename
+/// generation follows a scalar assignment. zshrs stored `~/foo` verbatim.
+/// docs/BUGS.md #644.
+mod globsubst_file_expansion_on_assignment {
+    use super::*;
+
+    #[test]
+    fn a_whole_word_reference_is_file_expanded() {
+        assert_parity(r#"HOME=/hh; x="~/foo"; y=${~x}; z=$~x; print -r -- "[$y] [$z]""#);
+        assert_parity(r#"HOME=/hh; x="a:~/b"; y=${~x}; print -r -- "[$y]""#);
+        assert_parity(r#"HOME=/hh; x="~/foo"; local l=${~x}; typeset t=$~x; print -r -- "[$l] [$t]""#);
+        assert_parity(r#"HOME=/hh; f() { local p=${~1}; print -r -- "[$p]" }; f '~/x'"#);
+        assert_parity(r#"x='a*'; y=$~x; print -r -- "[$y]""#);
+    }
+
+    #[test]
+    fn quotes_segments_and_the_off_toggle_leave_it_alone() {
+        assert_parity(r#"HOME=/hh; x="~/foo"; y="${~x}"; z=foo$~x; print -r -- "[$y] [$z]""#);
+        assert_parity(r#"HOME=/hh; x="~/foo"; y=${~~x}; local l=pre${~x}; print -r -- "[$y] [$l]""#);
+        assert_parity(r#"HOME=/hh; x="~/foo"; setopt shfileexpansion; y=${~x}; print -r -- "[$y]""#);
+    }
+
+    /// `$~N` / `$~#`: an unbraced positional (every digit, as zsh reads `$12`)
+    /// or one-character special parameter, as `${~N}` names it.
+    #[test]
+    fn unbraced_positional_and_special_parameters_take_the_flag() {
+        assert_parity(r#"set -- x y; print -r -- $~2 ${~2} $~#"#);
+        assert_parity(r#"set -- 1 2 3 4 5 6 7 8 9 10 11 12; print -r -- $~12"#);
+        assert_parity(r#"HOME=/hh; set -- '~/p'; y=$~1; print -r -- "[$y]""#);
+    }
+}

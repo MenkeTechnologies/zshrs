@@ -4260,6 +4260,20 @@ impl ZshCompiler {
                 // Not the reserved word (`\typeset`, `"typeset"`, `disable -r
                 // typeset`): c:Src/exec.c:3353-3355 / c:Src/subst.c:103.
                 self.emit_asssub_assign_word(word);
+            } else if let Some(split) = arg_is_assign.then(|| typeset_globsubst_value_split(word)).flatten() {
+                // c:Src/exec.c:4239 — typeset preforks a `NAME=VALUE` argument's VALUE
+                // on its own, so a value that is exactly `$~X` / `${~X}` is a whole
+                // word there and gets the GLOB_SUBST file pass: `local p=${~1}`
+                // expands a leading `~`. Compiled as `NAME=` + that value.
+                let (name_eq, value) = word.split_at(split);
+                let c = self.builder.add_constant(Value::str(crate::lex::untokenize(name_eq)));
+                self.builder.emit(Op::LoadConst(c), 0);
+                self.scalar_assign_depth += 1;
+                self.compile_word_str(value);
+                self.scalar_assign_depth -= 1;
+                self.builder
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ASSIGN_FILESUB, 1), 0);
+                self.builder.emit(Op::Concat, 0);
             } else if !head_is_typeset_family
                 && !head_is_magic_equals
                 && {
@@ -8358,6 +8372,18 @@ impl ZshCompiler {
                 let _ = do_glob; // globsubst toggle was applied
                 let idx = self.builder.add_constant(Value::str(""));
                 self.builder.emit(Op::LoadConst(idx), 0);
+                return;
+            }
+            // c:Src/subst.c:2596 then the name: a positional parameter (every digit,
+            // as zsh reads an unbraced `$12`) or a one-character special one
+            // (`$~#`) is the parameter `${~12}` / `${~#}` names, which the braced
+            // path already expands; `$~~1` likewise.
+            let positional = name_part.bytes().all(|b| b.is_ascii_digit());
+            let special = name_part.len() == 1 && "#?$!-*@".contains(name_part);
+            if positional || special {
+                use crate::ported::zsh_h::{Inbrace, Outbrace, Stringg};
+                let flag = if do_glob { "~" } else { "~~" };
+                self.compile_word_str(&format!("{Stringg}{Inbrace}{flag}{name_part}{Outbrace}"));
                 return;
             }
             let valid = !name_part.is_empty()
@@ -16314,6 +16340,14 @@ impl ZshCompiler {
         }
         self.scalar_assign_depth -= 1;
         self.assign_context_depth -= 1;
+        // c:Src/exec.c:2603 — the value is preforked as ONE word, so a value that
+        // is exactly `$~X` / `${~X}` gets the GLOB_SUBST file pass: `x="~/f";
+        // y=$~x` stores `$HOME/f`. A segment (`y=a$~x`) does not: there the
+        // substituted `~` sits mid-word, where `filesub` leaves it.
+        if is_globsubst_ref_value(s) {
+            self.builder
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ASSIGN_FILESUB, 1), 0);
+        }
     }
 
     fn brace_array_body(&self, word: &str, inner: &str) -> String {
@@ -19866,6 +19900,41 @@ fn subscript_has_toplevel_comma(key: &str) -> bool {
         i += 1;
     }
     false
+}
+
+/// Whether an assignment VALUE is exactly one GLOB_SUBST reference, `$~X` or
+/// `${~X}` with X a parameter name or a positional number (not the `~~`
+/// toggle-off form). Such a value is a whole word to prefork, so the `~` flag's
+/// file pass applies to it (BUILTIN_ASSIGN_FILESUB).
+fn is_globsubst_ref_value(value: &str) -> bool {
+    // Quoted (`"${~x}"`): GLOB_SUBST is off inside quotes (c:Src/subst.c:2634-2636).
+    use crate::ported::zsh_h::{Bnull, Dnull, Snull};
+    if value.chars().any(|c| matches!(c, Dnull | Snull | Bnull | '"' | '\'' | '\\')) {
+        return false;
+    }
+    let value = crate::lex::untokenize(value);
+    let Some(reference) = value
+        .strip_prefix("${~")
+        .and_then(|r| r.strip_suffix('}'))
+        .or_else(|| value.strip_prefix("$~"))
+    else {
+        return false;
+    };
+    let positional = !reference.is_empty() && reference.bytes().all(|b| b.is_ascii_digit());
+    let ident = reference.chars().next().is_some_and(|c| c == '_' || c.is_ascii_alphabetic())
+        && reference.chars().all(|c| c == '_' || c.is_ascii_alphanumeric());
+    positional || ident
+}
+
+/// For a typeset `NAME=VALUE` word whose VALUE passes [`is_globsubst_ref_value`],
+/// the byte offset just past the `=` (which may be the Equals token).
+fn typeset_globsubst_value_split(word: &str) -> Option<usize> {
+    let (eq, eq_char) = word.char_indices().find(|&(_, c)| c == '=' || c == crate::ported::zsh_h::Equals)?;
+    let name = &word[..eq];
+    let name_ok = name.chars().next().is_some_and(|c| c == '_' || c.is_ascii_alphabetic())
+        && name.chars().all(|c| c == '_' || c.is_ascii_alphanumeric());
+    let split = eq + eq_char.len_utf8();
+    (name_ok && is_globsubst_ref_value(&word[split..])).then_some(split)
 }
 
 fn is_typeset_scalar_assign(word: &str) -> bool {

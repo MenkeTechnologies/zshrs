@@ -6873,11 +6873,17 @@ form is niche (mostly completion code parsing array assignments).
 
 ---
 
-## #644 — `${~x}` tilde expansion missing on an ASSIGNMENT RHS
+## #644 — `${~x}` tilde expansion missing on an ASSIGNMENT RHS — fixed
 
-**Status:** `port-bug` — the command-argument (`echo ${~x}`), array
-(`${~a}`), and `setopt globsubst` forms are FIXED (filesub now runs before
-the glob in the word-glob ops). Only the assignment RHS remains:
+**Status:** `fixed` 2026-10-17. A whole-word `$~X` / `${~X}` scalar-assignment value (bare, or a
+typeset-family `NAME=VALUE` argument) now gets prefork's file pass over the GLOB_SUBST result
+(c:Src/subst.c:178-182, `PREFORK_ASSIGN` from c:Src/exec.c:2603): leading `~`, `=cmd`, and `~` after
+`:`. Quoted values, mid-word segments and `${~~X}` are left alone, as in zsh. Also fixed: unbraced
+`$~N` / `$~#` (positional and special parameters) printed the name literally. Pinned by
+`shell_semantics_parity::globsubst_file_expansion_on_assignment`.
+
+Earlier, the command-argument (`echo ${~x}`), array (`${~a}`) and `setopt globsubst` forms were
+fixed (filesub runs before the glob in the word-glob ops), leaving the assignment RHS:
 
 ```
 x="~/foo"; y=${~x}; echo "[$y]"    zsh: [/home/testu/foo]   zshrs: [~/foo]
