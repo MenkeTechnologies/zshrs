@@ -133,13 +133,12 @@ fn zsh_mode_function_traps_match_real_zsh() {
     compare("zsh", &zsh, &["--zsh", "-f"], &["-f"]);
 }
 
-/// BUGS.md #1114 — `--bash` currently installs `TRAPINT` as a real SIGINT
-/// handler, so `TRAPINT() { echo FIRED; }; kill -INT $$` prints `FIRED` and
-/// the shell survives, where bash prints nothing and dies of SIGINT.  The
-/// `TRAP*` recognition needs gating on `posix_faithful()` at
-/// `src/ported/exec.rs:7361` and `src/fusevm_bridge.rs:11917`.
+/// BUGS.md #1114 — in `--bash`, `TRAPINT` is an ordinary function: it is not
+/// installed as a SIGINT handler, `trap` does not list it, and defining
+/// `TRAPUSR1` does not displace an existing `trap '…' USR1`.  Install is gated
+/// on `posix_faithful()` at the two funcdef sites; dispatch and the listing
+/// test `sigtrapped[sig] & ZSIG_FUNC` rather than the function's name.
 #[test]
-#[ignore = "BUGS.md #1114 — TRAP* function traps are recognised in --bash, where bash has no such form"]
 fn bash_mode_has_no_function_traps() {
     let Some(bash) = find_shell(&["bash", "/bin/bash", "/usr/local/bin/bash"]) else {
         eprintln!("SKIP: no bash on this machine");

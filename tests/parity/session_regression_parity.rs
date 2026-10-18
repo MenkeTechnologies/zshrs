@@ -296,23 +296,12 @@ mod exit_trap_scope {
         );
     }
 
-    /// The one combination that diverges: a global TRAPEXIT **function** plus a
-    /// function-local **string** `trap … EXIT`. zshrs runs the global TRAPEXIT
-    /// an extra time at function return —
-    ///     zsh   : body / inner / after / T
-    ///     zshrs : body / inner / T / after / T
-    /// The other three global/local × func/string combinations all agree, so
-    /// the fault is specific to the `ZSIG_FUNC` bit surviving the install of a
-    /// string trap: `endtrapscope` (c:894) then takes the
-    /// `removehashnode(shfunctab, "TRAPEXIT")` arm instead of the
-    /// `siglists[SIGEXIT]` one. `settrap` itself looks faithful
-    /// (`*slot = ZSIG_TRAPPED` then `|= flags`, c:725/738), so the bit is
-    /// surviving somewhere between the install and the scope pop.
+    /// BUGS.md #1120: a global TRAPEXIT **function** plus a function-local
+    /// **string** `trap … EXIT` once ran the global function an extra time at
+    /// function return (`body / inner / T / after / T`). zsh prints
+    /// `body / inner / after / T`: the string trap's scope pop takes the
+    /// `siglists[SIGEXIT]` arm of `endtrapscope` (c:894), not the function's.
     #[test]
-    #[ignore = "open gap: a global TRAPEXIT *function* plus a function-local *string* \
-`trap … EXIT` runs the global one an extra time at function return. Isolated to that single \
-combination; the other three func/string pairings agree. See the module doc for the \
-c:Src/signals.c:894 ZSIG_FUNC branch."]
     fn function_global_with_string_local_does_not_double_fire() {
         assert_parity(
             r#"TRAPEXIT(){ print T }; f(){ trap "print inner" EXIT; print body }; f; print after"#,

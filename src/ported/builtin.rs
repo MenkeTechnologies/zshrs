@@ -19037,13 +19037,24 @@ pub fn bin_trap(
         // Walk shfunctab for `TRAP<signame>` functions and emit their
         // full definition alongside the string-form traps so the
         // listing matches zsh. Bug #461 in docs/BUGS.md.
+        // Only a signal whose sigtrapped slot carries ZSIG_FUNC lists its
+        // function: a TRAP-named function that installed nothing (every
+        // drop-in mode, BUGS.md #1114) is not a trap.
+        let func_trapped: Vec<i32> = crate::ported::signals::sigtrapped
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
         let trap_funcs: Vec<(String, i32, String)> = {
             let mut acc: Vec<(String, i32, String)> = Vec::new();
             if let Ok(tab) = crate::ported::hashtable::shfunctab_lock().read() {
                 for (fname, _) in tab.iter() {
                     if let Some(sig_name) = fname.strip_prefix("TRAP") {
                         let idx = getsigidx(sig_name);
-                        if idx != -1 {
+                        let is_func_trap = idx >= 0
+                            && func_trapped.get(idx as usize).copied().unwrap_or(0)
+                                & crate::ported::zsh_h::ZSIG_FUNC
+                                != 0;
+                        if is_func_trap {
                             acc.push((fname.clone(), idx, sig_name.to_string()));
                         }
                     }

@@ -545,9 +545,9 @@ the behaviour.
 
 ---
 
-## #1120 — a global `TRAPEXIT` function fires an extra time when a function installs a string EXIT trap — open
+## #1120 — a global `TRAPEXIT` function fires an extra time when a function installs a string EXIT trap — fixed
 
-**Status:** `open`, isolated 2026-08-29.
+**Status:** `fixed` (confirmed 2026-10-17: zshrs prints `body / inner / after / T`, matching zsh), isolated 2026-08-29.
 
 ```zsh
 TRAPEXIT(){ print T }; f(){ trap "print inner" EXIT; print body }; f; print after
@@ -596,7 +596,8 @@ save/restore around `locallevel`. Instrument `sigtrapped[SIGEXIT]` at
 
 **Pinned** by `tests/parity/session_regression_parity.rs::exit_trap_scope`,
 whose other five cases assert the agreeing combinations so a fix cannot regress
-them; the divergent one is `#[ignore]`d against this entry.
+them. The sixth case, `function_global_with_string_local_does_not_double_fire`, was
+`#[ignore]`d against this entry and now runs live.
 
 ---
 
@@ -734,9 +735,9 @@ math-evaluates to 0 — plus the single-evaluation and `KSH_ARRAYS`/`KSH_ZERO_SU
 
 ---
 
-## #1114 — zsh's `TRAPxxx()` function traps fire in `--bash` / `--ksh` / `--dash` mode — open
+## #1114 — zsh's `TRAPxxx()` function traps fire in `--bash` / `--ksh` / `--dash` mode — fixed
 
-**Status:** `port-bug`, found 2026-08-29. Reported by the maintainer, who pointed out that zsh's
+**Status:** `fixed` 2026-10-17, found 2026-08-29. Reported by the maintainer, who pointed out that zsh's
 two trap forms list and scope differently and that a `--bash` conformance suite comparing `trap`
 output would trip on the split. It does, and worse than expected.
 
@@ -827,6 +828,22 @@ reachable through syntax bash actually accepts.
 
 **The line numbers above drift.** Locate the sites by pattern instead:
 `grep -rn 'starts_with("TRAP")' src/ | grep -v '^src/zsh/'`.
+
+**Resolution.** `5c56edd43b` gated the two definition sites on `posix_faithful()`. Two
+divergences survived it, and neither was a definition site:
+
+1. **Dispatch fell back to the function's NAME.** `dotrap` in `src/ported/signals.rs` had a
+   second arm, with no C counterpart, that ran `TRAP<SIG>` whenever such a function existed,
+   even with no `ZSIG_FUNC` bit in `sigtrapped[sig]`. So in `--bash`,
+   `trap 'echo L' USR1; TRAPUSR1() { echo F; }; kill -USR1 $$` printed `F`. C picks the
+   function arm on the flag alone (c:Src/signals.c:1251). The fallback is gone.
+2. **The listing walked names.** Bare `trap` printed every `TRAP<SIG>` function in shfunctab.
+   C prints the function only when `sigtrapped[sig] & ZSIG_FUNC` (c:Src/builtin.c:7360). The
+   listing now tests that bit.
+
+Both are faithfulness fixes in every mode. zsh mode is unchanged because every zsh-mode
+definition path sets the bit. `zsh_mode_function_traps_match_real_zsh` and the 150-test
+`trap` slice of the parity suite pass, and `bash_mode_has_no_function_traps` now runs live.
 
 ---
 

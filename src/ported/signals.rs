@@ -1972,26 +1972,11 @@ pub fn dotrap(sig: i32) -> i32 {
             fn_dispatched = true;
         }
     }
-    // Additional function-form check: even when ZSIG_FUNC isn't
-    // set on sigtrapped (the function was defined after the
-    // string-form trap, and zshrs's exec.rs:6292 didn't update
-    // sigtrapped via the doshfunc path), look in shfunctab
-    // directly. zsh's last-defined-wins semantics treat the
-    // function as the active handler — the older string-form
-    // entry in traps_table must not also fire.
-    if !fn_dispatched {
-        let signame = getsigname(sig);
-        let trap_fn = format!("TRAP{}", signame);
-        if getshfunc(&trap_fn).is_some() {
-            // Same dotrapargs routing as the ZSIG_FUNC arm above; the flag is
-            // OR'd in because this arm exists precisely for the case where
-            // sigtrapped never recorded it, and dotrapargs selects its
-            // function branch on `*sigtr & ZSIG_FUNC`.
-            let mut sigtr = trapped | ZSIG_FUNC;
-            dotrapargs(sig, &mut sigtr, Some(&trap_fn));
-            fn_dispatched = true;
-        }
-    }
+    // No name-based fallback: C picks the function arm on
+    // `sigtrapped[sig] & ZSIG_FUNC` alone (c:1251). Every TRAPxxx
+    // definition path calls settrap(ZSIG_FUNC), so a TRAP-named function
+    // without the flag is an ordinary function — the case in the drop-in
+    // modes, where it must not displace a list trap (BUGS.md #1114).
     // c:1268 — non-FUNC `siglists[sig]` eprog branch. The canonical
     // settrap→siglists path isn't fully wired (bin_trap stores raw
     // body text into `traps_table` rather than parsing to Eprog and
