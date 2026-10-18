@@ -455,3 +455,5 @@ bash	set -u; declare x; echo "[${x-d}]"; echo after; echo "$x"; echo unreachable
 bash	set -u; f() { local y; echo "[${y:-d}]"; y=1; echo "$y"; z=; echo "[$z]"; }; f; OPTIND=1; getopts "a:b" o -b; echo "$o"; echo "$OPTARG"; echo unreachable
 zsh,ksh,bash	typeset -x q=1; typeset -x q=1; typeset +x q; q=abc; env | grep -c "^q="; true
 ksh	typeset -x v=1; typeset -p v; typeset -x v=1; typeset -p v; typeset v=abc; typeset -p v; typeset -x w=1; typeset +x w=2; typeset -p w
+ksh	a=(p q); IFS=; for a in x; do :; done; IFS=b; v=bbc; set -- $v; echo $#; printf "[%s]" "$@"; echo
+ksh	a=(p q); IFS=; for a in x y; do :; done; IFS=:; v=::c; printf "[%s]" $v; echo

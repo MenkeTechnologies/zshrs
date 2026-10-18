@@ -12151,6 +12151,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     });
 
     vm.register_builtin(BUILTIN_XTRACE_LINE, |vm, _argc| {
+        // The loop-variable trace line reads `$name` (an array reads as one)
+        // and ends no word, so the elidable-empties bit that read left would
+        // reach the next unquoted expansion.
+        let _ = take_array_empties_elidable();
         // Keep the Value; `to_str()` allocates a String, and this handler
         // runs on EVERY `(( … ))` / `[[ … ]]` / loop-head evaluation, where
         // xtrace is off essentially always. Defer the allocation to the
