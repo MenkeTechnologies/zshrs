@@ -74,17 +74,32 @@ fn assert_parity(s: &str) {
     assert_parity_at(zsh_path(), s);
 }
 /// [`assert_parity`] against the release zshrs reports as its own version, for rows
-/// whose answer moved on master. Skips when none is installed.
+/// whose answer moved on master. Skips when none is installed. zshrs gives the
+/// release answer only when it stands in for zsh (argv[0] `zsh`,
+/// `emulating_592`), so that is how it is run here.
 fn assert_parity_release(s: &str) {
     let Some(zsh) = crate::oracle::release_zsh_path() else {
         eprintln!("skip: no zsh reporting zshrs's version is installed");
         return;
     };
-    assert_parity_at(zsh, s);
+    use std::os::unix::process::CommandExt;
+    let o = Command::new(zshrs_bin())
+        .arg0("zsh")
+        .args(["--zsh", "-fc", s])
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("zshrs");
+    let r = R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    };
+    assert_parity_with(zsh, s, r);
 }
 fn assert_parity_at(zsh: &str, s: &str) {
+    assert_parity_with(zsh, s, run_zshrs(s));
+}
+fn assert_parity_with(zsh: &str, s: &str, r: R) {
     let z = run_zsh_at(zsh, s);
-    let r = run_zshrs(s);
     assert_eq!(
         z.stdout, r.stdout,
         "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}",
@@ -4697,6 +4712,17 @@ y=$(exit 3) exec; print -n $? ""; y=$(exit 4) noglob; print $?"#,
             r#"for i in 1 2; do (break); print -n "$i "; done; print
 for i in 1 2; do (continue; print no); print -n "$i "; done; print
 for i in 1 2; do for j in a b; do (break 2); print -n "$i$j "; done; done; print
+for i in 1 2; do (for j in a b; do break 2; done; print -n "in$i "); print -n "$i "; done; print"#,
+        );
+    }
+
+    /// The same loops under zshrs's own name follow master (55061): each
+    /// `break`/`continue` errors in the child and the parent loop runs on.
+    #[test]
+    fn break_inside_subshell_errors_on_master() {
+        assert_parity(
+            r#"for i in 1 2; do (break) 2>/dev/null; print -n "$i $? "; done; print
+for i in 1 2; do (continue; print no) 2>/dev/null; print -n "$i "; done; print
 for i in 1 2; do (for j in a b; do break 2; done; print -n "in$i "); print -n "$i "; done; print"#,
         );
     }
