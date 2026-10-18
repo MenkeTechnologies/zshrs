@@ -2961,7 +2961,18 @@ but that is not exhaustive.
 
 ---
 
-## #1062 — `>(…)` process substitution is not waited for after a SIMPLE command — port-bug
+## #1062 — `>(…)` process substitution is not waited for after a SIMPLE command — fixed
+
+**Resolution (2026-10-18).** Decided for zsh's semantics, which `cmd > >(tee log); cat log` depends on.
+Each `>(cmd)` child is recorded with its scope depth, as C makes it an auxiliary process of the
+consuming job (c:Src/exec.c:5052). When that command finishes (the existing `PsubFdGuard` /
+deletefilelist boundary), its children become due and are waited for once no fd of the process still
+holds their pipe: right away with no redirect scope open, else after the scope restores its fds, and
+after a MULTIOS splitter is joined. The pipe check compares `(st_dev, st_ino)` against `/dev/fd`, so an
+enclosing `{ … } > >(cmd)` cannot deadlock the wait. An external command does not wait, because in C
+its redirections are expanded in the forked child; its children go to the existing non-blocking reap.
+16 forms match the dev-tree oracle. Pinned by
+`shell_semantics_parity::process_substitution_output_is_waited_for`.
 
 **Status:** `port-bug` — found by discovery probing; NOT yet fixed (tree does not
 build, see the shared note below).

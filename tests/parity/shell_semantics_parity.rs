@@ -460,3 +460,28 @@ mod empty_parenthesised_operands {
         assert_parity(r#"{ print -r -- ${${:-a b}[()]}; print rc=$? } 2>&1"#);
     }
 }
+
+/// A `>(cmd)` child is an AUXILIARY process of the job that consumed it
+/// (Src/exec.c:5052 `addproc(pid, NULL, 1, …)`), so a builtin, group,
+/// subshell or function that writes to one finishes only when the child has:
+/// its output lands before the next command. An external command expands its
+/// redirections in the forked child, so the shell itself does not wait there.
+/// docs/BUGS.md #1062.
+mod process_substitution_output_is_waited_for {
+    use super::*;
+
+    #[test]
+    fn a_shell_command_waits_for_its_writer_child() {
+        assert_parity(r#"print x > >(cat); print rc=$?"#);
+        assert_parity(r#"{ print x > >(cat) }; ( print y > >(cat) ); print rc=$?"#);
+        assert_parity(r#"f() { print x > >(cat) }; f; f > >(cat); print rc=$?"#);
+        assert_parity(r#"print x > >(cat) > >(cat); print rc=$?"#);
+        assert_parity(r#"print x > >(sleep 0.2; cat); print after"#);
+    }
+
+    #[test]
+    fn an_enclosing_redirect_keeps_the_wait_until_its_scope_ends() {
+        assert_parity(r#"{ print a > /dev/null; print b } > >(cat); print end"#);
+        assert_parity(r#"for i in 1 2; do print $i > >(cat); done; print end"#);
+    }
+}

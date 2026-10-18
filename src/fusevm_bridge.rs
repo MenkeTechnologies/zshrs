@@ -178,6 +178,15 @@ thread_local! {
     /// non-blockingly (WNOHANG) by note_psub_child so proc-sub children
     /// don't accumulate as zombies across a shell session.
     static PSUB_CHILDREN: RefCell<Vec<i32>> = const { RefCell::new(Vec::new()) };
+    /// `(scope_depth, pid)` of each `>(cmd)` child: c:Src/exec.c:5052 makes it an
+    /// AUXILIARY process of the current job (`if (!out) addproc(pid, NULL, 1, …)`),
+    /// so the command that consumed it is not done until it exits.
+    static PSUB_AUX_CHILDREN: RefCell<Vec<(usize, i32, (u64, u64))>> = const { RefCell::new(Vec::new()) };
+    /// `>(cmd)` children whose consuming command has finished, waited for once
+    /// nothing still holds their pipe's write end (see `wait_due_psub_aux`).
+    static PSUB_AUX_DUE: RefCell<Vec<(i32, (u64, u64))>> = const { RefCell::new(Vec::new()) };
+    /// Redirect scopes currently open (host_redirect_scope_begin / _end).
+    static REDIR_SCOPES_OPEN: Cell<usize> = const { Cell::new(0) };
 }
 
 /// Record a proc-sub child pid and best-effort reap any already-exited
@@ -313,8 +322,77 @@ pub(crate) fn psub_pending_file_add(nam: &str) {
 /// the current scope depth, exactly when C deletes the consuming
 /// job's filelist (getproc parks the fd there via
 /// `addfilelist(NULL, fd)`, Src/exec.c:5025+).
-fn close_pending_psub_fds() {
-    close_pending_psub_from(PSUB_SCOPE_DEPTH.with(|d| d.get()));
+fn close_pending_psub_fds(wait_aux: bool) {
+    let depth = PSUB_SCOPE_DEPTH.with(|d| d.get());
+    close_pending_psub_from(depth);
+    // The job then waits for its auxiliary `>(cmd)` processes (c:Src/jobs.c
+    // update_job: a job with a running auxproc is not finished), so
+    // `print x > >(cat); print rc=$?` prints `x` before `rc=0`. BUGS.md #1062.
+    // The command's own redirect scope may still hold the pipe on an fd
+    // (`print x > >(cat)` dup2s it onto fd 1), so the wait runs once that
+    // scope has restored its fds; with no scope open it runs now.
+    let aux: Vec<(i32, (u64, u64))> = PSUB_AUX_CHILDREN.with(|v| {
+        let mut v = v.borrow_mut();
+        let (done, keep): (Vec<_>, Vec<_>) = v.drain(..).partition(|&(d, _, _)| d >= depth);
+        *v = keep;
+        done.into_iter().map(|(_, pid, pipe)| (pid, pipe)).collect()
+    });
+    if !wait_aux {
+        for (pid, _) in aux {
+            note_psub_child(pid);
+        }
+        return;
+    }
+    PSUB_AUX_DUE.with(|v| v.borrow_mut().extend(aux));
+    if REDIR_SCOPES_OPEN.with(|c| c.get()) == 0 {
+        wait_due_psub_aux();
+    }
+}
+
+/// Wait for each due `>(cmd)` child (PSUB_AUX_DUE) whose pipe no fd of this
+/// process still holds: its reader has then seen EOF and exits. A child whose
+/// pipe is still open (an enclosing `{ … } > >(cmd)` keeps it on fd 1 until
+/// that group's scope ends) stays due for a later call; waiting on it now
+/// would deadlock.
+fn wait_due_psub_aux() {
+    let due: Vec<(i32, (u64, u64))> = PSUB_AUX_DUE.with(|v| std::mem::take(&mut *v.borrow_mut()));
+    if due.is_empty() {
+        return;
+    }
+    let open = open_fd_identities();
+    let mut still_due = Vec::new();
+    for (pid, pipe) in due {
+        if open.contains(&pipe) {
+            still_due.push((pid, pipe));
+            continue;
+        }
+        let mut status = 0;
+        while unsafe { libc::waitpid(pid, &mut status, 0) } < 0
+            && std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR)
+        {}
+    }
+    PSUB_AUX_DUE.with(|v| v.borrow_mut().extend(still_due));
+}
+
+/// `(st_dev, st_ino)` of an open fd, the identity of the pipe behind it.
+fn fd_identity(fd: i32) -> (u64, u64) {
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    if unsafe { libc::fstat(fd, &mut st) } != 0 {
+        return (0, 0);
+    }
+    (st.st_dev as u64, st.st_ino as u64)
+}
+
+/// The identities of every fd this process has open, read from `/dev/fd`
+/// (on Linux a link to `/proc/self/fd`).
+fn open_fd_identities() -> Vec<(u64, u64)> {
+    let Ok(dir) = fs::read_dir(crate::ported::config_h::PATH_DEV_FD) else {
+        return Vec::new();
+    };
+    dir.filter_map(|e| e.ok()?.file_name().to_str()?.parse::<i32>().ok())
+        .map(fd_identity)
+        .filter(|&id| id != (0, 0))
+        .collect()
 }
 
 /// c:Src/jobs.c:1452-1460 cleanfilelists — at shell exit EVERY job's
@@ -357,11 +435,17 @@ fn close_pending_psub_from(depth: usize) {
 /// command paths (dispatch_builtin, ZshrsHost::exec) so the pending
 /// `>(cmd)` write ends close on every exit path once the command
 /// finished, exactly when C's job filelist would be deleted.
-struct PsubFdGuard;
+/// `wait_aux` is false for an external command: its redirections are expanded
+/// in the forked child (c:Src/exec.c execcmd), so a `>(cmd)` there is that
+/// child's auxiliary process and the shell does not wait for it
+/// (`/bin/echo x > >(cat); print rc` prints `rc` first in zsh).
+struct PsubFdGuard {
+    wait_aux: bool,
+}
 
 impl Drop for PsubFdGuard {
     fn drop(&mut self) {
-        close_pending_psub_fds();
+        close_pending_psub_fds(self.wait_aux);
     }
 }
 
@@ -1984,7 +2068,7 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
     // c:Src/exec.c getproc + Src/jobs.c deletefilelist — close any
     // `>(cmd)` write ends owned by this command once it finishes
     // (drops on every return path below).
-    let _psub_fds = PsubFdGuard;
+    let _psub_fds = PsubFdGuard { wait_aux: true };
     // c:Src/exec.c — when any redirect in the current scope failed
     // (e.g. noclobber blocked a `>` overwrite), zsh refuses to
     // execute the command and exits with status 1. The Rust port
@@ -2735,7 +2819,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // once it finishes (shadows bypass dispatch_builtin
                 // and ZshrsHost::exec, so they need their own guard:
                 // `tee >(wc -c) </dev/null` left wc blocked).
-                let _psub_fds = PsubFdGuard;
+                let _psub_fds = PsubFdGuard { wait_aux: true };
                 if let Some(s) = try_user_fn_override($name, &args) {
                     return Value::Status(s);
                 }
@@ -14983,7 +15067,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // `$(<$f)` / `[[ -f $f ]]` still saw it, where zsh deletes it at the
         // end of the assignment (verified: even `f==(x) && cat $f` fails).
         // Clean here so the assignment command is the temp's job boundary.
-        close_pending_psub_fds();
+        close_pending_psub_fds(true);
         Value::Status(status)
     });
 
@@ -21257,6 +21341,7 @@ impl fusevm::ShellHost for ZshrsHost {
                 }
                 let depth = PSUB_SCOPE_DEPTH.with(|d| d.get());
                 PSUB_PENDING_FDS.with(|v| v.borrow_mut().push((depth, write_end)));
+                PSUB_AUX_CHILDREN.with(|v| v.borrow_mut().push((depth, child_pid, fd_identity(write_end))));
                 let path = format!("{}/{}", crate::ported::config_h::PATH_DEV_FD, write_end); // c:Src/exec.c:5144
                 if crate::provenance::active() {
                     crate::provenance::on_process_subst(&prov_chunk_label(sub), &path);
@@ -22003,7 +22088,7 @@ impl fusevm::ShellHost for ZshrsHost {
         // c:Src/exec.c getproc + Src/jobs.c deletefilelist — close
         // any `>(cmd)` write ends owned by this command once it
         // finishes (drops on every return path below).
-        let _psub_fds = PsubFdGuard;
+        let _psub_fds = PsubFdGuard { wait_aux: false };
         // c:Src/subst.c paramsubst — when `${var:?msg}` or `${var?msg}`
         // triggered the "parameter null or not set" error, errflag
         // is raised and zsh aborts the simple command without
@@ -22557,7 +22642,7 @@ impl fusevm::ShellHost for ZshrsHost {
             // `=(cmd)` temp files and `>(cmd)` fds made for the call's
             // arguments go with it, also when the body ran `exit` (that only
             // sets exit_pending, the function still returns here first).
-            close_pending_psub_fds();
+            close_pending_psub_fds(true);
         }
 
         // Anonymous functions (`() { … } args`, compiled by
@@ -23314,6 +23399,7 @@ impl ShellExecutor {
     /// Push a fresh redirect scope. `_count` is informational — the actual
     /// saved fds are appended by host_apply_redirect into the top scope.
     pub fn host_redirect_scope_begin(&mut self, _count: u8) {
+        REDIR_SCOPES_OPEN.with(|c| c.set(c.get() + 1));
         // c:Src/exec.c:3722-3724 — the pipeline child set
         // `pipe_output_pending` right after dup2'ing its stdout onto
         // the pipe; the FIRST redirect scope opened in that child is
@@ -23370,6 +23456,7 @@ impl ShellExecutor {
 
     /// Pop the top redirect scope, restoring saved fds.
     pub fn host_redirect_scope_end(&mut self) {
+        REDIR_SCOPES_OPEN.with(|c| c.set(c.get().saturating_sub(1)));
         // c:Src/exec.c — restore saved fds FIRST so the multios
         // pipe-write end is released from `fd`, then close our
         // tracked close_on_end (the last surviving writer dup), then
@@ -23401,6 +23488,8 @@ impl ShellExecutor {
                 crate::ported::utils::zclose(saved_fd);
             }
         }
+        // The restored fds no longer hold a finished command's `>(cmd)` pipe.
+        wait_due_psub_aux();
         if let Some(scope) = self.multios_scope_stack.pop() {
             // Close ALL tracked writer dups BEFORE joining any
             // thread. When one splitter holds a dup of another's
@@ -23421,6 +23510,9 @@ impl ShellExecutor {
             for handle in handles {
                 let _ = handle.join();
             }
+            // The joined splitters held the `>(cmd)` targets of a multio
+            // (`print x > >(cat) > >(cat)`); with them gone the readers see EOF.
+            wait_due_psub_aux();
         }
         // The scope that captured the pipeline-output marker is gone;
         // deeper-nested future scopes must not re-match its depth.
