@@ -719,3 +719,13 @@ fn recorder_end_state_replays_into_a_shell() {
         wrong.join("\n")
     );
 }
+
+#[test]
+fn path_set_records_only_the_entries_it_adds() {
+    // `path=( /new $path )` hands the recorder the whole new array. Recording
+    // every element stamped each inherited entry (path_helper's, say) with the
+    // statement's file:line, so `zwhere path` named the wrong file. Two sets,
+    // one new entry each, so exactly two events however long $PATH is.
+    let counts = run("26_path_set_keeps_existing.zsh");
+    assert_eq!(counts.get("path_mod").copied(), Some(2), "{counts:?}");
+}

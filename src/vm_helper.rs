@@ -8309,12 +8309,19 @@ mod tests {
 /// `attrs` carries any pre-existing type info from
 /// `recorder_attrs_for(name)` (readonly/export/global) — array shape
 /// and APPEND get OR'd in by emit_array_assign.
+///
+/// `prior` is the path-family array as it stood BEFORE a fresh `path=(...)`
+/// set. The set carries the whole new array, so `path=( $new $path )` would
+/// otherwise stamp every entry it merely kept (the inherited `path_helper`
+/// ones included) with this statement's file:line; only entries absent from
+/// `prior` are new here and get an event. Appends pass `&[]`.
 #[cfg(feature = "recorder")]
 pub(crate) fn emit_path_or_assign(
     name: &str,
     values: &[String],
     attrs: crate::recorder::ParamAttrs,
     is_append: bool,
+    prior: &[String],
     ctx: &crate::recorder::RecordCtx,
 ) {
     let lower = name.to_ascii_lowercase();
@@ -8328,7 +8335,7 @@ pub(crate) fn emit_path_or_assign(
     };
     match kind_name {
         Some(k) => {
-            for v in values {
+            for v in values.iter().filter(|v| is_append || !prior.contains(v)) {
                 crate::recorder::emit_path_mod(v, k, ctx.clone());
                 // Each fpath addition also surfaces every `_completion`
                 // file inside the directory — matches zinit-report's

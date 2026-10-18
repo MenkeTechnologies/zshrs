@@ -5525,6 +5525,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             crate::bash_arrays::clear(&name);
         }
         let blocked = with_executor(|exec| {
+            // The array as it stands before this set, so the recorder can tell
+            // which entries of `path=( $new $path )` are actually new.
+            #[cfg(feature = "recorder")]
+            let prior_arr: Vec<String> = if crate::recorder::is_enabled() {
+                exec.array(&name).map(|a| a.to_vec()).unwrap_or_default()
+            } else {
+                Vec::new()
+            };
             // c:Src/exec.c:4473-4509 save_params — an ARRAY prefix
             // assignment (`z=(9 8 7) f`) is a WC_ASSIGN in the same chain
             // as a scalar one, so it is snapshotted the same way and put
@@ -5769,7 +5777,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             if crate::recorder::is_enabled() && exec.local_scope_depth == 0 {
                 let ctx = exec.recorder_ctx();
                 let attrs = exec.recorder_attrs_for(&name);
-                emit_path_or_assign(&name, &values, attrs, false, &ctx);
+                emit_path_or_assign(&name, &values, attrs, false, &prior_arr, &ctx);
             }
             false
         });
@@ -5945,7 +5953,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             if crate::recorder::is_enabled() && exec.local_scope_depth == 0 {
                 let ctx = exec.recorder_ctx();
                 let attrs = exec.recorder_attrs_for(&name);
-                emit_path_or_assign(&name, &values, attrs, true, &ctx);
+                emit_path_or_assign(&name, &values, attrs, true, &[], &ctx);
             }
             // Tied-scalar mirror — TODO faithful: should live in
             // setarrvalue's gsu dispatch once boot_ paramtab wiring
@@ -9703,7 +9711,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     if crate::recorder::is_enabled() && exec.local_scope_depth == 0 {
                         let ctx = exec.recorder_ctx();
                         let attrs = exec.recorder_attrs_for(&name);
-                        emit_path_or_assign(&name, std::slice::from_ref(&value), attrs, true, &ctx);
+                        emit_path_or_assign(&name, std::slice::from_ref(&value), attrs, true, &[], &ctx);
                     }
                     return;
                 }
@@ -9717,7 +9725,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 if crate::recorder::is_enabled() && exec.local_scope_depth == 0 {
                     let ctx = exec.recorder_ctx();
                     let attrs = exec.recorder_attrs_for(&name);
-                    emit_path_or_assign(&name, std::slice::from_ref(&value), attrs, true, &ctx);
+                    emit_path_or_assign(&name, std::slice::from_ref(&value), attrs, true, &[], &ctx);
                 }
                 return;
             }
@@ -9747,7 +9755,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     lower.as_str(),
                     "path" | "fpath" | "manpath" | "module_path" | "cdpath"
                 ) {
-                    emit_path_or_assign(&name, std::slice::from_ref(&final_val), attrs, true, &ctx);
+                    emit_path_or_assign(&name, std::slice::from_ref(&final_val), attrs, true, &[], &ctx);
                 } else {
                     crate::recorder::emit_assign_typed(&name, &final_val, attrs, ctx);
                 }
