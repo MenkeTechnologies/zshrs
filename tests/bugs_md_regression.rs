@@ -2881,3 +2881,28 @@ fn bash_regex_rhs_takes_an_unquoted_alternation_bar() {
         assert_eq!((ec, out.as_str()), (0, want), "script: {script}");
     }
 }
+
+/// `[[ x =~ ((a)|b) ]]` — a regex whose first character is `(` followed by
+/// another `(`. Under SH_GLOB (the `--bash`/`--sh` modes) the lexer took the
+/// `((` for arithmetic even on the right of `=~`, so bash-completion's
+/// `[[ $line =~ ((^|[^-])-[A-Za-z0-9?]…) ]]` died with "condition expected".
+#[test]
+fn bash_regex_rhs_may_start_with_a_double_paren() {
+    if zshrs_bin().is_none() {
+        return;
+    }
+    for script in [
+        "[[ a =~ ((a)) ]] && echo m",
+        "[[ a =~ ((^|x)a) ]] && echo m",
+        "[[ ab =~ ((a))(b) ]] && echo m",
+        "x=a; if [[ $x =~ ((a|b)) ]]; then echo m; fi",
+    ] {
+        for mode in ["--bash", "--sh"] {
+            let (ec, out) = run_mode(mode, script);
+            assert_eq!((ec, out.as_str()), (0, "m\n"), "{mode}: {script}");
+        }
+    }
+    // A real command position keeps `((` as arithmetic.
+    let (ec, out) = run_mode("--bash", "((1+1==2)) && echo m");
+    assert_eq!((ec, out.as_str()), (0, "m\n"));
+}

@@ -1752,7 +1752,15 @@ fn gettok() -> lextok {
                     // !isset(KSHGLOB)))` — under SHGLOB-without-KSHGLOB,
                     // `((` is also math/subshell-eligible even when
                     // not at command position.
-                    if LEX_INCMDPOS.get() || (isset(SHGLOB) && unset(KSHGLOB)) {
+                    //
+                    // !!! RUST-ONLY EXCEPTION !!! Not in the right-hand side of a
+                    // `[[ x =~ RE ]]` / `==` (par_cond bumps incond past 1 there):
+                    // a leading `((` starts a regex or pattern there, not math, so
+                    // bash-completion's `=~ ((^|[^-])-x)` parses. Only the SHGLOB
+                    // arm is gated; at a real command position `((` stays math.
+                    if LEX_INCMDPOS.get()
+                        || (isset(SHGLOB) && unset(KSHGLOB) && LEX_INCOND.get() <= 1)
+                    {
                         // Could be (( arithmetic )) or ( subshell )
                         LEX_LEXBUF.with_borrow_mut(|b| b.clear());
                         match cmd_or_math() {
