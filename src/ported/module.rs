@@ -1662,6 +1662,13 @@ impl modulestab {
                 "zsh/attr",
                 &["zgetattr", "zsetattr", "zdelattr", "zlistattr"][..],
             ),
+            // c:Src/Modules/cap.mdd — `link='if test "x$enable_cap" = xyes;
+            // then echo dynamic; else echo no; fi'` (upstream 54669). Without
+            // capability support the module is not built at all, so
+            // `zmodload zsh/cap` fails and `cap` is "command not found",
+            // instead of the old builtins that only said "not available on
+            // this system". `--enable-cap` here is the libcap backend.
+            #[cfg(all(target_os = "linux", feature = "libcap"))]
             ("zsh/cap", &["cap", "getcap", "setcap"][..]),
             ("zsh/clone", &["clone"][..]),
             ("zsh/curses", &["zcurses"][..]),

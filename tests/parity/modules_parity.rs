@@ -1438,9 +1438,11 @@ mod newuser_module {
 mod cap_module {
     use super::*;
 
-    /// Without libcap the three builtins are `#define … bin_notavail`
-    /// (zsh 5.9.x cap.c), whose text is "not available on this system"
-    /// (Src/builtin.c:7598). macOS only: a Linux zsh has real libcap.
+    /// Without capability support zsh no longer builds `zsh/cap` at all
+    /// (upstream 54669, Src/Modules/cap.mdd): `zmodload` fails and each
+    /// builtin is "command not found", 127. zsh 5.9.x instead built stub
+    /// builtins that said "not available on this system" and returned 1.
+    /// macOS only: a Linux zsh may be configured with `--enable-cap`.
     #[test]
     #[cfg(target_os = "macos")]
     fn cap_stubs_use_bin_notavail_text() {
