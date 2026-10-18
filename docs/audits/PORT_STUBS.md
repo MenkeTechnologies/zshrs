@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-10-17T23:27:31.745554+00:00
+Generated: 2026-10-18T03:59:08.225048+00:00
 
 ## Method
 
@@ -72,14 +72,14 @@ python3 scripts/gen_port_stubs.py
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
-| 2919 | `createreswdtable` | 1 | 16 | 6% |
+| 2925 | `createreswdtable` | 1 | 16 | 6% |
 | 1692 | `hashdir` | 4 | 58 | 6% |
 | 1651 | `createcmdnamtable` | 1 | 14 | 7% |
-| 1897 | `createshfunctable` | 1 | 13 | 7% |
-| 3359 | `createhisttable` | 1 | 13 | 7% |
+| 1903 | `createshfunctable` | 1 | 13 | 7% |
+| 3379 | `createhisttable` | 1 | 13 | 7% |
 | 1556 | `expandhashtable` | 2 | 15 | 13% |
 | 1567 | `resizehashtable` | 4 | 18 | 22% |
-| 2023 | `freeshfuncnode` | 4 | 17 | 23% |
+| 2029 | `freeshfuncnode` | 4 | 17 | 23% |
 | 1596 | `printhashtabinfo` | 6 | 22 | 27% |
 
 ### `src/ported/utils.rs` — 7 stubs
@@ -121,8 +121,8 @@ python3 scripts/gen_port_stubs.py
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
-| 3739 | `load_and_bind` | 1 | 20 | 5% |
-| 4111 | `module_func` | 1 | 16 | 6% |
+| 3746 | `load_and_bind` | 1 | 20 | 5% |
+| 4118 | `module_func` | 1 | 16 | 6% |
 
 ### `src/ported/modules/zutil.rs` — 2 stubs
 
@@ -161,7 +161,7 @@ python3 scripts/gen_port_stubs.py
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
-| 1642 | `zglob` | 72 | 616 | 11% |
+| 1671 | `zglob` | 72 | 616 | 11% |
 
 ### `src/ported/hashnameddir.rs` — 1 stubs
 

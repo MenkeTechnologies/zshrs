@@ -177,7 +177,7 @@ install is already an O(1) shard probe:
 zshrs --prewarm-autoloads            # every dir on $fpath
 zshrs --prewarm-autoloads DIR ...    # just these
 zd prewarm [DIR ...]                 # same, via the daemon
-prewarm-autoloads [DIR ...]       # same, as a builtin inside a shell (default: its $fpath)
+prewarm-autoloads [DIR ...]          # same, as a builtin inside a shell (default: its $fpath)
 ```
 
 The local daemon's lifecycle is controlled from `zd`, with no daemon running required:
@@ -934,6 +934,13 @@ compare against a second reference, the zsh 5.9.2 release:
 exactly zshrs's `$ZSH_VERSION`; with none, those tests skip. Build it with
 `ZSHRS_ORACLE_PREFIX=$HOME/.cache/zshrs/zsh-5.9.2 scripts/build_zsh_oracle.sh <tree checked out at zsh-5.9.2>`;
 CI builds it with the same `.github/actions/zsh-oracle` action (`commit: zsh-5.9.2`).
+
+Other behaviour upstream changed after 5.9.2 follows the development tree when zshrs runs
+under its own name, and keeps the 5.9.2 answer only when it is started as `zsh` (argv[0]
+`zsh`, a drop-in installed under that name; `emulating_592()` in
+`src/extensions/emulation_startup.rs`). Examples: `let "1+"` returns 2, not 1; math and
+`kill` say `invalid character` / `invalid pid`, not `illegal …`; and `( break )` inside a
+loop reports `not in same subshell as first enclosing loop`.
 
 **Differential parity suite** — [`tests/parity/`](tests/parity) is the largest
 measurement here: hand-written assertions run against the oracle, comparing

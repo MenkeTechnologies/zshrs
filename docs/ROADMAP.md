@@ -419,16 +419,16 @@ These claims appear in README/RFC but are not yet backed by reproducible benchma
 
 Phase M produces measured replacements. Until then, the README's "performance" section reads as architecture description, not benchmark report.
 
-### Counts verified against the tree (2026-10-17)
+### Counts verified against the tree (2026-10-18)
 
 These were on the "needs verification" list and are now measured, not estimated:
 
 | Claim | Measured | How |
 |---|---|---|
-| Builtins | **252** (152 + 100, disjoint) | `BUILTIN(` names in `src/ported/builtin.rs`, `EXT_BUILTIN_NAMES` in `src/extensions/ext_builtins.rs` |
+| Builtins | **253** (152 + 101, disjoint) | `BUILTIN(` names in `src/ported/builtin.rs`, `EXT_BUILTIN_NAMES` in `src/extensions/ext_builtins.rs` |
 | fusevm opcodes | **235** | `Op` enum variants in `fusevm-0.26.7/src/op.rs` |
 | ZLE widgets | **193** | `IWIDGET_NAMES` in `src/ported/zle/zle_bindings.rs` |
-| Workspace Rust | **1,014 files / 1,073k lines** | every tracked `*.rs` (`git ls-files '*.rs'`) |
+| Workspace Rust | **1,016 files / 1,074k lines** | every tracked `*.rs` (`git ls-files '*.rs'`) |
 | `src/ported/` | **106 files** | frozen port directory |
 | `src/extensions/` | **135 files** | non-port directory |
 | compsys mirror | **1,249 files** | `src/compsys/ported/` |

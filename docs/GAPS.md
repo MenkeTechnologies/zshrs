@@ -3120,22 +3120,22 @@ These are pre-existing bugs the audit exposed, NOT regressions from the iter-86 
 
 ## Still open (seventy-fifth-pass — remaining)
 
-- ~~**`nocorrect CMD args`**~~ — closed; re-verified 2026-10-17 at `bd20494ab0` (`zshrs -f -c` vs `zsh -f -c`, identical output): `nocorrect echo a b` prints `a b`.
-- ~~**`set -n` syntax-only mode**~~ — closed; re-verified 2026-10-17 at `bd20494ab0` (`zshrs -f -c` vs `zsh -f -c`, identical output): `set -n; echo ran` prints nothing.
+- ~~**`nocorrect CMD args`**~~ — closed; re-verified 2026-10-18 at `e07003f441` against zsh 5.9.2 (`zshrs -f -c` vs `zsh -f -c`, identical output): `nocorrect echo a b` prints `a b`.
+- ~~**`set -n` syntax-only mode**~~ — closed; re-verified 2026-10-18 at `e07003f441` against zsh 5.9.2 (`zshrs -f -c` vs `zsh -f -c`, identical output): `set -n; echo ran` prints nothing.
 - ~~**`${(j:sep:)$(cmd subst)}`**~~ — closed in eighty-eighth-pass batch 25. (j) is now a no-op on scalar cmd-subst output (zsh-correct).
-- ~~**Arith error full command-abort**~~ — closed; re-verified 2026-10-17 at `bd20494ab0` (`zshrs -f -c` vs `zsh -f -c`, identical output): `echo $((10/0)); echo after` prints only `division by zero`.
-- **`set` noargs print all variables** — the full parameter table is listed now (2026-10-17 at `bd20494ab0`: 477 lines vs zsh's 473). The extra names are zshrs's own `HELPDIR`, `SRANDOM`, `ZSHRS_VERSION`, `ZSH_EXEPATH`.
+- ~~**Arith error full command-abort**~~ — closed; re-verified 2026-10-18 at `e07003f441` against zsh 5.9.2 (`zshrs -f -c` vs `zsh -f -c`, identical output and status apart from the `zsh:`/`zshrs:` message prefix): `echo $((10/0)); echo after` prints only `division by zero`, status 1.
+- **`set` noargs print all variables** — the full parameter table is listed now (2026-10-18 at `e07003f441`: 477 lines vs zsh 5.9.2's 473). The extra names are zshrs's own `HELPDIR`, `SRANDOM`, `ZSHRS_VERSION`, `ZSH_EXEPATH`.
 - ~~**`${a:^b}` zip-arrays**~~ — closed in eighty-eighth-pass batch 24. SUB_ZIP_SHORT and SUB_ZIP_LONG implemented.
 - ~~**`${(v)assoc}` insertion order**~~ — closed in eighty-eighth-pass batch 1. Switched assoc storage to IndexMap.
-- ~~**`${(s:l:)hello}` empty-element handling**~~ — closed; re-verified 2026-10-17 at `bd20494ab0` (`zshrs -f -c` vs `zsh -f -c`, identical output): `he`, `o`.
-- ~~**`${#:-empty}` length-of-default**~~ — closed; re-verified 2026-10-17 at `bd20494ab0` (`zshrs -f -c` vs `zsh -f -c`, identical output): `5`.
-- ~~**`*` glob ordering caseglob**~~ — closed; re-verified 2026-10-17 at `bd20494ab0` (`zshrs -f -c` vs `zsh -f -c`, identical output): `bench bins Cargo.lock`.
-- ~~**`declare -A h; h[foo bar]=baz`**~~ — closed; re-verified 2026-10-17 at `bd20494ab0` (`zshrs -f -c` vs `zsh -f -c`, identical output): `bad pattern: h[foo`.
-- ~~**`declare -i` / `declare -a` / `declare -A` no-args listing**~~ — closed; re-verified 2026-10-17 at `bd20494ab0` (`zshrs -f -c` vs `zsh -f -c`, identical output) for `declare -i`: the special params (`!`, `#`, `$`, ...) are listed.
-- ~~**Math funcs without `zmodload zsh/mathfunc`**~~ — closed; re-verified 2026-10-17 at `bd20494ab0` (`zshrs -f -c` vs `zsh -f -c`, identical output): `echo $(( sqrt(4) ))` is `unknown function: sqrt` without the module.
+- ~~**`${(s:l:)hello}` empty-element handling**~~ — closed; re-verified 2026-10-18 at `e07003f441` against zsh 5.9.2 (`zshrs -f -c` vs `zsh -f -c`, identical output): `he`, `o`.
+- ~~**`${#:-empty}` length-of-default**~~ — closed; re-verified 2026-10-18 at `e07003f441` against zsh 5.9.2 (`zshrs -f -c` vs `zsh -f -c`, identical output): `5`.
+- ~~**`*` glob ordering caseglob**~~ — closed; re-verified 2026-10-18 at `e07003f441` against zsh 5.9.2 (`zshrs -f -c` vs `zsh -f -c`, identical output), in a directory holding `bench`, `bins`, `Cargo.lock`: `bench bins Cargo.lock`.
+- ~~**`declare -A h; h[foo bar]=baz`**~~ — closed; re-verified 2026-10-18 at `e07003f441` against zsh 5.9.2 (`zshrs -f -c` vs `zsh -f -c`, identical output and status apart from the `zsh:`/`zshrs:` message prefix): `bad pattern: h[foo`, status 1.
+- ~~**`declare -i` / `declare -a` / `declare -A` no-args listing**~~ — closed; re-verified 2026-10-18 at `e07003f441` against zsh 5.9.2 (`env -i … -f -c`): all three list the same names as zsh, special params (`!`, `#`, `$`, ...) included. Only values differ: `$$` and `RANDOM`, and `FUNCNEST`, which is 500 in zshrs (`MAX_FUNCTION_DEPTH`, the upstream `configure.ac` default) and 700 in the Homebrew zsh build used as oracle.
+- ~~**Math funcs without `zmodload zsh/mathfunc`**~~ — closed; re-verified 2026-10-18 at `e07003f441` against zsh 5.9.2 (`zshrs -f -c` vs `zsh -f -c`, identical output and status apart from the `zsh:`/`zshrs:` message prefix): `echo $(( sqrt(4) ))` is `unknown function: sqrt` without the module, status 1.
 
-- ~~**Backtick nesting**~~ — closed; re-verified 2026-10-17 at `bd20494ab0` (`zshrs -f -c` vs `zsh -f -c`, identical output): ``echo `echo \`echo nested\``` prints `nested`.
-- ~~**`xtrace` exact zsh format**~~ — closed; re-verified 2026-10-17 at `bd20494ab0` (`zshrs -f -c` vs `zsh -f -c`, identical output) apart from the shell name: `set -x; true` traces through PS4 the same way.
+- ~~**Backtick nesting**~~ — closed; re-verified 2026-10-18 at `e07003f441` against zsh 5.9.2 (`zshrs -f -c` vs `zsh -f -c`, identical output): ``echo `echo \`echo nested\``` prints `nested`.
+- ~~**`xtrace` exact zsh format**~~ — closed; re-verified 2026-10-18 at `e07003f441` against zsh 5.9.2 (`env -i … -f -c`, identical apart from the shell name): `set -x; true` traces `+zsh:1> true` / `+zshrs:1> true` through the default PS4, and inside a function both print `+f:0> echo in`.
 
 The following items have been investigated and confirmed as false positives or fundamentally compatible:
 
@@ -3151,12 +3151,12 @@ The following items have been investigated and confirmed as false positives or f
 - **CSH_NULL_GLOB error vs command-local stderr redirect** — narrow ordering edge, 2026-06-12 sweep D: `setopt cshnullglob; ls *nope* 2>/dev/null` — zsh emits `no match` during prefork on the SHELL's stderr (before the command's redirections apply), so `2>/dev/null` doesn't eat it; zshrs's per-command badcshglob boundary fires after the dup2, so the message is suppressed. All unredirected forms match (builtin abort + rc 1, external skip + continue, mixed success silence — pinned in `probe_sweep_2026_06_12_d`). Fix requires a word-expansion-complete hook before the redirect ops in the VM dispatch.
 - **`typeset -n` parity probes** — zshrs implements namerefs from the vendored master source (PM_NAMEREF, Src/params.c:6332); the zsh 5.9.1 oracle binary predates them and errors `bad option: -n`. Spec-over-oracle: pinned as a zshrs-behavior test (`bulk_g_nameref_typeset_n_zshrs_pin`), never as oracle-parity rows.
 
-The "Stub modules (loaded but limited)" section below now lists only `zsh/db_gdbm`; `zsh/clone`, `zsh/curses` and `zsh/zftp` register their builtins, and `zsh/cap` does on a libcap build (re-verified 2026-10-17). They are not active gaps in zshrs's compatibility floor; they're tracked separately because they have no real-world load on the daily-driver path. `zsh/mapfile` was previously in this list; it is now closed (read form implemented above).
+The "Stub modules (loaded but limited)" section below now lists only `zsh/db_gdbm`; `zsh/clone`, `zsh/curses` and `zsh/zftp` register their builtins (re-verified 2026-10-18 at `e07003f441`); `zsh/cap` is in no current build (see below). They are not active gaps in zshrs's compatibility floor; they're tracked separately because they have no real-world load on the daily-driver path. `zsh/mapfile` was previously in this list; it is now closed (read form implemented above).
 
 ## Stub modules (loaded but limited)
 
-- `zsh/clone`, `zsh/curses`, `zsh/zftp` — closed; after `zmodload`, `whence -w` reports `clone`, `zcurses` and `zftp` as builtins, as zsh does (re-verified 2026-10-17 at `bd20494ab0`).
-- `zsh/cap` — follows upstream 54669: built only with capability support (here, the libcap backend on Linux). Without it `zmodload zsh/cap` fails and `cap` / `getcap` / `setcap` are "command not found", as in a dev-tree zsh configured without `--enable-cap`.
+- `zsh/clone`, `zsh/curses`, `zsh/zftp` — closed; after `zmodload`, `whence -w` reports `clone`, `zcurses` and `zftp` as builtins, as zsh does (re-verified 2026-10-18 at `e07003f441` against zsh 5.9.2).
+- `zsh/cap` — follows upstream 54669: built only with capability support. Here that is `#[cfg(all(target_os = "linux", feature = "libcap"))]` (`src/ported/module.rs`, `src/ported/modules/cap.rs`), but `Cargo.toml` declares no `libcap` feature, so no build currently includes the module. Without it `zmodload zsh/cap` fails and `cap` / `getcap` / `setcap` are "command not found", as in a dev-tree zsh configured without `--enable-cap`.
 - `zsh/db_gdbm` — `ztie` correctly reports "GDBM support not compiled in" (no native gdbm dep). Acceptable stub behavior.
 - `zsh/files chown/chmod/chgrp` — works (proper error for nonexistent file).
 - `zsh/mapfile` — closed; `${mapfile[/path]}` magic assoc reads file bytes, composes with `(f)` flag for line-split. See "Closed (this session)" above.

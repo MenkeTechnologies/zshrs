@@ -7564,7 +7564,7 @@ fi</code></pre>
 
       <h2>Extension Builtin Index</h2>
 
-      <p class="chapter-meta">123 entries · zshrs-only builtins with NO upstream zsh counterpart. Split across in-process builtins (coreutils drop-ins, <code>async</code>/<code>await</code>/<code>barrier</code>, <code>doctor</code>, <code>intercept</code>, contrib autoloads) and daemon-backed <code>z*</code> builtins (<code>zd</code>, <code>zcache</code>, <code>zls</code>, <code>zlock</code>, <code>zpublish</code>, …) that proxy to the local <code>zshrs-daemon</code> for cross-shell state.</p>
+      <p class="chapter-meta">124 entries · zshrs-only builtins with NO upstream zsh counterpart. Split across in-process builtins (coreutils drop-ins, <code>async</code>/<code>await</code>/<code>barrier</code>, <code>doctor</code>, <code>intercept</code>, contrib autoloads) and daemon-backed <code>z*</code> builtins (<code>zd</code>, <code>zcache</code>, <code>zls</code>, <code>zlock</code>, <code>zpublish</code>, …) that proxy to the local <code>zshrs-daemon</code> for cross-shell state.</p>
 
 
       <article class="doc-entry" id="doc-lsp-extension-ai">
@@ -7886,6 +7886,13 @@ fi</code></pre>
         <h3><code>pmap_chunked</code> <a class="doc-anchor" href="#doc-lsp-extension-pmap_chunked">¶</a></h3>
         <p>pmap_chunked N 'cmd {}' arg1 arg2 ... — like pmap, but arguments go to the pool in chunks of N and each chunk runs in ONE shell process, paying process startup once per N items. Output is in argument order.</p>
         <p>Usage:   pmap_chunked 50 'gzip {}' *.log</p>
+      </article>
+
+      <article class="doc-entry" id="doc-lsp-extension-prewarmdashautoloads">
+
+        <h3><code>prewarm-autoloads</code> <a class="doc-anchor" href="#doc-lsp-extension-prewarmdashautoloads">¶</a></h3>
+        <p>prewarm-autoloads [DIR ...] — compile every _* completer on the given directories (default: this shell's $fpath) into autoloads.rkyv, so the first &lt;TAB&gt; of a fresh shell is a shard probe instead of a parse. Prints a one-line JSON summary. The builtin form of <code>zshrs --prewarm-autoloads</code>; the pass runs in a one-shot child process because the parser walks process-global lexer state.</p>
+        <p>Usage:   prewarm-autoloads            — every directory on $fpath   prewarm-autoloads DIR ...    — just these</p>
       </article>
 
       <article class="doc-entry" id="doc-lsp-extension-printenv">

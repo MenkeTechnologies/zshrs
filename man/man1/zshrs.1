@@ -122,6 +122,13 @@ re-fires.
 Drop-in for
 .BR /bin/zsh .
 Entry point for compatibility tests.
+Behaviour upstream changed after zsh 5.9.2 follows the development tree,
+except when the binary is started as
+.B zsh
+.RI ( argv[0] ),
+where the 5.9.2 answer is kept: for example
+.B let
+after a math error returns 1 there and 2 otherwise.
 .TP
 .B \-\-bash
 Drop-in for

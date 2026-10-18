@@ -1454,6 +1454,9 @@ Parallel map on the worker pool: run the template once per item with \fB{}\fR re
 .B pmap_chunked
 Like \fBpmap\fR, but items are handed out in chunks of N and each chunk runs in one shell process. \fBpmap_chunked 50 'gzip {}' *.log\fR.
 .TP
+.B prewarm\-autoloads
+Compile every \fB_*\fR completer on the named directories (default: the shell's \fB$fpath\fR) into \fB~/.zshrs/autoloads.rkyv\fR and print a one\-line JSON summary; entries already current are counted as \fBfresh\fR and skipped. The builtin form of \fBzshrs \-\-prewarm\-autoloads\fR; the pass runs in a one\-shot child process.
+.TP
 .B printenv
 Print the value of one or more environment variables, or all if none given. coreutils drop\-in.
 .TP
@@ -2114,7 +2117,7 @@ unloads (where reversible). Ported modules:
 .B zsh/attr
 xattrs;
 .B zsh/cap
-POSIX capabilities (Linux builds with the libcap backend only);
+POSIX capabilities (gated on Linux and a \fBlibcap\fR cargo feature that the crate does not declare, so absent from every current build);
 .B zsh/clone
 fork helper;
 .B zsh/complete , zsh/complist , zsh/computil

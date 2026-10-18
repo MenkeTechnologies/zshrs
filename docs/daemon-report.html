@@ -6,7 +6,7 @@
 <meta name="color-scheme" content="dark light">
 <title>zshrs-daemon — DAEMON.md coverage matrix (updated 2026-10-17)</title>
 <link rel="icon" type="image/svg+xml" href="logo-mark.svg">
-<meta name="description" content="zshrs-daemon DAEMON.md coverage matrix. 29,578 daemon LOC (tracked daemon/**/*.rs). Single $ZSHRS_HOME, separate daemon/recorder binaries, three log files, default 127.0.0.1:7733 listener with /openapi. Updated 2026-10-17.">
+<meta name="description" content="zshrs-daemon DAEMON.md coverage matrix. 29,687 daemon LOC (tracked daemon/**/*.rs). Single $ZSHRS_HOME, separate daemon/recorder binaries, three log files, default 127.0.0.1:7733 listener with /openapi. Updated 2026-10-17.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
@@ -82,7 +82,7 @@
     </div>
   </header>
 <main class="tutorial-main">
-<p class="ledger" style="margin-top:-0.4rem;">Last refresh: 2026-10-17 &middot; 29,578 daemon LOC (<code>git ls-files daemon | rg '\.rs$' | xargs wc -l</code>)</p>
+<p class="ledger" style="margin-top:-0.4rem;">Last refresh: 2026-10-18 &middot; 29,687 daemon LOC (<code>git ls-files daemon | rg '\.rs$' | xargs wc -l</code>)</p>
 
 <div class="summary-box honest">
   <p><strong>Earlier version of this report claimed "100% implemented." That claim was false.</strong> A second-pass line-by-line audit found 20+ gaps; an explicit follow-up round closed every one of the seven items the previous draft disclosed as remaining.</p>
@@ -121,7 +121,7 @@
   <div class="stat-card"><div class="stat-val">14</div><div class="stat-label">Async events</div></div>
   <div class="stat-card"><div class="stat-val accent">23</div><div class="stat-label">z* builtins</div></div>
   <div class="stat-card"><div class="stat-val">43</div><div class="stat-label">Daemon source files</div></div>
-  <div class="stat-card"><div class="stat-val">29,578</div><div class="stat-label">LOC in daemon/</div></div>
+  <div class="stat-card"><div class="stat-val">29,687</div><div class="stat-label">LOC in daemon/</div></div>
   <div class="stat-card"><div class="stat-val yellow">2</div><div class="stat-label">Known partial / gap</div></div>
   <div class="stat-card"><div class="stat-val">0</div><div class="stat-label">Unimplemented dispatch arms</div></div>
 </div>
@@ -305,7 +305,7 @@
 <tr><td><code>job_*</code> family (submit/list/status/output/kill/cancel/wait)</td><td class="fn">7 op_job_* fns</td><td class="cite">ops.rs:3876+</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
 <tr><td><code>job_input</code> / <code>job_resize</code> (ptmx attach for <code>--pty</code> jobs)</td><td class="fn">op_job_input, op_job_resize</td><td class="cite">ops.rs (base64 input write to pty master; <code>TIOCSWINSZ</code> via nix)</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
 <tr><td><code>source_resolve</code> + sensitive heuristic</td><td class="fn">op_source_resolve + is_sensitive + read_file_nofollow</td><td class="cite">source_resolver.rs:33 + 183; <code>O_NOFOLLOW</code> on read; <code>O_NOFOLLOW | O_CREAT | O_EXCL</code> on shard write; <code>MAP_PRIVATE</code> on sensitive mmap (closed in round 2)</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>history_append</code> / <code>history_query</code></td><td class="fn">op_history_append, op_history_query</td><td class="cite">history.rs:232, 324</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
+<tr><td><code>history_append</code> / <code>history_query</code></td><td class="fn">op_history_append, op_history_query</td><td class="cite">history.rs:250, 342</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
 <tr><td><code>push_canonical</code> / <code>pull_canonical</code> / <code>diff_canonical</code></td><td class="fn">op_push_canonical, op_pull_canonical, op_diff_canonical</td><td class="cite">zsync.rs:91, 327, 347</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
 <tr><td><code>view</code> / <code>export</code> (with --filter/--range/--all/--show-sensitive)</td><td class="fn">op_view, op_export, render_filtered</td><td class="cite">export.rs:33, 37, 304</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
 <tr><td><code>ask_*</code> family (ask/pending/take/dismiss/response)</td><td class="fn">5 op_ask_* fns</td><td class="cite">zask.rs:200, 319, 339, 362, 401</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
@@ -362,7 +362,7 @@
 <tr><td>"IPC wire format" (length-prefixed JSON)</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">ipc.rs:230/252/269/291 framing; Hello/Welcome/Frame/ErrPayload all defined</td></tr>
 <tr><td>"Daemon lifecycle" (singleton flock / crash recovery / degraded mode / explicit start)</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">pidlock.rs flock singleton; client.rs handles NotConnected fallback. Daemon is its own binary (<code>zshrs-daemon</code>) and is started explicitly &mdash; never auto-spawned from a shell entrypoint.</td></tr>
 <tr><td>"First-run user notification"</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">firstrun.rs:18 maybe_print + ZSHRS_QUIET_FIRST_RUN gate</td></tr>
-<tr><td>"Long-running command notices" (4 events)</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">history.rs:271-316 publishes long_cmd_complete/failed/signaled; ops.rs:725 op_cmd_started</td></tr>
+<tr><td>"Long-running command notices" (4 events)</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">history.rs:289-334 publishes long_cmd_complete/failed/signaled; ops.rs:725 op_cmd_started</td></tr>
 <tr><td>"Cold-build-complete znotify"</td><td class="status-cell"><span class="st-design">DESIGN</span></td><td class="cite">Tied to retired <code>op_first_init</code> walker (see daemon/lib.rs:143). Will move to a <code>recorder_ingest</code>-complete broadcast when the recorder pipeline lands the equivalent payload.</td></tr>
 <tr><td>"zask — daemon-queued UI primitives"</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">zask.rs full inbox with critical-first ordering, Ctrl-X q activation, 60-min timeout</td></tr>
 <tr><td>"Daemon logging"</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">log.rs init + ticker.rs rotation (10MB, 4 archives) + zlog tail/grep/level/clear/rotate/path/stats</td></tr>
