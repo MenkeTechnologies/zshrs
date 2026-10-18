@@ -311,3 +311,30 @@ mod arithmetic {
         assert_parity(r#"print -r -- $(( 7 % -3 )) $(( -7 % 3 )) $(( 2 ** 10 ))"#);
     }
 }
+
+/// A loop's exit status (Src/loop.c): the condition-false exit restores the
+/// last completed body's status (`lastval = oldval`, c:454-458), a `break`
+/// keeps its own status (bin_break returns 0, Src/builtin.c:5863), and a
+/// `continue` still reaches the post-body `oldval = lastval` (c:529-541).
+/// zshrs had a `break` restore the PREVIOUS iteration's status, so
+/// `while true; do …; [[ c ]] && break; done` ended 1 after any earlier
+/// iteration's `[[ ]]` was false.
+mod loop_exit_status {
+    use super::*;
+
+    #[test]
+    fn break_ends_the_loop_with_its_own_status() {
+        assert_parity(r#"n=0; while true; do (( n++ )); [[ $n -gt 2 ]] && break; done; print rc=$?"#);
+        assert_parity(r#"n=0; until false; do (( n++ )); [[ $n -gt 2 ]] && break; done; print rc=$?"#);
+        assert_parity(r#"n=0; while true; do (( n++ )); [[ $n -gt 2 ]] && { false; break }; done; print rc=$?"#);
+        assert_parity(r#"f() { return 3 }; n=0; while true; do (( n++ )); [[ $n -gt 2 ]] && break; f; done; print rc=$?"#);
+        assert_parity(r#"for i in 1 2; do false; break; done; print rc=$?; repeat 2 do false; break; done; print rc=$?"#);
+        assert_parity(r#"n=0; while true; do (( n++ )); b=1; (( n > 2 )) && break $b; false; done; print rc=$?"#);
+    }
+
+    #[test]
+    fn continue_feeds_the_status_the_condition_exit_restores() {
+        assert_parity(r#"n=0; while (( n++ < 3 )); do [[ $n == 3 ]] && continue; false; done; print rc=$?"#);
+        assert_parity(r#"n=0; while (( n++ < 3 )); do false; done; print rc=$?; while false; do :; done; print rc=$?"#);
+    }
+}

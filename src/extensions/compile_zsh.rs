@@ -853,6 +853,14 @@ impl ZshCompiler {
     }
 
     /// Emit `n` × `loops--` (c:Src/loop.c:188/491/546).
+    /// c:Src/builtin.c:5863 — a `break` / `continue` that transfers control
+    /// returns 0 (bin_break's `return 0`), so `$?` is 0 when a loop is left
+    /// or resumed through one: `false; break` ends the loop with status 0.
+    fn emit_loop_jump_status(&mut self) {
+        self.builder.emit(Op::LoadInt(0), 0);
+        self.builder.emit(Op::SetStatus, 0);
+    }
+
     fn emit_loop_exit(&mut self, n: usize) {
         for _ in 0..n {
             self.builder
@@ -877,11 +885,22 @@ impl ZshCompiler {
     /// "terminate" joins the loop's own break patch list so it lands on
     /// `loop_exit` and runs the matching `loops--`.
     fn emit_loop_body_end(&mut self) {
+        self.land_loop_body_escapes();
+        self.emit_loop_break_drain();
+    }
+
+    /// First half of [`Self::emit_loop_body_end`]: land the mid-body
+    /// `break` / `continue` escape jumps here.
+    fn land_loop_body_escapes(&mut self) {
         let ends = self.body_end_patches.pop().unwrap_or_default();
         let pos = self.builder.current_pos();
         for e in ends {
             self.builder.patch_jump(e, pos);
         }
+    }
+
+    /// Second half of [`Self::emit_loop_body_end`]: the BREAKS drain.
+    fn emit_loop_break_drain(&mut self) {
         self.builder.emit(
             Op::CallBuiltin(crate::vm_helper::BUILTIN_LOOP_BREAK_DRAIN, 0),
             0,
@@ -3527,6 +3546,7 @@ impl ZshCompiler {
                 // the skipped decrements so the global count stays exact
                 // for a later `break` in a called function.
                 self.emit_loop_exit(depth - 1 - idx);
+                self.emit_loop_jump_status();
                 let j = self.builder.emit(Op::Jump(0), 0);
                 self.break_patches[idx].push(j);
             } else {
@@ -3630,6 +3650,7 @@ impl ZshCompiler {
                 // `continue N` leaves the N-1 inner loops for good, and
                 // the target loop stays open (no decrement for it).
                 self.emit_loop_exit(depth - 1 - idx);
+                self.emit_loop_jump_status();
                 let j = self.builder.emit(Op::Jump(0), 0);
                 self.continue_patches[idx].push(j);
             } else {
@@ -6511,6 +6532,7 @@ impl ZshCompiler {
         let mut route = |c: &mut Self, idx: usize| {
             let skip = c.builder.emit(Op::JumpIfFalse(0), 0);
             c.emit_loop_exit(depth - 1 - idx);
+            c.emit_loop_jump_status();
             let j = c.builder.emit(Op::Jump(0), 0);
             if is_continue {
                 c.continue_patches[idx].push(j);
@@ -11159,32 +11181,38 @@ impl ZshCompiler {
         self.open_loop_scope();
 
         self.compile_program(&w.body);
-        // Capture body's last status into status_slot so the loop's exit
-        // status reflects the body, not the (failing) condition probe.
+        // c:Src/loop.c:529-541 — every way the body ends, a `continue`
+        // included, reaches the same post-body steps, the last of which is
+        // `oldval = lastval`: the status the condition-false exit restores
+        // (c:454-458). status_slot is that `oldval`, so the loop's status is
+        // the body's, never the failing condition probe's.
+        let body_done = self.builder.current_pos();
+        self.land_loop_body_escapes();
         self.builder.emit(Op::GetStatus, 0);
         self.builder.emit(Op::SetSlot(status_slot), 0);
-        self.emit_loop_body_end(); // c:Src/loop.c:529-534
-                                   // c:Src/loop.c — the loop's own post-body errflag guard.
+        self.emit_loop_break_drain(); // c:Src/loop.c:529-534
+                                      // c:Src/loop.c — the loop's own post-body errflag guard.
         let errflag_break = self.emit_loop_errflag_break();
-
-        let cont = self.builder.current_pos();
         if let Some(continues) = self.continue_patches.pop() {
             for cp in continues {
-                self.builder.patch_jump(cp, cont);
+                self.builder.patch_jump(cp, body_done);
             }
         }
 
         self.builder.emit(Op::Jump(loop_top), 0);
 
+        // Condition false (or errflag): restore `oldval`.
         let loop_exit = self.builder.current_pos();
         self.builder.patch_jump(exit_jump, loop_exit);
         self.builder.patch_jump(errflag_break, loop_exit);
-
-        self.close_loop_scope(loop_exit); // c:Src/loop.c:491 — `loops--;`
-
-        // Restore loop's exit status from the body's last-status slot.
         self.builder.emit(Op::GetSlot(status_slot), 0);
         self.builder.emit(Op::SetStatus, 0);
+
+        // A `break` lands past the restore: C leaves `break`'s own status in
+        // lastval, so `while true; do …; [[ c ]] && break; done` is 0 even
+        // after an earlier iteration's `[[ ]]` failed.
+        let break_exit = self.builder.current_pos();
+        self.close_loop_scope(break_exit); // c:Src/loop.c:491 — `loops--;`
         self.emit_cmd_pop();
     }
 
