@@ -488,3 +488,28 @@ fn zsh_mode_glob_and_echo_options_unchanged() {
         assert_eq!(z.exit, r.exit, "--zsh exit regression on:\n  {script}");
     }
 }
+
+/// bash applies an array's `-i` / `-l` / `-u` attribute to every element as it
+/// is stored: `declare -ai` evaluates each element arithmetically (also on
+/// `z[i]=` and `z+=()`), `-l` / `-u` fold case, the same goes for associations,
+/// and a list assigned to a `declare -i` variable makes it an integer array.
+/// zsh has no integer arrays and folds `-l` arrays only on read.
+#[test]
+fn array_attributes_apply_to_every_stored_element() {
+    let Some(bash) = bash_path() else {
+        eprintln!("SKIP: no bash >= 4 with $BASHOPTS found");
+        return;
+    };
+    for script in [
+        r#"declare -ai z=(1+1 2); x=4; z[2]=x*2; z+=(x+1); declare -p z"#,
+        r#"declare -ai z; z[1]=2+3; z+=(4*2); declare -p z"#,
+        r#"declare -i z; z=(1+1 3); declare -p z"#,
+        r#"declare -al l; l[0]=ABC; l+=(DeF); declare -au u=(a b); declare -p l u"#,
+        r#"declare -Ai m=([k]=1+2); m[j]=3*3; printf '%s ' "${m[k]}" "${m[j]}"; echo"#,
+        r#"declare -air z=(1 2); printf "<%s>" "${z[@]@a}"; echo"#,
+        r#"declare -ai z=(5); declare +i z; z+=(1+1); declare -p z"#,
+        r#"declare -ai z=(1); unset z; z=(1+1); declare -p z"#,
+    ] {
+        assert_bash_parity(bash, script);
+    }
+}

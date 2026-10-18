@@ -366,18 +366,9 @@ fn positional_parameters_take_at_transformations() {
     }
 }
 
-/// GAP: `declare -a` combined with another attribute letter is rejected by
-/// the `declare` builtin ("inconsistent type for assignment"), which is a
-/// typeset-side limitation, not a transformation one — `${z[@]@a}` cannot be
-/// checked until the declaration itself works.
-///
-/// ```text
-/// $ bash         -c 'declare -air z=(1 2); echo hi'  → hi
-/// $ zshrs --bash -c 'declare -air z=(1 2); echo hi'
-///       zshrs:declare:1: z: inconsistent type for assignment
-/// ```
+/// `declare -a` combined with other attribute letters (`-air`) is an integer,
+/// readonly array in bash; `${z[@]@a}` repeats its letters once per element.
 #[test]
-#[ignore = "documented gap: `declare -a` + another attribute letter is rejected"]
 fn multi_attribute_array_declaration_reports_its_letters() {
     let Some(bash) = bash_path() else {
         return;

@@ -6786,6 +6786,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     /// what c:1585-1592 would have produced anyway.
     fn assign_hash_element(name: &str, sub: &str, sub_src: &str, val: &str) -> i32 {
         use crate::ported::zsh_h::{Inpar, PM_HASHED, PM_READONLY, SCANPM_ARRONLY};
+        // bash: a value stored into a `-i` / `-l` / `-u` association takes its attribute.
+        let bash_val = crate::dash_mode::bash_array_elem_store(name, val);
+        let val: &str = bash_val.as_deref().unwrap_or(val);
         let pm = crate::ported::params::paramtab()
             .read()
             .ok()

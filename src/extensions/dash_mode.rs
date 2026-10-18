@@ -2760,11 +2760,78 @@ pub fn bash_rejoin_elems(parts: &[String], dq_collapsed: bool, sep: Option<&str>
 /// The raw `PM_*` flag word of a named parameter, or 0 when it has none.
 /// Feeds [`bash_attr_letters`] for `${v@a}` and `${v@A}`.
 pub fn bash_param_flags(name: &str) -> u32 {
-    crate::ported::params::paramtab()
+    let flags = crate::ported::params::paramtab()
         .read()
         .ok()
         .and_then(|t| t.get(name).map(|p| p.node.flags as u32))
-        .unwrap_or(0)
+        .unwrap_or(0);
+    if bash_int_array(name) {
+        flags | crate::ported::zsh_h::PM_INTEGER
+    } else {
+        flags
+    }
+}
+
+// ---------------------------------------------------------------------------
+// bash array attributes: -i, -l, -u on an indexed or associative array
+// ---------------------------------------------------------------------------
+
+/// Names of the bash INTEGER arrays (`declare -ai`, `declare -Ai`,
+/// `declare -i z=(…)`). zsh's parameter types cannot hold PM_INTEGER on an
+/// array, so the attribute lives here; `bash_param_flags` reports it.
+static BASH_INT_ARRAYS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// Mark `name` as a bash integer array.
+pub fn bash_int_array_mark(name: &str) {
+    if let Ok(mut s) = BASH_INT_ARRAYS.lock() {
+        s.insert(name.to_string());
+    }
+}
+
+/// Drop the integer attribute (`unset`, `declare +i`).
+pub fn bash_int_array_unmark(name: &str) {
+    if !bash_mode() {
+        return;
+    }
+    if let Ok(mut s) = BASH_INT_ARRAYS.lock() {
+        s.remove(name);
+    }
+}
+
+/// Whether `name` is a bash integer array.
+pub fn bash_int_array(name: &str) -> bool {
+    bash_mode() && BASH_INT_ARRAYS.lock().is_ok_and(|s| s.contains(name))
+}
+
+/// The value bash stores for one element of array `name`: arithmetic-
+/// evaluated for an integer array, case-folded for a `-l` / `-u` one
+/// (bash applies an array's attributes to every element as it is assigned:
+/// `declare -ai z; z[1]=2+3; z+=(4*2)` holds 5 and 8, `declare -al z=(AB)`
+/// holds `ab`). `None` when the array has no such attribute, or outside
+/// `--bash` (zsh folds `-l` arrays only when read, and has no integer arrays).
+pub fn bash_array_elem_store(name: &str, val: &str) -> Option<String> {
+    if !bash_mode() {
+        return None;
+    }
+    if bash_int_array(name) {
+        return Some(crate::ported::math::mathevali(val).unwrap_or(0).to_string());
+    }
+    let flags = crate::ported::params::paramtab()
+        .read()
+        .ok()
+        .and_then(|t| t.get(name).map(|p| p.node.flags as u32))?;
+    use crate::ported::zsh_h::{PM_ARRAY, PM_HASHED, PM_LOWER, PM_UPPER, PM_TYPE};
+    if PM_TYPE(flags) & (PM_ARRAY | PM_HASHED) == 0 {
+        return None;
+    }
+    if flags & PM_LOWER != 0 {
+        Some(val.to_lowercase())
+    } else if flags & PM_UPPER != 0 {
+        Some(val.to_uppercase())
+    } else {
+        None
+    }
 }
 
 /// ksh93's `printf %q` quoting of one argument.
@@ -4012,4 +4079,33 @@ pub fn strip_subscript_quotes(s: &str) -> String {
         }
     }
     out
+}
+
+/// The elements bash stores for a list assigned to `name` (`name=(…)`,
+/// `name+=(…)`). Assigning a list to a `declare -i` scalar makes it an
+/// integer array (`declare -i z; z=(1+1 3)` → `declare -ai z=([0]="2" [1]="3")`);
+/// every element then goes through [`bash_array_elem_store`]. Identity outside
+/// `--bash`.
+pub fn bash_array_attr_store(name: &str, vals: Vec<String>) -> Vec<String> {
+    if !bash_mode() {
+        return vals;
+    }
+    let base = name.split('[').next().unwrap_or(name);
+    if base == name && !bash_int_array(base) {
+        let int_scalar = crate::ported::params::paramtab()
+            .read()
+            .ok()
+            .and_then(|t| t.get(base).map(|p| p.node.flags as u32))
+            .is_some_and(|f| {
+                // Declared (`declare -i z`, still PM_UNSET) or assigned alike.
+                use crate::ported::zsh_h::{PM_INTEGER, PM_TYPE};
+                PM_TYPE(f) == PM_INTEGER
+            });
+        if int_scalar {
+            bash_int_array_mark(base);
+        }
+    }
+    vals.into_iter()
+        .map(|v| bash_array_elem_store(base, &v).unwrap_or(v))
+        .collect()
 }

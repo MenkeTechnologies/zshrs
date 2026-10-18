@@ -7749,6 +7749,9 @@ thread_local! {
 /// Port of `assignsparam()` from `Src/params.c:3193`.
 pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
     crate::dash_mode::note_optind_assignment(s); // bash/ksh93 getopts reset hook
+    // bash: an element stored into a `-i` / `-l` / `-u` array takes the array's attribute.
+    let bash_elem = crate::dash_mode::bash_array_elem_store(s.split('[').next().unwrap_or(s), val);
+    let val: &str = bash_elem.as_deref().unwrap_or(val);
     let result_unused = ASSIGN_RESULT_UNUSED.replace(false);
     // c:3203 `if (!isident(s)) { zerr; errflag |= ERRFLAG_ERROR; return NULL; }`
     if !isident(s) {
@@ -10199,6 +10202,9 @@ static REALPARAMTAB_INNER: OnceLock<RwLock<hashtable_nodes<Param>>> = OnceLock::
 ///   - resetparam from non-array (c:3415-3420) — handled implicitly
 ///     by the type-mask rewrite below; matches C observable behavior.
 pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
+    // bash: assigning a list to a `declare -i` variable makes it an integer array,
+    // and a `-i` / `-l` / `-u` array applies its attribute to every element.
+    let val = crate::dash_mode::bash_array_attr_store(name, val);
     // c:3357
     // c:3366-3370 — `if (!isident(s)) { zerr; return NULL }`.
     if !isident(name) {
@@ -11133,6 +11139,18 @@ pub fn setaparam(name: &str, val: Vec<String>) -> Option<Param> {
 /// Pending:
 ///   - resetparam(PM_HASHED) for non-special type-change (rare)
 pub fn sethparam(name: &str, val: Vec<String>) -> Option<Param> {
+    // bash: a `-i` / `-l` / `-u` association applies its attribute to each value.
+    let val: Vec<String> = if crate::dash_mode::bash_mode() {
+        val.iter()
+            .enumerate()
+            .map(|(i, v)| match (i % 2 == 1).then(|| crate::dash_mode::bash_array_elem_store(name, v)).flatten() {
+                Some(t) => t,
+                None => v.clone(),
+            })
+            .collect()
+    } else {
+        val
+    };
     // c:3611-3615 — `if (!isident(s)) { zerr; return NULL }`.
     if !isident(name) {
         zerr(&format!("not an identifier: {}", name));
@@ -11804,6 +11822,7 @@ pub fn resetparam(pm: &mut param, flags: i32) -> i32 {
 /// `paramtab().write().remove(...)` directly), so renaming is
 /// safe.
 pub fn unsetparam(name: &str) -> i32 {
+    crate::dash_mode::bash_int_array_unmark(name);
     // !!! RUST-ONLY: provenance tap — the unset is the last event in a
     // tracked parameter's lineage; the chain itself is kept so
     // `provenance NAME` still explains what the value was.
@@ -16518,6 +16537,8 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
     if crate::dash_mode::bash_mode() && ((printflags & PRINT_TYPESET) != 0 || bash_posix_listing) {
         let fl = hn.node.flags as u32;
         let nm = hn.node.nam.clone();
+        // An integer array keeps its `i` in dash_mode's table (bash_param_flags).
+        let fl = if crate::dash_mode::bash_int_array(&nm) { fl | PM_INTEGER } else { fl };
         let mut fstr = String::new();
         if fl & PM_HASHED != 0 {
             fstr.push('A');

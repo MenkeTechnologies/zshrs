@@ -5058,6 +5058,21 @@ pub fn bin_typeset(
     if crate::dash_mode::ksh93_mode() && matches!(name, "float" | "integer") {
         on |= PM_LOWER;
     }
+    // !!! BASH-MODE GATE (no C counterpart) !!! bash keeps `-i` next to `-a` / `-A`:
+    // an INTEGER array, each element arithmetic-evaluated as it is stored
+    // (`declare -ai z=(1+1)` holds 2). The c:2726 rule above drops the array type
+    // for -i; in --bash the array type stays and the integer attribute moves to
+    // `dash_mode::bash_int_array_mark`, since an array param cannot hold PM_INTEGER.
+    let bash_int_array = crate::dash_mode::bash_mode()
+        && (on & PM_INTEGER) != 0
+        && (on & (PM_ARRAY | PM_HASHED)) != 0;
+    if bash_int_array {
+        off &= !(PM_ARRAY | PM_HASHED);
+        on &= !PM_INTEGER;
+        if (on & PM_HASHED) != 0 {
+            off |= PM_ARRAY;
+        }
+    }
     on &= !off; // c:2744
 
     queue_signals(); // c:2746
@@ -6373,6 +6388,13 @@ pub fn bin_typeset(
             Some(i) => &arg[..i],
             None => arg.as_str(),
         };
+        // bash: `declare -ai NAME` makes NAME an integer array before any value
+        // lands (see bash_int_array above); `declare +i NAME` drops it.
+        if bash_int_array {
+            crate::dash_mode::bash_int_array_mark(arg_name);
+        } else if crate::dash_mode::bash_mode() && (roff & PM_INTEGER) != 0 {
+            crate::dash_mode::bash_int_array_unmark(arg_name);
+        }
 
         // c:3100-3113 — `-p` is decided FIRST for every assignment, value or
         // not, before typeset_single (and so before its name validation and
@@ -7619,6 +7641,13 @@ pub fn bin_typeset(
                         .then_some(typ)
                 })
             });
+            // bash: `declare -i z=(…)` (and `declare -ai z=(…)`) is an integer array.
+            // Mark it before the values are stored so each is evaluated
+            // (`dash_mode::bash_array_elem_store`).
+            if crate::dash_mode::bash_mode() && is_paren_init && (bash_int_array || (on & PM_INTEGER) != 0) {
+                on &= !PM_INTEGER;
+                crate::dash_mode::bash_int_array_mark(arg_name);
+            }
             if is_paren_init && crate::ported::zsh_h::PM_TYPE(on) == PM_SCALAR {
                 on |= reused_type.unwrap_or(PM_ARRAY);
             }
