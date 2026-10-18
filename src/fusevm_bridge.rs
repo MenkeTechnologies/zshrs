@@ -9583,7 +9583,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 || crate::ported::params::paramtab()
                     .read()
                     .ok()
-                    .map(|t| t.contains_key(&name))
+                    .map(|t| {
+                        t.get(&name).is_some_and(|pm| {
+                            // !!! BASH GATE (no C counterpart) !!! a declared but unassigned
+                            // variable (`declare x`, `local x`) is still unbound to `set -u`.
+                            !(crate::dash_mode::bash_mode()
+                                && (pm.node.flags as u32 & crate::ported::zsh_h::PM_UNSET) != 0)
+                        })
+                    })
                     .unwrap_or(false)
                 || env::var(&name).is_ok());
             (v, force_dq || exec.in_dq_context > 0, known)

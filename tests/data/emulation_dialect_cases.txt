@@ -451,3 +451,5 @@ ksh	a=(a b c d); unset "a[1]"; echo "[${a[@]:1}] [${a[@]:2:1}] [${a[@]:0:2}] [${
 bash	set -a; declare -A h=([k]=v); a=(1 2); s=1; declare -p h a s; export -p | rg -c " (h|a)="; true
 bash	set -o posix; trap "printf x" INT TERM; trap; set +o posix; trap
 bash	declare -a a; declare -A h; declare -p a h; a=(); declare -p a; declare -ar r; declare -p r
+bash	set -u; declare x; echo "[${x-d}]"; echo after; echo "$x"; echo unreachable
+bash	set -u; f() { local y; echo "[${y:-d}]"; y=1; echo "$y"; z=; echo "[$z]"; }; f; OPTIND=1; getopts "a:b" o -b; echo "$o"; echo "$OPTARG"; echo unreachable
