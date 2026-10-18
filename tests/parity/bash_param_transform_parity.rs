@@ -326,13 +326,9 @@ fn zsh_native_quote_and_case_flags_still_match_zsh() {
 // documented gaps
 // ---------------------------------------------------------------------
 
-/// GAP: `${v@P}` (expand the value as a PROMPT string) is not implemented.
-/// bash's prompt escapes (`\u`, `\h`, `\w`, `\!`) are a different language
-/// from zsh's `%n` / `%m` / `%~` / `%!`, and zshrs has no bash prompt
-/// expander, so `--bash` still rejects `@P` the way zsh does rather than
-/// guess at a translation.
+/// `${v@P}` expands the value as a bash PROMPT string (`\u`, `\h`, `\w`, `\!`),
+/// through `extensions::bash_prompt`.
 #[test]
-#[ignore = "documented gap: bash @P needs a bash prompt-escape expander"]
 fn at_P_expands_the_value_as_a_prompt_string() {
     let Some(bash) = bash_path() else {
         return;
@@ -340,16 +336,14 @@ fn at_P_expands_the_value_as_a_prompt_string() {
     assert_bash_parity(bash, r#"v='\u'; printf "<%s>" "${v@P}"; echo"#);
 }
 
-/// GAP: the POSITIONAL parameters take a different fetch path in `subst.rs`
-/// than a named array, so `"${@@Q}"` and friends never reach the
-/// transformation arm and expand unquoted.
+/// The POSITIONAL parameters transform element-wise like a named array, and
+/// `@A` on them is the `set --` command that recreates them:
 ///
 /// ```text
-/// $ bash            -c 'set -- "a b" c; printf "<%s>" "${@@Q}"'  → <'a b'><'c'>
-/// $ zshrs --bash    -c 'set -- "a b" c; printf "<%s>" "${@@Q}"'  → <a b><c>
+/// $ bash -c 'set -- "a b" c; printf "<%s>" "${@@Q}" "${*@A}"'
+/// <'a b'><'c'><set -- 'a b' 'c'>
 /// ```
 #[test]
-#[ignore = "documented gap: $@ / $* bypass the @-transformation arm"]
 fn positional_parameters_take_at_transformations() {
     let Some(bash) = bash_path() else {
         return;
@@ -359,6 +353,14 @@ fn positional_parameters_take_at_transformations() {
         r#"set -- "a b" c; printf "<%s>" "${*@Q}"; echo"#,
         r#"set -- "a b" c; printf "<%s>" "${@@U}"; echo"#,
         r#"set -- "a b" c; printf "<%s>" "${@@A}"; echo"#,
+        r#"set -- "a b" c; printf "<%s>" "${*@A}" "${@@K}" "${*@K}" "${@@k}"; echo"#,
+        r#"set -- "a b" c; printf "<%s>" "${@@a}" "${*@a}" "${1@a}" "${2@A}" "${1@K}"; echo"#,
+        r#"set -- "a b" c; printf "<%s>" "${@@E}" "${@^^}" "${*,,}" "${@~~}"; echo"#,
+        r#"set -- "a b" c; printf "<%s>" ${@@Q}; echo"#,
+        r#"set -- "a b" c; IFS=:; printf "<%s>" "${*@Q}" "${*@A}" "${@@A}" "${*@a}"; echo"#,
+        r#"set -- "a b" c; IFS=; printf "<%s>" "${*@A}" "${*@Q}"; echo"#,
+        r#"set --; printf "<%s>" x "${@@A}" "${*@A}" "${@@Q}"; echo"#,
+        r#"f() { printf "<%s>" "${@@Q}" "${*@A}"; }; f "p q" r; echo"#,
     ] {
         assert_bash_parity(bash, s);
     }

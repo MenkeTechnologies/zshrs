@@ -23007,6 +23007,23 @@ pub fn paramsubst(
         // so only an explicit `[@]`/`[*]` splat refetches.
         let bash_splat_ref = matches!(splat_sub!(), Some("@") | Some("*"))
             || (was_at_star_splat && subscript.is_none());
+        // The positional parameters are no named variable in bash: `$@`/`$*`
+        // transform element-wise like `${a[@]}`, `@K`/`@k` quote like `@Q`,
+        // `@a` is empty and `@A` is a `set --` command (see below):
+        //   $ bash -c 'set -- "a b" c; printf "<%s>" "${@@Q}" "${@@K}" "${*@a}"'
+        //   <'a b'><'c'><'a b'><'c'>< >
+        let bash_pos_splat =
+            crate::dash_mode::bash_mode() && subscript.is_none() && (var_name == "@" || var_name == "*");
+        let bash_pos_single = crate::dash_mode::bash_mode()
+            && subscript.is_none()
+            && !var_name.is_empty()
+            && var_name.bytes().all(|b| b.is_ascii_digit());
+        if (bash_pos_splat || bash_pos_single) && (bash_at_kv || bash_at_kwords) {
+            bash_at_q = true;
+            bash_at_kv = false;
+            bash_at_kwords = false;
+        }
+        let bash_splat_ref = bash_splat_ref || bash_pos_splat;
         let bash_elemwise = crate::dash_mode::bash_mode()
             && (bash_casemod != 0
                 || bash_casemod_toggle != 0
@@ -23152,7 +23169,11 @@ pub fn paramsubst(
             // The letter set and its order live in ONE place —
             // `dash_mode::bash_attr_letters` — because `${v@A}` below needs
             // the identical string after `declare -`.
-            let attrs = crate::dash_mode::bash_attr_letters(crate::dash_mode::bash_param_flags(&var_name));
+            let attrs = if bash_pos_splat || bash_pos_single {
+                String::new()
+            } else {
+                crate::dash_mode::bash_attr_letters(crate::dash_mode::bash_param_flags(&var_name))
+            };
             // bash repeats the attribute string once PER ELEMENT of an array
             // reference:
             //   $ bash -c 'declare -air z=(1 2); printf "<%s>" "${z[@]@a}"'
@@ -23208,6 +23229,46 @@ pub fn paramsubst(
         // Only `@A` under `[@]` is word-split, and it is split by IFS with
         // quote regions skipped — `@K` stays one word however it is
         // subscripted. See `dash_mode::bash_split_ifs_quote_aware`.
+        //
+        // On the positional parameters `@A` is the `set --` command that
+        // recreates them, quoted per element, with the prefix glued to the
+        // first element. `"$@"` keeps the elements as words and IFS-splits
+        // each outside quotes; `"$*"` joins them with IFS's first char; `$N`
+        // gives nothing:
+        //   $ bash -c 'set -- "a b" c; printf "<%s>" "${@@A}"'  → <set><--><'a b'><'c'>
+        //   $ bash -c 'set -- "a b" c; IFS=:; printf "<%s>" "${@@A}" "${*@A}"'
+        //   <set -- 'a b'><'c'><set -- 'a b':'c'>
+        if bash_at_assign && (bash_pos_splat || bash_pos_single) {
+            bash_at_assign = false;
+            if bash_pos_single {
+                value = String::new();
+                split_parts = None;
+            } else {
+                let mut elems: Vec<String> = arrays_get("@")
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|p| {
+                        let s = String::from_utf8_lossy(&crate::ported::utils::unmetafy_str(p)).into_owned();
+                        crate::dash_mode::bash_quote_reusable(&s)
+                    })
+                    .collect();
+                if let Some(first) = elems.first_mut() {
+                    *first = format!("set -- {first}");
+                }
+                if var_name == "@" {
+                    let ifs = vars_get("IFS");
+                    let words: Vec<String> = elems
+                        .iter()
+                        .flat_map(|e| crate::dash_mode::bash_split_ifs_quote_aware(e, ifs.as_deref()))
+                        .collect();
+                    value = words.join(" ");
+                    split_parts = Some(words);
+                } else {
+                    value = crate::dash_mode::bash_rejoin_elems(&elems, dq_collapsed, sep.as_deref());
+                    split_parts = None;
+                }
+            }
+        }
         if bash_at_assign || bash_at_kv || bash_at_kwords {
             use crate::dash_mode::BashParamShape;
             let attrs = crate::dash_mode::bash_attr_letters(crate::dash_mode::bash_param_flags(&var_name));
