@@ -49,6 +49,22 @@ const PROMOTIONS_SOURCE_ROOT: &str = "user-overlay";
 /// federated rows from bash/fish/etc. coexist without overwrite.
 const SHELL_ID_SEP: char = '\x1f';
 
+/// Order of two row keys. Positional subsystems (`path`, `fpath`, `source`,
+/// `zstyle`, …) key their rows by index, `0`, `1`, … `10`, and the storage map
+/// sorts those as text, so `10` came before `2` and a listing or an export
+/// replayed `$PATH` out of order. A key that starts with a number sorts by that
+/// number first; every other key keeps plain text order.
+fn key_order(a: &str, b: &str) -> std::cmp::Ordering {
+    let lead = |k: &str| -> Option<u64> {
+        let n = k.bytes().take_while(u8::is_ascii_digit).count();
+        k[..n].parse().ok()
+    };
+    match (lead(a), lead(b)) {
+        (Some(x), Some(y)) => x.cmp(&y).then_with(|| a.cmp(b)),
+        _ => a.cmp(b),
+    }
+}
+
 fn composite_storage_key(key: &str, shell_id: Option<&str>) -> String {
     match shell_id {
         None | Some("zshrs") => key.to_string(),
@@ -527,7 +543,8 @@ impl CanonicalEngine {
     /// [`Self::rows_for_all_shells`].
     pub fn rows_for(&self, subsystem: &str) -> Vec<CanonicalRow> {
         let g = self.inner.read();
-        g.rows
+        let mut rows: Vec<CanonicalRow> = g
+            .rows
             .get(subsystem)
             .map(|m| {
                 m.iter()
@@ -535,17 +552,22 @@ impl CanonicalEngine {
                     .map(|(_, r)| r.clone())
                     .collect()
             })
-            .unwrap_or_default()
+            .unwrap_or_default();
+        rows.sort_by(|a, b| key_order(&a.key, &b.key));
+        rows
     }
 
     /// Read every row in a subsystem across all recording shells, ordered
     /// by storage key.
     pub fn rows_for_all_shells(&self, subsystem: &str) -> Vec<CanonicalRow> {
         let g = self.inner.read();
-        g.rows
+        let mut rows: Vec<CanonicalRow> = g
+            .rows
             .get(subsystem)
             .map(|m| m.values().cloned().collect())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        rows.sort_by(|a, b| key_order(&a.key, &b.key));
+        rows
     }
 
     /// Read one row by (subsystem, key).
@@ -856,5 +878,22 @@ mod tests {
         let zshrs: Vec<_> = engine.rows_for("alias").into_iter().map(|r| unjson(&r.value)).collect();
         assert_eq!(zshrs, ["git status", "ls -la"]);
         assert_eq!(engine.rows_for_all_shells("alias").len(), 3);
+    }
+
+    // Positional subsystems key rows by index; the map sorts text, so `10`
+    // used to precede `2` and `$PATH` came back out of order.
+    #[test]
+    fn positional_rows_come_back_in_numeric_order() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let engine = CanonicalEngine::new(CachePaths::with_root(tmp.path()));
+        for i in 0..12 {
+            engine.upsert("path", &i.to_string(), &json_string(&format!("/p{i}")), None);
+        }
+        let want: Vec<String> = (0..12).map(|i| format!("/p{i}")).collect();
+        let got = |rows: Vec<CanonicalRow>| -> Vec<String> {
+            rows.into_iter().map(|r| unjson(&r.value)).collect()
+        };
+        assert_eq!(got(engine.rows_for("path")), want);
+        assert_eq!(got(engine.rows_for_all_shells("path")), want);
     }
 }
