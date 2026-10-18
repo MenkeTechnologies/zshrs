@@ -1,0 +1,11 @@
+#compdef prewarm-autoloads
+
+# Compile every _* completer on the given directories (default: $fpath) into
+# the autoload shard and print a one-line JSON summary.
+#
+# zshrs builtin. builtin_prewarm_autoloads (src/extensions/ext_builtins.rs)
+# takes directories only and rejects every option, so nothing but directories
+# is completed; keep in sync.
+# Bundled into ~/.zshrs/functions by build.rs.
+
+_arguments '*:fpath directory:_directories'

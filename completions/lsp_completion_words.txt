@@ -649,6 +649,7 @@ posixidentifiers
 posixjobs
 posixstrings
 posixtraps
+prewarm-autoloads
 print
 printeightbit
 printenv

@@ -6254,6 +6254,7 @@ const EXT_BUILTIN_DOCS: &[(&str, &str)] = &[
     ("pfirst", "Print the first item (lowest position) for which the template succeeds; status 1 when none does. `pfirst 'test -x {}/zsh' /usr/bin /opt/homebrew/bin`."),
     ("pmap", "Parallel map on the worker pool: run the template once per item with `{}` replaced by the item, printing output in input order. `pmap 'gzip {}' *.log`. Not the process memory-map command of the same name."),
     ("pmap_chunked", "Like `pmap`, but items are handed out in chunks of N and each chunk runs in one shell process. `pmap_chunked 50 'gzip {}' *.log`."),
+    ("prewarm-autoloads", "Compile every `_*` completer on the given directories (default: this shell's `$fpath`) into `autoloads.rkyv`, so the first `<TAB>` of a fresh shell is a shard probe, not a parse, and print a one-line JSON summary. The builtin form of `zshrs --prewarm-autoloads`; runs the pass in a one-shot child process."),
     ("psort", "Parallel stable sort of the operands or stdin lines. `-n` numeric, `-r` reverse. `psort -nr 10 9 100`."),
     ("puniq", "Parallel distinct: unique operands or stdin lines in first-occurrence order. `cat big.log | puniq`."),
     ("printenv", "Print the value of one or more environment variables, or all if none given. coreutils drop-in."),

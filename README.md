@@ -177,6 +177,7 @@ install is already an O(1) shard probe:
 zshrs --prewarm-autoloads            # every dir on $fpath
 zshrs --prewarm-autoloads DIR ...    # just these
 zd prewarm [DIR ...]                 # same, via the daemon
+prewarm-autoloads [DIR ...]       # same, as a builtin inside a shell (default: its $fpath)
 ```
 
 The local daemon's lifecycle is controlled from `zd`, with no daemon running required:

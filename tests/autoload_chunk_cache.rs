@@ -334,3 +334,52 @@ fn funcsourcetrace_names_the_fpath_file_without_doubling_the_function_name() {
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+#[test]
+fn prewarm_builtin_compiles_the_shells_fpath_like_the_flag() {
+    // `prewarm-autoloads` inside a shell is the same pass as the flag, but
+    // resolves its directories from the shell's own `$fpath` array — which a
+    // child process cannot inherit — and refuses options.
+    let Some(bin) = zshrs_bin() else {
+        eprintln!("skip: zshrs binary not built");
+        return;
+    };
+    let tmp = std::env::temp_dir().join(format!("zshrs-prewarm-builtin-{}", std::process::id()));
+    let home = tmp.join("home");
+    let fpath = tmp.join("fpath");
+    std::fs::create_dir_all(&home).expect("mkdir home");
+    std::fs::create_dir_all(&fpath).expect("mkdir fpath");
+    std::fs::write(fpath.join("_zt_prewarm_builtin"), BODY).expect("write fn");
+
+    let shell = |script: &str| {
+        Command::new(&bin)
+            .args(["-f", "-c", script])
+            .env("ZSHRS_HOME", &home)
+            .env_remove("ZDOTDIR")
+            .output()
+            .expect("spawn zshrs")
+    };
+    let out = shell(&format!("fpath=({}); prewarm-autoloads; print status=$?", fpath.display()));
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains("\"seen\":1") && text.contains("\"compiled\":1") && text.contains("status=0"),
+        "builtin should compile the one `_` file on $fpath: {text:?}",
+    );
+    assert!(home.join("autoloads.rkyv").exists(), "shard not written");
+
+    let again = shell(&format!("prewarm-autoloads {}", fpath.display()));
+    let text = String::from_utf8_lossy(&again.stdout);
+    assert!(
+        text.contains("\"compiled\":0") && text.contains("\"fresh\":1"),
+        "named directory, second pass should be a no-op: {text:?}",
+    );
+
+    let bad = shell("prewarm-autoloads --nope; print status=$?");
+    assert_eq!(
+        String::from_utf8_lossy(&bad.stderr).trim(),
+        "zshrs: prewarm-autoloads: bad option: --nope",
+    );
+    assert!(String::from_utf8_lossy(&bad.stdout).contains("status=2"));
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}

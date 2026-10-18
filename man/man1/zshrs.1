@@ -105,6 +105,11 @@ the end of every
 .BR zshrs\-recorder (1)
 run, and is reachable through the daemon as
 .BR "zd prewarm" .
+Inside a shell the
+.B prewarm\-autoloads
+builtin runs the same pass, on the shell's own
+.I $fpath
+when no directory is named.
 .SS Parity modes
 Each parity mode disables all caches and the daemon and matches the
 named reference shell byte-for-byte; every

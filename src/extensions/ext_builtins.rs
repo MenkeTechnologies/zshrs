@@ -325,6 +325,7 @@ pub const EXT_BUILTIN_NAMES: &[&str] = &[
     "pgrep",
     "pmap",
     "pmap_chunked",
+    "prewarm-autoloads",
     "printenv",
     "profile",
     "provenance",
@@ -474,6 +475,56 @@ impl ShellExecutor {
         }
         crate::banner::print_banner(Some(crate::banner::ShellCounts::read()));
         0
+    }
+
+    /// prewarm-autoloads — compile every `_*` completer on the given
+    /// directories (default: this shell's `$fpath`) into `autoloads.rkyv`,
+    /// so the first `<TAB>` of a fresh shell is a shard probe, not a parse.
+    /// The same pass as `zshrs --prewarm-autoloads`; the one-line JSON
+    /// summary it prints is the requested output.
+    ///
+    /// The pass runs in a one-shot child of this binary, not in the shell
+    /// executing the command: `parse()` walks process-global lexer state,
+    /// and the pass leaves `errflag` set under `noerrs` for a completer it
+    /// cannot parse, which would abort whatever script called it. The
+    /// directories are resolved HERE and handed over, because `$fpath` is a
+    /// shell array the child does not inherit.
+    ///
+    /// Usage:
+    ///   prewarm-autoloads [DIR ...]
+    pub(crate) fn builtin_prewarm_autoloads(&self, args: &[String]) -> i32 {
+        if let Some(opt) = args.iter().find(|a| a.starts_with('-')) {
+            eprintln!("zshrs: prewarm-autoloads: bad option: {opt}");
+            return 2;
+        }
+        let dirs: Vec<std::path::PathBuf> = if args.is_empty() {
+            crate::autoload_prewarm::default_dirs()
+        } else {
+            args.iter().map(std::path::PathBuf::from).collect()
+        };
+        let exe = match std::env::current_exe() {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("zshrs: prewarm-autoloads: {e}");
+                return 1;
+            }
+        };
+        let out = std::process::Command::new(exe)
+            .arg("--prewarm-autoloads")
+            .args(&dirs)
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::inherit())
+            .output();
+        match out {
+            Ok(o) => {
+                print!("{}", String::from_utf8_lossy(&o.stdout));
+                o.status.code().unwrap_or(1)
+            }
+            Err(e) => {
+                eprintln!("zshrs: prewarm-autoloads: {e}");
+                1
+            }
+        }
     }
 
     /// caller - display call stack (bash)
@@ -11778,6 +11829,8 @@ pub const LOCAL_ONLY_BUILTINS: &[&str] = &[
     // zshrs-original (`src/extensions/banner.rs`); fusevm has no ID for it,
     // so a literal `zbanner` reaches `try_run_registered_builtin`.
     "zbanner",
+    // zshrs-original (`autoload_prewarm.rs`), same: no fusevm ID.
+    "prewarm-autoloads",
     // Dispatched by `fusevm_bridge`'s command-name match arms.
     "arch",
     "base64",

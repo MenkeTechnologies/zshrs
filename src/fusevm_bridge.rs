@@ -1140,6 +1140,7 @@ fn registered_builtin(name: &str) -> Option<fn(&[String]) -> i32> {
         "profile" => |argv| with_executor(|e| e.builtin_profile(argv)),
         "provenance" => |argv| with_executor(|e| e.builtin_provenance(argv)),
         "zbanner" => |argv| with_executor(|e| e.builtin_zbanner(argv)),
+        "prewarm-autoloads" => |argv| with_executor(|e| e.builtin_prewarm_autoloads(argv)),
         "caller" => |argv| with_executor(|e| e.builtin_caller(argv)),
         "help" => |argv| with_executor(|e| e.builtin_help(argv)),
         "cdreplay" => |argv| with_executor(|e| e.builtin_cdreplay(argv)),
