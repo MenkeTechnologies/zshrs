@@ -101,6 +101,8 @@ fn assert_parity(script: &str, label: &str) {
 
 /// [`assert_parity`] against the release zsh zshrs reports as its own version
 /// (`oracle::release_zsh_path`). Skips when none is installed.
+/// zshrs gives the release answer only when it stands in for zsh (argv[0]
+/// `zsh`, `emulating_592`), so that is how it is run here.
 fn assert_parity_release(script: &str, label: &str) {
     let Some(zsh) = crate::oracle::release_zsh_path() else {
         eprintln!("skip: no zsh reporting zshrs's version is installed");
@@ -118,7 +120,21 @@ fn assert_parity_release(script: &str, label: &str) {
             exit: out.status.code().unwrap_or(-1),
         }
     };
-    let r = run_zshrs(script);
+    let r = {
+        use std::os::unix::process::CommandExt;
+        let out = Command::new(zshrs_bin())
+            .arg0("zsh")
+            .args(["--zsh", "-fc", script])
+            .env_remove("OLDPWD")
+            .env_remove("ZSHRS_CACHE")
+            .output()
+            .expect("invoke zshrs");
+        ShellResult {
+            stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+            exit: out.status.code().unwrap_or(-1),
+        }
+    };
     if z.stdout != r.stdout || z.exit != r.exit {
         panic!(
             "parity gap vs release zsh (exit + stdout): {label}\nscript:\n{script}\n\
