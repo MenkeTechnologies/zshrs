@@ -21,6 +21,7 @@ mod param_type_flag_parity;
 mod parser_lock;
 mod zpty_probe;
 mod oracle;
+mod x11_scrub;
 
 mod advanced_parity;
 mod alias_parity;
