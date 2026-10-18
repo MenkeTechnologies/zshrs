@@ -2513,6 +2513,15 @@ pub fn zshrs_main() {
         if !has_shtty {
             zsh::ported::options::opt_state_set("monitor", false); // c:718
         }
+        // c:Src/init.c:1907-1908 + 716-722 — zsh_main runs init_io after the
+        // options are parsed, so an interactive shell with MONITOR acquires the
+        // terminal's process group (`origpgrp = GETPGRP(); acquire_pgrp();`).
+        // This path ran init_io before `-i` turned MONITOR on, which left
+        // `mypgrp` 0, and the first `attachtty(mypgrp)` after a foreground job
+        // failed with "can't set tty pgrp". init_io is idempotent.
+        if zsh::ported::options::opt_state_get("monitor").unwrap_or(false) {
+            zsh::ported::init::init_io(None);
+        }
         // zsh-STYLE leg (`--sh --zsh` / `--ksh --zsh`): install the emulation
         // HERE, last, and NOT fully — the reference is a zsh that finished
         // startup and then ran `emulate X` as its first command, so the option

@@ -11030,6 +11030,16 @@ mod _execcmd_tail_doc_anchor {
 }
 
 
+thread_local! {
+    /// !!! WARNING: RUST-ONLY — the job text C reads from wordcode !!!
+    /// `getjobtext(state->prog, eparams->beg)` (c:2999, c:3483) renders the
+    /// command from the wordcode; a command the bytecode VM hands to
+    /// `execcmd_exec` with already-expanded words has none, so its caller
+    /// (`fusevm_bridge::execcmd_simple_job`) parks the compiled text here.
+    /// Taken once by the first `getjobtext` site that runs.
+    pub(crate) static EXECCMD_JOB_TEXT: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
 /// Port of `execcmd_exec()` from `Src/exec.c:2901` — C decl `execcmd_exec(Estate state, Execcmd_params eparams, int input, int output, int how, int last1, int close_if_forked)`.
 /// int input, int output, int how, int last1, int close_if_forked)`
 /// from `Src/exec.c:2900-4404`. Execute a command at the lowest
@@ -11296,10 +11306,9 @@ pub fn execcmd_exec(
     {
         // c:2988
         // c:2999 — `text = getjobtext(state->prog, eparams->beg);`
-        text = Some(crate::ported::text::getjobtext(
-            state.prog.clone(),
-            Some(eparams.beg),
-        ));
+        text = Some(EXECCMD_JOB_TEXT.with(|t| t.borrow_mut().take()).unwrap_or_else(|| {
+            crate::ported::text::getjobtext(state.prog.clone(), Some(eparams.beg))
+        }));
         // c:3000-3008 — `switch (execcmd_fork(...)) { -1: goto fatal; 0: break; default: return; }`
         let mut filelist_for_fork = filelist.clone();
         let pid = execcmd_fork(
@@ -11851,10 +11860,9 @@ pub fn execcmd_exec(
         && (isset(MONITOR) || (how & Z_TIMED as i32) != 0)
     {
         // c:3481-3482
-        text = Some(crate::ported::text::getjobtext(
-            state.prog.clone(),
-            Some(eparams.beg),
-        )); // c:3483
+        text = Some(EXECCMD_JOB_TEXT.with(|t| t.borrow_mut().take()).unwrap_or_else(|| {
+            crate::ported::text::getjobtext(state.prog.clone(), Some(eparams.beg))
+        })); // c:3483
     }
 
     // c:3485-3492 — `Set up special parameter $_`.

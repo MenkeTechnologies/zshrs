@@ -78,6 +78,13 @@ pub fn zsetterm() -> io::Result<()> {
         if g.is_none() {
             *g = crate::ported::utils::gettyinfo(); // c: gettyinfo(&shttyinfo)
         }
+        // c:224-229 — "sanitize the tty": the settings commands run with are
+        // cooked with echo whatever state the terminal started in (a pty made
+        // without echo, `zpty`'s default, ran `cat` echoing nothing).
+        if let Some(t) = g.as_mut() {
+            t.c_lflag |= libc::ICANON | libc::ECHO; // c:226
+            t.c_lflag &= !libc::FLUSHO; // c:228
+        }
     }
     // c:210 — zsh's setterm() targets SHTTY (the ZLE tty), not fd 0. The
     // completion machinery closes fd 0 while running completer subprocesses, so

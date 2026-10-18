@@ -3410,6 +3410,15 @@ impl ZshCompiler {
             // the cmd-subst's last_status. Op::Exec hardcodes 0 for
             // empty argv (fusevm vm.rs:1722-1723) which clobbered \$?
             // in chains like `\$(exit 1); echo \$?`.
+            // c:Src/exec.c:2999 / 3483 — `getjobtext(state->prog, eparams->beg)`
+            // names the job a forked external becomes (`zsh: suspended  $c 8`).
+            // Emitted after the words expanded, so no nested command takes it.
+            let job_text = tstr(&render_cmd_for_debug(&ZshCommand::Simple(simple.clone()), true));
+            let text_const = self.builder.add_constant(Value::str(job_text));
+            self.builder.emit(Op::LoadConst(text_const), 0);
+            self.builder
+                .emit(Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_JOB_TEXT, 1), 0);
+            self.builder.emit(Op::Pop, 0);
             // c:Src/exec.c:3596 — AUTOCD needs to know this command had
             // redirections, which the scope above already opened.
             if has_redirects {

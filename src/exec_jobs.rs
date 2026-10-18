@@ -53,10 +53,33 @@ thread_local! {
 /// (c:Src/init.c:734-748). Writing to fd 2 instead sent the report through
 /// the command's own redirection: `sh -c 'kill -HUP $$' 2>/dev/null` lost
 /// its `zsh: hangup` line.
-fn shout_write(s: &str) {
+pub(crate) fn shout_write(s: &str) {
     let tty = crate::ported::init::SHTTY.load(std::sync::atomic::Ordering::Relaxed);
     let fd = if tty >= 0 { tty } else { libc::STDERR_FILENO };
     let _ = crate::ported::utils::write_loop(fd, s.as_bytes());
+}
+
+/// !!! WARNING: RUST-ONLY APPROXIMATION OF `pline_level` !!!
+/// c:Src/exec.c:1833-1835 — execpline marks a job STAT_NOPRINT when it runs
+/// while another pipeline is executing (`pline_level`) or inside a pipeline
+/// (`list_pipe`). The VM keeps no `pline_level`; a foreground job counts as
+/// nested when it runs in an in-process `( … )` (`nested`; C forks it and the
+/// child has no MONITOR), in a pipeline's in-shell last stage (whose group
+/// leader is the first stage, c:Src/jobs.c:497-498), in a function or `eval`,
+/// or in a compound command (cmdstack holds more than the `&&`/`||`
+/// connectors).
+pub fn foreground_job_is_nested(nested: bool) -> bool {
+    use crate::ported::zsh_h::{CS_CMDAND, CS_CMDOR, SFC_NONE};
+    use std::sync::atomic::Ordering;
+    nested
+        || NOT_JOB_LEADER.with(|d| d.get()) > 0
+        || crate::ported::exec::sfcontext.load(Ordering::Relaxed) != SFC_NONE
+        || crate::vm_helper::EVAL_RECURSION_DEPTH.with(|d| d.get()) > 0
+        || crate::ported::prompt::CMDSTACK.with(|s| {
+            s.borrow()
+                .iter()
+                .any(|&cs| cs as i32 != CS_CMDAND as i32 && cs as i32 != CS_CMDOR as i32)
+        })
 }
 
 /// !!! WARNING: RUST-ONLY ADAPTER !!! update_job's report for the foreground
@@ -78,25 +101,8 @@ fn shout_write(s: &str) {
 /// `zsh: terminated  cmd`, and a SIGINT only with a newline (c:1203-1205,
 /// c:1260-1263, c:1338-1341).
 pub fn foreground_job_report(status: i32, text: Option<String>, nested: bool) {
-    use crate::ported::zsh_h::{CS_CMDAND, CS_CMDOR, SFC_NONE};
-    use std::sync::atomic::Ordering;
     let Some(text) = text else { return };
-    if nested
-        || !libc::WIFSIGNALED(status)
-        || NOT_JOB_LEADER.with(|d| d.get()) > 0
-        || crate::ported::exec::sfcontext.load(Ordering::Relaxed) != SFC_NONE
-        || crate::vm_helper::EVAL_RECURSION_DEPTH.with(|d| d.get()) > 0
-    {
-        return;
-    }
-    // c:Src/exec.c:1829-1831 — nested in a compound command (cmdstack holds
-    // more than the `&&`/`||` list connectors).
-    let in_compound = crate::ported::prompt::CMDSTACK.with(|s| {
-        s.borrow()
-            .iter()
-            .any(|&cs| cs as i32 != CS_CMDAND as i32 && cs as i32 != CS_CMDOR as i32)
-    });
-    if in_compound {
+    if !libc::WIFSIGNALED(status) || foreground_job_is_nested(nested) {
         return;
     }
     let jn = job {
@@ -244,9 +250,9 @@ pub fn printjob_delete_tail(tab: &mut [job], jn: usize, job: usize, synch: i32) 
 ///
 /// `ji` is C's `job` (`jn - jobtab` before the redirect), `thisjob` C's global.
 ///
-/// `lng` is never negative here and `synch` is 0 or 1 or 2: the `fg`/`bg`
-/// "continued" and POSIX plain-format arms (`lng < 0`, `synch == 3`) have
-/// no caller that reaches this function.
+/// `lng < 0` is `fg`/`bg` reporting the stopped job it resumes (`continued`,
+/// c:1166-1169); `synch == 3` is that report, plain job text under
+/// POSIX_JOBS (c:1253).
 ///
 /// WARNING: param names don't match C — Rust=(tab, ji, lng, synch, thisjob)
 /// vs C=(jn, lng, synch)
@@ -325,14 +331,20 @@ pub fn printjob_print(tab: &mut [job], ji: usize, lng: i32, synch: i32, thisjob:
         }
         let curjob = *CURJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap_or_else(|e| e.into_inner());
         let prevjob = *PREVJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap_or_else(|e| e.into_inner());
-        let s = crate::ported::jobs::printjob(
-            &tab[jn],
-            ji,
-            lng,
-            (curjob >= 0).then_some(curjob as usize),
-            (prevjob >= 0).then_some(prevjob as usize),
-            is_thisjob && synch != 2, // c:1255 — `thisfmt = job == thisjob && synch != 2`
-        );
+        // c:1253 — `plainfmt = (synch == 3) && isset(POSIXJOBS)`: "POSIX
+        // requires just the job text for bg and fg".
+        let s = if synch == 3 && isset(crate::ported::zsh_h::POSIXJOBS) {
+            tab[jn].procs.iter().map(|p| p.text.as_str()).collect::<Vec<_>>().join(" | ")
+        } else {
+            crate::ported::jobs::printjob(
+                &tab[jn],
+                ji,
+                lng,
+                (curjob >= 0).then_some(curjob as usize),
+                (prevjob >= 0).then_some(prevjob as usize),
+                is_thisjob && synch != 2, // c:1255 — `thisfmt = job == thisjob && synch != 2`
+            )
+        };
         if !s.is_empty() {
             doneprint = true; // c:1275
             out.push_str(&s);

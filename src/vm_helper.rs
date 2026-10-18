@@ -6917,6 +6917,32 @@ impl ShellExecutor {
         // c:Src/exec.c:4352 `closem(FDT_INTERNAL, 0)` before execve.
         crate::lowfd::cloexec_internal_fds();
 
+        // c:Src/exec.c:1110-1183 + 1828-1835 — under job control a foreground
+        // external is a job: execcmd_fork's child takes its own process group
+        // and the terminal and restores SIGTSTP/SIGTTIN/SIGTTOU (entersubsh),
+        // and the shell waits for it in waitjobs, which sees it stop. The
+        // posix_spawn below does neither, so `^Z` never suspended a command.
+        // `command -p`, $ARGV0 and `exec -` keep the spawn path, which carries
+        // them; so do an in-process `( … )` (C forks it, and the child has no
+        // MONITOR) and a pipeline's in-shell last stage (its job is the
+        // pipeline's, led by the first stage, c:Src/jobs.c:497-498).
+        // NOTE: C makes a job stopped inside a function part of a superjob
+        // and continues the rest of the function in a forked shell
+        // (c:Src/exec.c:1912-2011); the VM does not model that, so the
+        // function carries on and the stopped job stays (unlisted, NOPRINT).
+        if !background
+            && !exec_forked
+            && defpath == 0
+            && argv0_env.is_none()
+            && !exec_dash
+            && crate::ported::zsh_h::jobbing()
+            && self.subshell_snapshots.is_empty()
+            && crate::exec_jobs::NOT_JOB_LEADER.with(|d| d.get()) == 0
+        {
+            let words: Vec<String> = std::iter::once(cmd.to_string()).chain(args.iter().cloned()).collect();
+            return Ok(crate::fusevm_bridge::execcmd_simple_job(words, false, job_text));
+        }
+
         // Redirect handling lives in fusevm's WithRedirectsBegin/End
         // ops at compile time; `_redirects` arrives empty here.
         let spawned = if background {

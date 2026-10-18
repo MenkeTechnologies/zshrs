@@ -1545,6 +1545,10 @@ pub fn printjob(
     prev_job: Option<usize>,
     thisfmt: bool,
 ) -> String {
+    // c:1166-1169 — `if (lng < 0) { conted = 1; lng = !!isset(LONGLISTJOBS); }`:
+    // `fg` / `bg` report a stopped job they resume as `continued`.
+    let conted = lng < 0;
+    let lng = if conted { i32::from(isset(LONGLISTJOBS)) } else { lng };
     // c:1141 — `int job, len = 9, sig, sflag = 0, llen;` — the status
     // column is `len + 2` wide where len starts at 9 and grows to the
     // longest signal message among non-running procs (c:1180-1213).
@@ -1571,8 +1575,10 @@ pub fn printjob(
     // Per-proc status text, padded to `width` per the fprintf field
     // widths at c:1293-1316.
     let fmt_proc_status = |status: i32| -> String {
-        let s = if status == SP_RUNNING {
-            "running".to_string() // c:1295
+        let s = if status == SP_RUNNING && conted {
+            "continued".to_string() // c:1306
+        } else if status == SP_RUNNING {
+            "running".to_string() // c:1304
         } else if (status & 0x7f) == 0 {
             let code = (status >> 8) & 0xff;
             if code == 0 {
@@ -2323,19 +2329,42 @@ pub fn waitjobs() {
         .filter(|jn| (jn.stat & stat::SUPERJOB) != 0)
         .map(|jn| jn.other as usize);
     for jn in subjob.into_iter().chain(std::iter::once(thisjob)) {
+        // c:1689-1691 (zwaitjob, via waitonejob) — `if (jn->procs ||
+        // jn->auxprocs) jn->stat |= STAT_LOCKED;`. update_job reports a
+        // job's change only once it is locked (c:646), which is what
+        // prints `zsh: suspended  cmd` when a foreground job stops.
+        if let Some(j) = table.lock().unwrap_or_else(|e| e.into_inner()).get_mut(jn) {
+            if !j.procs.is_empty() || !j.auxprocs.is_empty() {
+                j.stat |= stat::LOCKED;
+            }
+        }
         loop {
             let finished = table
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .get(jn)
-                .map_or(true, |j| j.is_done() || j.is_stopped());
+                // c:1706 — `while (... jn->stat && !(jn->stat & STAT_DONE) ...)`:
+                // a slot update_job already freed (stat 0) ends the wait too.
+                .map_or(true, |j| j.stat == 0 || j.is_done() || j.is_stopped());
             if finished {
                 break;
             }
             #[cfg(unix)]
             {
                 let mut status: i32 = 0;
-                let pid = unsafe { libc::waitpid(-1, &mut status, libc::WUNTRACED) };
+                // !!! WARNING: RUST-ONLY !!! Wait for one of THIS job's running
+                // processes, not any child: when the SIGCHLD reaper has already
+                // taken the job's last process, `waitpid(-1)` blocked on an
+                // unrelated background job (`sleep 30 &; /bin/sleep 1` hung
+                // for 30s). Other children stay with the reaper, as in C,
+                // whose zwaitjob only sleeps until SIGCHLD.
+                let target = table
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get(jn)
+                    .and_then(|j| j.procs.iter().chain(j.auxprocs.iter()).find(|p| p.is_running()).map(|p| p.pid))
+                    .unwrap_or(-1);
+                let pid = unsafe { libc::waitpid(target, &mut status, libc::WUNTRACED) };
                 if pid > 0 {
                     update_bg_job(
                         &mut table.lock().unwrap_or_else(|e| e.into_inner()),
@@ -3681,6 +3710,10 @@ pub fn bin_fg(
     }
 
     let mut returnval: i32 = 0;
+    // c:2514 `firstjob = curjob` — `fg` / `bg` with no argument act on the
+    // current job through the same per-job arm as `fg %+` (set below once the
+    // no-current-job gate has passed).
+    let mut no_arg_current = false;
 
     if argv.is_empty() {
         // c:2487
@@ -3844,12 +3877,7 @@ pub fn bin_fg(
                 unqueue_signals();
                 return 0;
             }
-            // Continue current job by sending SIGCONT via killjb(Job, sig).
-            if curjob >= 0 {
-                let _ = killjb(curjob as usize, libc::SIGCONT);
-            }
-            unqueue_signals();
-            return 0;
+            no_arg_current = true;
         }
         if func == BIN_WAIT {
             // c:Src/jobs.c:2538-2542 — `wait` with no args waits for
@@ -3929,9 +3957,13 @@ pub fn bin_fg(
             unqueue_signals();
             return 0;
         }
-        unqueue_signals();
-        return 0;
+        if !no_arg_current {
+            unqueue_signals();
+            return 0;
+        }
     }
+    let current_job = [String::from("%+")];
+    let argv: &[String] = if no_arg_current { &current_job } else { argv };
 
     // c:2537+ — per-arg jobspec dispatch (full body handles wait pid,
     // STAT_SUPERJOB carry-through, killjb retry, etc.). Port the
@@ -4121,12 +4153,122 @@ pub fn bin_fg(
             return 127; // c:2589
         }
         if func == BIN_FG || func == BIN_BG {
-            if killjb(p as usize, libc::SIGCONT) == -1 {
-                zwarnnam(
-                    name,
-                    &format!("{}: kill failed: {}", arg, std::io::Error::last_os_error()),
-                );
-                returnval = 1;
+            // c:2617-2714 — the fg / bg arm.
+            let job = p as usize;
+            let ocj = *THISJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
+            let mut tab = table.lock().expect("jobtab poisoned");
+            if func == BIN_BG {
+                clearoldjobtab(); // c:2622
+                tab[job].stat |= stat::NOSTTY; // c:2623
+                tab[job].stat &= !stat::CURSH; // c:2624
+            }
+            let stopped = (tab[job].stat & stat::STOPPED) != 0; // c:2626
+            if stopped {
+                // c:2627-2628 — "WIFCONTINUED will makerunning() again at killjb()".
+                makerunning(&mut tab, job);
+                if func == BIN_BG {
+                    // c:2629-2640 — "Set $! to indicate this was backgrounded".
+                    if let Some(pn) = tab[job].procs.last() {
+                        crate::ported::modules::clone::lastpid.store(pn.pid, Ordering::Relaxed);
+                    }
+                }
+            } else if func == BIN_BG {
+                // c:2641-2647 — "Silly to bg a job already running."
+                drop(tab);
+                zwarnnam(name, "job already in background");
+                *THISJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap() = ocj;
+                unqueue_signals();
+                return 1;
+            }
+            drop(tab);
+            // c:2648-2667 — "It's time to shuffle the jobs around! Reset the
+            // current job, and pick a sensible secondary job." (54294; 5.9.2
+            // made the job the previous one even for bg, and setprevjob could
+            // pick it again.)
+            let cur = || *CURJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
+            let prev = || *PREVJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
+            let set_cur = |v: i32| *CURJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap() = v;
+            let set_prev = |v: i32| *PREVJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap() = v;
+            let set_this = |v: i32| *THISJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap() = v;
+            if crate::extensions::emulation_startup::emulating_592() {
+                if cur() == job as i32 {
+                    set_cur(prev());
+                    set_prev(if func == BIN_BG { -1 } else { job as i32 });
+                }
+                if prev() == job as i32 || prev() == -1 {
+                    setprevjob();
+                }
+            } else {
+                if func != BIN_BG && cur() == job as i32 {
+                    set_cur(prev()); // c:2651
+                    set_prev(job as i32); // c:2652
+                }
+                if prev() == job as i32 {
+                    // c:2654-2660 — "Exclude this job from setprevjob() consideration."
+                    let saved_thisjob = *THISJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
+                    if func != BIN_BG && cur() != -1 {
+                        set_this(job as i32);
+                    }
+                    setprevjob();
+                    set_this(saved_thisjob);
+                } else if prev() == -1 {
+                    setprevjob(); // c:2662
+                }
+            }
+            if cur() == -1 {
+                set_cur(prev()); // c:2665
+                setprevjob(); // c:2666
+            }
+            let mut tab = table.lock().expect("jobtab poisoned");
+            // c:2668-2670 — "for bg and fg -- show the job we are operating on".
+            crate::exec_jobs::printjob_synch(&mut tab, job, if stopped { -1 } else { lng }, 3);
+            if func == BIN_FG {
+                // c:2672-2678 — the job started in another directory.
+                if let Some(jpwd) = tab[job].pwd.clone() {
+                    let pwd = getsparam("PWD").unwrap_or_default();
+                    if jpwd != pwd {
+                        crate::exec_jobs::shout_write(&format!(
+                            "(pwd : {})\n",
+                            crate::ported::utils::fprintdir(&jpwd)
+                        ));
+                    }
+                }
+                set_this(job as i32); // c:2680
+                // c:2681-2689 — a superjob whose leader is gone hands the tty
+                // to its subjob's group.
+                let other = tab[job].other as usize;
+                let leader_gone = tab[job].procs.len() <= 1
+                    || (tab[job].stat & stat::SUBLEADER) != 0
+                    || (unsafe { libc::killpg(tab[job].gleader, 0) } == -1
+                        && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH));
+                let gleader = if (tab[job].stat & stat::SUPERJOB) != 0
+                    && leader_gone
+                    && tab.get(other).is_some_and(|o| o.gleader != 0)
+                {
+                    tab[other].gleader
+                } else {
+                    tab[job].gleader
+                };
+                crate::ported::utils::attachtty(gleader);
+            }
+            if stopped {
+                // c:2692-2696
+                if func != BIN_BG {
+                    if let Some(ty) = tab[job].ty.as_ref() {
+                        crate::ported::utils::settyinfo(&ty.tio);
+                    }
+                }
+                drop(tab);
+                killjb(job, libc::SIGCONT);
+            } else {
+                drop(tab);
+            }
+            if func == BIN_FG {
+                // c:2703-2711 — wait for the job in the foreground.
+                waitjobs();
+                returnval = LASTVAL2.load(Ordering::SeqCst);
+            } else if _ofunc == BIN_DISOWN {
+                deletejob(&mut table.lock().expect("jobtab poisoned"), job, true); // c:2712-2713
             }
         } else if func == BIN_WAIT {
             // c:2655-2659 — `retval = zwaitjob(job, 1); if (!retval)

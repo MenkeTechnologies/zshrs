@@ -1357,3 +1357,41 @@ fn cmdarg_last_command_replaces_the_shell() {
     assert_parity(r#"zshexit() { echo bye }; /bin/echo hi"#);
     assert_parity(r#"trap 'echo t' EXIT; SHLVL=5; /usr/bin/printenv SHLVL"#);
 }
+
+/// c:Src/exec.c:1110-1183 (entersubsh) + c:Src/jobs.c:642-650 (update_job)
+/// + c:Src/jobs.c:2617-2714 (bin_fg) — under job control a foreground
+/// command runs in its own process group with the terminal, so `^Z` stops it:
+/// the shell reports `zsh: suspended  <text>`, `$?` is 0200|SIGTSTP, the job
+/// stays in the table, and `fg` reports it `continued` and waits for it.
+/// zshrs spawned the command in its own process group with SIGTSTP ignored,
+/// so `^Z` did nothing, and `fg` / `bg` only sent SIGCONT.
+mod foreground_job_control {
+    use crate::zpty_probe::{assert_same_verdict, sq, OPEN_PUMPED};
+
+    fn driver(line: &str, then: &str, verdict: &str) -> String {
+        format!(
+            "{OPEN_PUMPED}\nzpty -w w {}; sleep 1\nzpty -w -n w $'\\C-z'; pump\n{then}\nzpty -d w 2>/dev/null\n{verdict}\n",
+            sq(line)
+        )
+    }
+
+    #[test]
+    fn ctrl_z_suspends_a_foreground_command_and_fg_resumes_it() {
+        let d = driver(
+            "/bin/sleep 3; print A${:-}=$?",
+            "zpty -w w 'jobs; fg; print B${:-}=$?'; sleep 3.5; pump",
+            r#"[[ $all == *"zsh: suspended  /bin/sleep 3"* && $all == *A=146* && $all == *"[1]  + suspended  /bin/sleep 3"* && $all == *"[1]  + continued  /bin/sleep 3"* && $all == *B=0* ]] && print V=yes || print V=no"#,
+        );
+        assert_same_verdict(&d, "V", "^Z suspended the command and fg resumed it");
+    }
+
+    #[test]
+    fn bg_continues_a_suspended_command_in_the_background() {
+        let d = driver(
+            "/bin/sleep 4",
+            "zpty -w w 'bg; print J${:-}=$#jobstates'; pump; zpty -w w 'wait; print W${:-}=$?'; sleep 4; pump",
+            r#"[[ $all == *"[1]  + continued  /bin/sleep 4"* && $all == *J=1* && $all == *W=0* ]] && print V=yes || print V=no"#,
+        );
+        assert_same_verdict(&d, "V", "bg continued the suspended command");
+    }
+}

@@ -14170,116 +14170,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // does for static heads. Without this, `c=builtin; $c source X`
         // skipped the precmd walk and emitted "command not found:
         // builtin".
-        let mut state = crate::ported::zsh_h::estate {
-            prog: Box::<crate::ported::zsh_h::eprog>::default(),
-            pc: 0,
-            strs: None,
-            strs_offset: 0,
-        };
-        let mut eparams = crate::ported::zsh_h::execcmd_params {
-            args: Some(args),
-            redir: None,
-            beg: 0,
-            varspc: None,
-            assignspc: None,
-            typ: crate::ported::zsh_h::WC_SIMPLE as i32,
-            postassigns: 0,
-            htok: 0,
-        };
-        // input/output=0 → no pipe redirection (use shell stdio
-        // directly); `output != 0` at c:2988 forks immediately. last1=2
-        // (c:Src/exec.c:2014 `last1 ? 1 : 2`): terminal pipe stage but
-        // the shell IS needed afterward — the VM keeps executing
-        // bytecode after this op. last1=1 would arm the fake-exec
-        // optimization (c:3646-3651, gate at c:3662 `last1 != 1`),
-        // making `execute()` execve THIS process for external heads:
-        // `p=/bin/echo; $p hi; echo after` replaced the shell and
-        // `after` never ran (D04parameter chunk 11 shell-killer).
-        // c:Src/exec.c:1690-1700 — execpline's job frame: save thisjob
-        // (`pj = thisjob`) and allocate the jobtab slot that
-        // execcmd_fork's addproc (c:2853) hangs the child pid off.
-        // Without a live thisjob, the fork at c:3662 (last1 != 1 →
-        // external must fork) registers no proc, nothing waits, and
-        // the child races the rest of the script.
-        let pj = {
-            use crate::ported::jobs;
-            *jobs::THISJOB
-                .get_or_init(|| std::sync::Mutex::new(-1))
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-        };
-        // The pipeline's job frame (BUILTIN_EXECPLINE_CHILD_BLOCK) already
-        // holds this command's slot; only a chunk compiled without one
-        // allocates here.
-        let held = crate::exec_jobs::execpline_slot_current();
-        let newjob = held.unwrap_or_else(|| {
-            use crate::ported::jobs;
-            let table = jobs::JOBTAB.get_or_init(|| std::sync::Mutex::new(Vec::new()));
-            let mut tab = table.lock().unwrap_or_else(|e| e.into_inner());
-            jobs::initjob(&mut tab) // c:1700 `thisjob = newjob = initjob()`
-        });
-        {
-            use crate::ported::jobs;
-            *jobs::THISJOB
-                .get_or_init(|| std::sync::Mutex::new(-1))
-                .lock()
-                .unwrap_or_else(|e| e.into_inner()) = newjob as i32;
-        }
-        crate::ported::exec::REDIRS_PREAPPLIED.with(|c| c.set(had_redirs));
-        crate::ported::exec::execcmd_exec(
-            &mut state,
-            &mut eparams,
-            0,                                   // input  (c:2989)
-            0,                                   // output (c:2988)
-            crate::ported::zsh_h::Z_SYNC as i32, // how
-            2,                                   // last1=2 — shell continues (c:2014)
-            -1,                                  // close_if_forked
-        );
-        crate::ported::exec::REDIRS_PREAPPLIED.with(|c| c.set(false));
-        // c:Src/exec.c:1828-1835 — execpline's Z_SYNC tail: waitjobs()
-        // reaps the forked external. c:Src/jobs.c:487-495 + 551-552 —
-        // the job's LAST proc sets lastval (0200|sig when signalled,
-        // else WEXITSTATUS). Builtin/shfunc heads never forked (job
-        // has no procs) — LASTVAL was already set by execbuiltin /
-        // doshfunc inside execcmd_exec; skip the wait.
-        {
-            use crate::ported::jobs;
-            let table = jobs::JOBTAB.get_or_init(|| std::sync::Mutex::new(Vec::new()));
-            let forked = jobs::hasprocs(&table.lock().unwrap_or_else(|e| e.into_inner()), newjob);
-            if forked {
-                // waitjobs() reads thisjob and holds no JOBTAB guard across the wait.
-                *jobs::THISJOB
-                    .get_or_init(|| std::sync::Mutex::new(-1))
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner()) = newjob as i32;
-                jobs::waitjobs(); // c:1835
-            }
-            let mut tab = table.lock().unwrap_or_else(|e| e.into_inner());
-            if forked {
-                if let Some(p) = tab[newjob].procs.last() {
-                    let val = if p.is_signaled() {
-                        crate::dash_mode::signaled_status(p.term_sig()) // c:Src/jobs.c:489-490
-                    } else {
-                        p.exit_status() // c:Src/jobs.c:494
-                    };
-                    crate::ported::builtin::LASTVAL
-                        .store(val, std::sync::atomic::Ordering::Relaxed);
-                }
-            }
-            // c:1977-1979 — `deletejob(jn, 0)` once done; c:1981
-            // `thisjob = pj` restores the caller's job. A held slot is the
-            // job frame's to delete when the pipeline closes.
-            if held.is_none() && newjob < tab.len() {
-                jobs::deletejob(&mut tab, newjob, false);
-            }
-            *jobs::THISJOB
-                .get_or_init(|| std::sync::Mutex::new(-1))
-                .lock()
-                .unwrap_or_else(|e| e.into_inner()) = pj;
-        }
-        let status = crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed);
-        crate::ported::jobs::waitonejob(-1);
-        Value::Status(status)
+        Value::Status(execcmd_simple_job(args, had_redirs, take_job_text()))
     });
     // c:Src/exec.c:3386-3419 — `< file` / `> file` with no command
     // word. Resolves NULLCMD/READNULLCMD at runtime, then dispatches the
@@ -18441,6 +18332,142 @@ fn procsub_child_enter_subsh() {
     }
     unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
 }
+
+/// execpline's Z_SYNC job frame (c:Src/exec.c:1690-1700, 1828-1835,
+/// 1977-1981) around `execcmd_exec` for one simple command whose words are
+/// already expanded: allocate the job, run the command (forking an external
+/// through `execcmd_fork` → `entersubsh(ESUB_PGRP)`), wait for it in
+/// `waitjobs`, then set `lastval` from the job's last proc. A job stopped by
+/// `^Z` stays in the job table. `job_text` is the command text the compiler
+/// recorded; the VM has no wordcode for `getjobtext` to read it from.
+pub(crate) fn execcmd_simple_job(args: Vec<String>, had_redirs: bool, job_text: Option<String>) -> i32 {
+    crate::ported::exec::EXECCMD_JOB_TEXT.with(|t| *t.borrow_mut() = job_text);
+    let mut state = crate::ported::zsh_h::estate {
+        prog: Box::<crate::ported::zsh_h::eprog>::default(),
+        pc: 0,
+        strs: None,
+        strs_offset: 0,
+    };
+    let mut eparams = crate::ported::zsh_h::execcmd_params {
+        args: Some(args),
+        redir: None,
+        beg: 0,
+        varspc: None,
+        assignspc: None,
+        typ: crate::ported::zsh_h::WC_SIMPLE as i32,
+        postassigns: 0,
+        htok: 0,
+    };
+    // input/output=0 → no pipe redirection (use shell stdio
+    // directly); `output != 0` at c:2988 forks immediately. last1=2
+    // (c:Src/exec.c:2014 `last1 ? 1 : 2`): terminal pipe stage but
+    // the shell IS needed afterward — the VM keeps executing
+    // bytecode after this op. last1=1 would arm the fake-exec
+    // optimization (c:3646-3651, gate at c:3662 `last1 != 1`),
+    // making `execute()` execve THIS process for external heads:
+    // `p=/bin/echo; $p hi; echo after` replaced the shell and
+    // `after` never ran (D04parameter chunk 11 shell-killer).
+    // c:Src/exec.c:1690-1700 — execpline's job frame: save thisjob
+    // (`pj = thisjob`) and allocate the jobtab slot that
+    // execcmd_fork's addproc (c:2853) hangs the child pid off.
+    // Without a live thisjob, the fork at c:3662 (last1 != 1 →
+    // external must fork) registers no proc, nothing waits, and
+    // the child races the rest of the script.
+    let pj = {
+        use crate::ported::jobs;
+        *jobs::THISJOB
+            .get_or_init(|| std::sync::Mutex::new(-1))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    };
+    // The pipeline's job frame (BUILTIN_EXECPLINE_CHILD_BLOCK) already
+    // holds this command's slot; only a chunk compiled without one
+    // allocates here.
+    let held = crate::exec_jobs::execpline_slot_current();
+    let newjob = held.unwrap_or_else(|| {
+        use crate::ported::jobs;
+        let table = jobs::JOBTAB.get_or_init(|| std::sync::Mutex::new(Vec::new()));
+        let mut tab = table.lock().unwrap_or_else(|e| e.into_inner());
+        jobs::initjob(&mut tab) // c:1700 `thisjob = newjob = initjob()`
+    });
+    // c:1833-1835 — a job run while another pipeline executes is never
+    // reported (STAT_NOPRINT); see exec_jobs::foreground_job_is_nested.
+    if crate::exec_jobs::foreground_job_is_nested(with_executor(|e| !e.subshell_snapshots.is_empty())) {
+        let table = crate::ported::jobs::JOBTAB.get_or_init(|| std::sync::Mutex::new(Vec::new()));
+        if let Some(j) = table.lock().unwrap_or_else(|e| e.into_inner()).get_mut(newjob) {
+            j.stat |= crate::ported::zsh_h::STAT_NOPRINT;
+        }
+    }
+    {
+        use crate::ported::jobs;
+        *jobs::THISJOB
+            .get_or_init(|| std::sync::Mutex::new(-1))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = newjob as i32;
+    }
+    crate::ported::exec::REDIRS_PREAPPLIED.with(|c| c.set(had_redirs));
+    crate::ported::exec::execcmd_exec(
+        &mut state,
+        &mut eparams,
+        0,                                   // input  (c:2989)
+        0,                                   // output (c:2988)
+        crate::ported::zsh_h::Z_SYNC as i32, // how
+        2,                                   // last1=2 — shell continues (c:2014)
+        -1,                                  // close_if_forked
+    );
+    crate::ported::exec::REDIRS_PREAPPLIED.with(|c| c.set(false));
+    // c:Src/exec.c:1828-1835 — execpline's Z_SYNC tail: waitjobs()
+    // reaps the forked external. c:Src/jobs.c:487-495 + 551-552 —
+    // the job's LAST proc sets lastval (0200|sig when signalled,
+    // else WEXITSTATUS). Builtin/shfunc heads never forked (job
+    // has no procs) — LASTVAL was already set by execbuiltin /
+    // doshfunc inside execcmd_exec; skip the wait.
+    {
+        use crate::ported::jobs;
+        let table = jobs::JOBTAB.get_or_init(|| std::sync::Mutex::new(Vec::new()));
+        let forked = jobs::hasprocs(&table.lock().unwrap_or_else(|e| e.into_inner()), newjob);
+        if forked {
+            // waitjobs() reads thisjob and holds no JOBTAB guard across the wait.
+            *jobs::THISJOB
+                .get_or_init(|| std::sync::Mutex::new(-1))
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = newjob as i32;
+            jobs::waitjobs(); // c:1835
+        }
+        let mut tab = table.lock().unwrap_or_else(|e| e.into_inner());
+        if forked {
+            // A stopped job (`^Z`): update_job already set lastval to
+            // 0200|WSTOPSIG (c:Src/jobs.c:489-491) and the job stays.
+            let stopped = (tab[newjob].stat & crate::ported::zsh_h::STAT_STOPPED) != 0;
+            if let Some(p) = tab[newjob].procs.last().filter(|_| !stopped) {
+                let val = if p.is_signaled() {
+                    crate::dash_mode::signaled_status(p.term_sig()) // c:Src/jobs.c:489-490
+                } else {
+                    p.exit_status() // c:Src/jobs.c:494
+                };
+                crate::ported::builtin::LASTVAL
+                    .store(val, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+        // c:1977-1979 — `deletejob(jn, 0)` once done; c:1981
+        // `thisjob = pj` restores the caller's job. A held slot is the
+        // job frame's to delete when the pipeline closes.
+        if held.is_none()
+            && newjob < tab.len()
+            && (tab[newjob].stat & crate::ported::zsh_h::STAT_STOPPED) == 0
+        {
+            jobs::deletejob(&mut tab, newjob, false);
+        }
+        *jobs::THISJOB
+            .get_or_init(|| std::sync::Mutex::new(-1))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = pj;
+    }
+    let status = crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed);
+    crate::ported::jobs::waitonejob(-1);
+    status
+}
+
 
 fn forked_child_subsh_levels() {
     use std::sync::atomic::Ordering;
