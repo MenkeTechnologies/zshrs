@@ -2157,6 +2157,13 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                 if pct == 0 && in_brace_param == 0 {
                     if sub {
                         add(c);
+                    } else if LEX_INCOND.get() > 1 && crate::dash_mode::bash_mode() {
+                        // !!! BASH GATE (no C counterpart) !!! bash reads the whole
+                        // right-hand side of `[[ x =~ RE ]]` as ONE word, so an
+                        // unquoted `|` is regex alternation, not a pipe:
+                        // `[[ $i =~ ^\~.*|^\/.* ]]` (bash-completion's ssh code).
+                        // zsh's lexer ends the word there and the parse fails.
+                        add(Bar);
                     } else {
                         break;
                     }

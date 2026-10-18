@@ -2858,3 +2858,26 @@ f() {{ tmp1='*(-/):t:directories'; tmp1=( $~tmp1 ) 2>/dev/null; print after }}; 
     assert_eq!(stdout, "*(-.):t:source\n");
     assert_eq!(ec, 1, "stderr: {stderr:?}");
 }
+
+/// In `--bash`, the right-hand side of `[[ x =~ RE ]]` is ONE word, so an
+/// unquoted `|` is regex alternation. zsh's lexer ends the word at the `|` and
+/// the parse failed ("parse error near `|'"), which killed `source
+/// /usr/share/bash-completion/bash_completion` at its ssh helper
+/// (`[[ $i =~ ^\~.*|^\/.* ]]`). A `|` AFTER the `]]` is still a pipe.
+#[test]
+fn bash_regex_rhs_takes_an_unquoted_alternation_bar() {
+    if zshrs_bin().is_none() {
+        return;
+    }
+    for (script, want) in [
+        ("[[ b =~ ^a|^b ]] && echo m", "m\n"),
+        ("[[ c =~ ^a|^b ]] && echo m || echo n", "n\n"),
+        (r"i=/x; [[ $i =~ ^\~.*|^\/.* ]] && echo m", "m\n"),
+        ("if ! [[ y =~ ^x$|^z$ ]]; then echo n; fi", "n\n"),
+        ("[[ a =~ a ]] | cat; echo done", "done\n"),
+        ("[[ a == a ]] && echo a | cat", "a\n"),
+    ] {
+        let (ec, out) = run_mode("--bash", script);
+        assert_eq!((ec, out.as_str()), (0, want), "script: {script}");
+    }
+}
