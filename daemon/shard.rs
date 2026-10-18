@@ -382,6 +382,7 @@ pub fn write_canonical_shard(paths: &CachePaths, shard: &CanonicalShard) -> Resu
     }
     std::fs::rename(&tmp_path, &final_path)?;
     super::paths::ensure_file_600(&final_path)?;
+    refresh_index(paths);
     tracing::info!(
         slug = %shard.header.slug,
         generation = shard.header.generation,
@@ -448,6 +449,7 @@ pub fn write_shard(paths: &CachePaths, shard: &Shard) -> Result<PathBuf> {
 
     std::fs::rename(&tmp_path, &final_path)?;
     super::paths::ensure_file_600(&final_path)?;
+    refresh_index(paths);
 
     tracing::info!(
         slug = %shard.header.slug,
@@ -654,6 +656,15 @@ pub fn sweep_tmp_files(paths: &CachePaths, max_age: std::time::Duration) -> Resu
 /// `~/.zshrs/index.rkyv` atomically. Per DAEMON.md:184-185: shard
 /// rename FIRST, index.rkyv update LAST.
 ///
+/// Rewrite `index.rkyv` after a shard landed. The shard rename has already
+/// happened (docs/DAEMON.md: shard FIRST, index LAST), and a failure here is
+/// only logged: the shard itself is authoritative and the next write retries.
+fn refresh_index(paths: &CachePaths) {
+    if let Err(e) = rebuild_index(paths) {
+        tracing::warn!(?e, "index.rkyv not rebuilt after shard write");
+    }
+}
+
 /// Returns the path the index was written to + the entry count.
 pub fn rebuild_index(paths: &CachePaths) -> Result<(PathBuf, u32)> {
     let shard_paths = list_shards(paths)?;
@@ -954,6 +965,18 @@ mod tests {
         let removed = sweep_tmp_files(&paths, std::time::Duration::from_secs(60)).unwrap();
         assert_eq!(removed, 0);
         assert!(recent.exists());
+    }
+
+    #[test]
+    fn writing_a_shard_updates_the_index() {
+        let (_tmp, paths) = fresh();
+        assert!(!paths.index_rkyv.exists());
+        let mut s = Shard::new("system", "/Users/example/test", 100);
+        s.insert("_git", b"git bc".to_vec());
+        write_shard(&paths, &s).unwrap();
+        let idx = read_index(&paths).unwrap();
+        assert_eq!(idx.entries.len(), 1);
+        assert_eq!(idx.entries[0].slug, "system");
     }
 
     #[test]
