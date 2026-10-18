@@ -19,6 +19,38 @@ CI green pending the underlying fix.
 
 ---
 
+## #1196 — bash/ksh93/dash: a read-only `read` / `for` / `select` / `local` target ended the script — fixed
+
+**Status:** `fixed` 2026-10-18.
+
+```
+$ bash -c 'readonly r=1; read r <<< x; echo rc=$?'                       → r: readonly variable / rc=1
+$ bash -c 'readonly r=1; for r in a; do :; done; echo rc=$?'             → rc=1
+$ bash -c 'readonly r=1; f(){ local r=2; echo $r; }; f'                  → r: readonly variable / 1
+$ zshrs --bash -c '…each…'                     → read-only variable: r, script ends (or local shadows)   ✗
+```
+
+zsh's assignment error ends the command line. The reference shells handle each
+case differently:
+
+- **bash `read`:** fails with status 1 and continues; it stops with status 2 at a
+  read-only target that is not the last one, or at the implicit REPLY.
+- **ksh93 `read`:** warns, assigns the other targets, and fails with status 1.
+- **bash `for` / `select`:** skip the loop with status 1 (fatal only under
+  `set -o posix`).
+- **bash `local` / `declare` / `typeset` in a function:** refuse the read-only name,
+  carry on with the others, and fail with status 1.
+- **dash `local`:** copies the variable with its read-only flag, so a bare `local r`
+  keeps it and `local r=2` is the fatal "is read only" (status 2).
+
+`read` arms a soft mode that `zerr` consults, so every assignment path reports a
+read-only target instead of raising errflag. `assignaparam` also raised errflag
+itself after its `zerr`, which C's `setarrvalue` does not; that redundant line is
+gone. Pinned by `bash_shopt_parity::read_only_targets_fail_without_ending_the_script`
+and `emulation_builtin_fmt_parity::read_only_targets_follow_ksh93_and_dash`.
+
+---
+
 ## #1194 — word lists past 255 words wrapped mod 256 — fixed
 
 **Status:** `fixed` 2026-10-18.

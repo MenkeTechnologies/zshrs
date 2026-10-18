@@ -4268,3 +4268,58 @@ pub fn assoc_enumeration_order(keys: &[&str]) -> Option<Vec<usize>> {
     }
     Some(buckets.into_iter().flatten().collect())
 }
+
+thread_local! {
+    /// Armed by `read` under bash / ksh93: `Some(failed)` while it assigns.
+    static READ_SOFT_READONLY: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// Arm (`true`) or disarm `read`'s soft read-only handling; returns whether a
+/// read-only target was hit since it was armed.
+///
+/// bash and ksh93 `read` report a read-only target and go on with a failure
+/// status, where zsh's assignment error ends the command line:
+///   $ bash -c 'readonly r=1; read r <<< x; echo rc=$?'   → r: readonly variable / rc=1
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn read_soft_readonly(arm: bool) -> bool {
+    READ_SOFT_READONLY.with(|c| c.replace(arm.then_some(false)).unwrap_or(false))
+}
+
+/// Whether `read`'s soft read-only handling has hit a target since it was armed.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn read_soft_readonly_hit() -> bool {
+    READ_SOFT_READONLY.with(|c| c.get().unwrap_or(false))
+}
+
+/// Called by `zerr` with every message: while `read` is armed, a read-only
+/// rejection (from any assignment path) is warned in the emulated shell's
+/// words and recorded instead, and true tells `zerr` not to raise errflag.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn read_soft_readonly_reject(msg: &str) -> bool {
+    let Some(name) = msg.strip_prefix("read-only variable: ") else {
+        return false;
+    };
+    READ_SOFT_READONLY.with(|c| {
+        if c.get().is_none() {
+            return false;
+        }
+        c.set(Some(true));
+        let msg = if ksh93_mode() {
+            format!("warning: {name}: is read only")
+        } else {
+            format!("{name}: readonly variable")
+        };
+        crate::ported::utils::zwarnnam("read", &msg);
+        true
+    })
+}
+
+/// Whether `read`'s soft read-only handling is armed.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn read_soft_readonly_armed() -> bool {
+    READ_SOFT_READONLY.with(|c| c.get().is_some())
+}

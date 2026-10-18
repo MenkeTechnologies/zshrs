@@ -6344,6 +6344,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 words.get((i - 1) as usize).cloned().unwrap_or_default()
             };
 
+            // !!! BASH GATE (no C counterpart) !!! as for `for`: bash reports a
+            // read-only `select` variable and ends the loop with status 1.
+            if crate::dash_mode::bash_mode()
+                && !crate::dash_mode::bash_posix_on()
+                && with_executor(|exec| exec.is_readonly_param(&name))
+            {
+                crate::ported::utils::zwarn(&format!("{name}: readonly variable"));
+                return Value::Status(1);
+            }
             with_executor(|exec| {
                 exec.set_scalar(name.clone(), chosen);
             });
@@ -10233,6 +10242,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 return Value::Bool(false);
             }
             return Value::Bool(true);
+        }
+        // !!! BASH GATE (no C counterpart) !!! bash reports a read-only loop
+        // variable and skips the loop with status 1; the script goes on
+        // (execute_for_command's err_readonly, fatal only under POSIX mode).
+        if crate::dash_mode::bash_mode()
+            && !crate::dash_mode::bash_posix_on()
+            && with_executor(|exec| exec.is_readonly_param(&name))
+        {
+            crate::ported::utils::zwarn(&format!("{name}: readonly variable"));
+            vm.last_status = 1;
+            return Value::Bool(false);
         }
         // Plain loop var — canonical scalar path (same shape as
         // BUILTIN_SET_VAR's setsparam arm).

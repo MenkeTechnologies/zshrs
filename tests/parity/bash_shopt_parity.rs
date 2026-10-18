@@ -561,3 +561,27 @@ fn associative_arrays_enumerate_in_bash_hash_order() {
         assert_bash_parity(bash, script);
     }
 }
+
+/// A read-only variable as the target of `read`, `for`, `select` or a
+/// function's `local` / `declare` is reported and fails the command without
+/// ending the script (zsh's assignment error ends the command line). `read`
+/// with several targets stops at a read-only one that is not last (status 2).
+#[test]
+fn read_only_targets_fail_without_ending_the_script() {
+    let Some(bash) = bash_path() else {
+        eprintln!("SKIP: no bash >= 4 with $BASHOPTS found");
+        return;
+    };
+    for script in [
+        r#"readonly r=1; read r <<< x; echo rc=$?; read r < /dev/null; echo rc=$?"#,
+        r#"readonly b=0; printf '1 2 3\n4 5 6\n' | { read a b c; echo "rc=$? a=$a b=$b c=$c"; read x; echo "x=$x"; }"#,
+        r#"readonly c=0; read a b c <<< "1 2 3"; echo "rc=$? a=$a b=$b"; readonly r=0; read -a r <<< "1 2"; echo rc=$?"#,
+        r#"readonly REPLY=0; read <<< hi; echo "rc=$? R=$REPLY"; read -p 'x> ' <<< hi; echo rc=$?"#,
+        r#"readonly r=1; for r in a b; do echo in; done; echo rc=$?; f(){ for r in a; do echo in; done; echo frc=$?; }; f"#,
+        r#"readonly r=1; select r in a; do break; done <<< 1 2>/dev/null; echo rc=$?"#,
+        r#"readonly r=1; f(){ local r=2; echo "in=$r rc=$?"; local a=1 r=3 b=4; echo "rc=$? a=$a r=$r b=$b"; declare -i r=5; echo "in=$r"; }; f; echo rc=$?"#,
+        r#"f(){ readonly r=1; g; }; g(){ local r=2; echo g=$r; }; f; readonly q=1; h(){ declare -p q; local x=1; echo $x; }; h"#,
+    ] {
+        assert_bash_parity(bash, script);
+    }
+}

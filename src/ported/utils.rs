@@ -239,6 +239,11 @@ fn zwarning(cmd: Option<&str>, msg: &str) {
 /// ```
 /// WARNING: param names don't match C — Rust=(msg) vs C=()
 pub fn zerr(msg: &str) {
+    // !!! BASH/KSH93 GATE (no C counterpart) !!! `read` into a read-only variable
+    // warns and fails instead of ending the line.
+    if crate::extensions::dash_mode::read_soft_readonly_reject(msg) {
+        return;
+    }
     crate::extensions::dash_mode::note_error_message(msg);
     // c:173
     let noerrs = *noerrs_lock().lock().unwrap();

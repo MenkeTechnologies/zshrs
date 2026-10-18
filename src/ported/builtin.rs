@@ -4702,8 +4702,16 @@ pub fn bin_typeset(
         if argv.is_empty() {
             return 0;
         }
+        // dash's local copy keeps the read-only flag, so a bare `local r` of a
+        // read-only `r` leaves it as it is (assigning it stays an error).
+        let is_readonly = |a: &str| {
+            paramtab().read().ok().is_some_and(|t| {
+                t.get(a).is_some_and(|pm| pm.node.flags as u32 & PM_READONLY != 0)
+            })
+        };
         let inherited: Vec<String> = argv
             .iter()
+            .filter(|a| a.contains('=') || !is_readonly(a))
             .map(|a| match crate::ported::params::getsparam(a) {
                 Some(v) if !a.contains('=') => format!("{a}={v}"),
                 _ => a.clone(),
@@ -7172,6 +7180,30 @@ pub fn bin_typeset(
             Some(i) => &arg[..i],
             None => arg.as_str(),
         };
+        // !!! BASH/DASH GATE (no C counterpart) !!! zsh lets a function's
+        // `local` shadow a read-only variable. bash refuses the name, goes on
+        // with the others and fails with status 1; dash copies the read-only
+        // variable, so assigning it is its fatal "is read only":
+        //   $ bash -c 'readonly r=1; f(){ local r=2; echo $r; }; f'   → r: readonly variable / 1
+        if (crate::dash_mode::bash_mode() || crate::dash_mode::dash_faithful())
+            && matches!(name, "local" | "declare" | "typeset")
+            && !OPT_ISSET(&ops, b'p')
+            && locallevel.load(Relaxed) > 0
+            && paramtab().read().ok().is_some_and(|t| {
+                t.get(arg_name.split('[').next().unwrap_or(arg_name))
+                    .is_some_and(|pm| pm.node.flags as u32 & PM_READONLY != 0)
+            })
+        {
+            if crate::dash_mode::bash_mode() {
+                zwarnnam(name, &format!("{arg_name}: readonly variable"));
+                returnval = 1;
+                continue;
+            }
+            if arg.contains('=') {
+                zerrnam(name, &format!("{arg_name}: is read only"));
+                return 1;
+            }
+        }
         // Recompute the existing-pm snapshots for the rewritten name.
         let (pname_in_tab, usepm_existing) = if nameref_rewrite.is_some() {
             let tab = paramtab().read().unwrap();
@@ -17186,6 +17218,21 @@ pub fn bin_read(
     ops: &options,
     _func: i32,
 ) -> i32 {
+    // !!! BASH/KSH93 GATE (no C counterpart) !!! a read-only target is reported
+    // and `read` fails (status 1) without ending the command line; see
+    // `dash_mode::read_soft_readonly`.
+    if (crate::dash_mode::bash_mode() || crate::dash_mode::ksh93_mode())
+        && !crate::dash_mode::read_soft_readonly_armed()
+    {
+        crate::dash_mode::read_soft_readonly(true);
+        let ret = bin_read(name, args, ops, _func);
+        let hit = crate::dash_mode::read_soft_readonly(false);
+        // bash's implicit REPLY fails as EX_MISCERROR (2); `-p` takes the first
+        // operand as its prompt.
+        let names = args.len().saturating_sub(usize::from(OPT_ISSET(ops, b'p')));
+        let reply_status = if crate::dash_mode::bash_mode() && names == 0 { 2 } else { 1 };
+        return if hit && ret == 0 { reply_status } else { ret };
+    }
     // !!! DASH-ONLY (no C counterpart) !!! dash has no implicit REPLY: a
     // `read` naming no variable is `sh_error("arg count")` (status 2, input
     // not consumed, REPLY untouched). zsh reads into $REPLY. `read` is a
@@ -18313,6 +18360,11 @@ pub fn bin_read(
             // dropped and the variable left untouched.
             if !word.is_empty() || first || gotnl {
                 emit(var, &word);
+                // bash stops at a read-only variable that is not the last one
+                // and fails with status 2 (EX_MISCERROR); ksh93 assigns the rest.
+                if crate::dash_mode::bash_mode() && crate::dash_mode::read_soft_readonly_hit() {
+                    return 2;
+                }
             } else if opt_echo {
                 println!("{}", unmark(&word)); // c:6926 echo precedes the test
             }

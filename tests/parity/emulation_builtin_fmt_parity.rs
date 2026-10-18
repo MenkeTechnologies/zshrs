@@ -580,3 +580,51 @@ fn associative_arrays_follow_ksh93_order_and_quoting() {
         );
     }
 }
+
+/// ksh93 `read` warns about a read-only target, assigns the others and fails
+/// with status 1; dash's `local` copies a read-only variable with its flag, so
+/// `local r` keeps it and `local r=2` is the fatal "is read only" (status 2).
+#[test]
+fn read_only_targets_follow_ksh93_and_dash() {
+    let zbin = zshrs_bin();
+    let z = zbin.to_str().expect("zshrs path is UTF-8");
+    let cases: [(&str, Option<String>, &[&str]); 2] = [
+        (
+            "--ksh",
+            ksh(),
+            &[
+                r#"readonly r=1; read r <<< x; echo rc=$?"#,
+                r#"readonly b=0; printf '1 2 3\n4 5 6\n' | { read a b c; echo "rc=$? a=$a b=$b c=$c"; read x; echo "x=$x"; }"#,
+                r#"readonly r=0; read -A r <<< "1 2"; echo rc=$?"#,
+            ],
+        ),
+        (
+            "--dash",
+            dash(),
+            &[
+                r#"readonly r=1; f(){ local r; echo "in=$r"; }; f; echo rc=$?"#,
+                r#"readonly r=1; f(){ local r x; x=5; echo "$r $x"; }; f"#,
+                r#"readonly r=1; f(){ local r=2; echo in=$r; }; f; echo rc=$?"#,
+                r#"readonly r=1; f(){ local r; r=3; echo "in=$r"; }; f; echo rc=$?"#,
+            ],
+        ),
+    ];
+    let mut ran = 0usize;
+    for (flag, refbin, scripts) in cases {
+        let Some(refbin) = refbin else {
+            eprintln!("SKIP {flag}: reference shell not installed on this host");
+            continue;
+        };
+        ran += 1;
+        for script in scripts {
+            let r = run(&refbin, &["-c"], script);
+            let g = run(z, &[flag, "-f", "-c"], script);
+            assert_eq!(
+                (r.stdout.as_str(), r.exit),
+                (g.stdout.as_str(), g.exit),
+                "{refbin} vs zshrs {flag}\n  script: {script}"
+            );
+        }
+    }
+    assert!(ran > 0, "neither ksh nor dash is installed — the comparison never ran");
+}

@@ -10558,7 +10558,6 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
     // Rust write path bypasses gsu setfn, so mirror the check here.
     if existed && (prior_flags as u32 & PM_READONLY) != 0 {
         zerr(&format!("read-only variable: {}", name));
-        errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
         return None;
     }
     // c:3395-3401 — the type-reset arm only fires for params that are
