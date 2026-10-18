@@ -4552,7 +4552,7 @@ pub fn bin_typeset(
     // !!! KSH93 (no C counterpart) !!! `typeset NAME=value` that does not ask for `-x` again
     // takes the export attribute off an exported parameter (`typeset -x v=1; typeset -i v=5`
     // leaves `typeset -i v=5`). Done as a `typeset +x NAME` first.
-    if crate::dash_mode::ksh93_mode() && matches!(name, "typeset" | "declare") && !OPT_ISSET(ops, b'x') {
+    if crate::dash_mode::ksh93_mode() && matches!(name, "typeset" | "declare") && ops.ind[b'x' as usize] != 1 {
         let exported: Vec<String> = argv
             .iter()
             .filter_map(|a| a.split_once('=').map(|(n, _)| n.to_string()))
@@ -9459,6 +9459,7 @@ pub fn bin_typeset(
                 if let Ok(mut tab) = paramtab().write() {
                     if let Some(pm) = tab.get_mut(arg) {
                         pm.node.flags &= !(PM_EXPORTED as i32);
+                        pm.env = None; // c:5568 delenv: a later assignment must not re-export
                     }
                 }
             }

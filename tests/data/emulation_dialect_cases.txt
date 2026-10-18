@@ -453,3 +453,5 @@ bash	set -o posix; trap "printf x" INT TERM; trap; set +o posix; trap
 bash	declare -a a; declare -A h; declare -p a h; a=(); declare -p a; declare -ar r; declare -p r
 bash	set -u; declare x; echo "[${x-d}]"; echo after; echo "$x"; echo unreachable
 bash	set -u; f() { local y; echo "[${y:-d}]"; y=1; echo "$y"; z=; echo "[$z]"; }; f; OPTIND=1; getopts "a:b" o -b; echo "$o"; echo "$OPTARG"; echo unreachable
+zsh,ksh,bash	typeset -x q=1; typeset -x q=1; typeset +x q; q=abc; env | grep -c "^q="; true
+ksh	typeset -x v=1; typeset -p v; typeset -x v=1; typeset -p v; typeset v=abc; typeset -p v; typeset -x w=1; typeset +x w=2; typeset -p w
