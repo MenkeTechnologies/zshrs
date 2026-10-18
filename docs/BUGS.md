@@ -1056,9 +1056,9 @@ ignore, and zshrs `--ksh`/`--sh` do not.
 
 ---
 
-## #1108 — `shopt -u globstar` does not disable `**` in `--bash` mode — open
+## #1108 — `shopt -u globstar` does not disable `**` in `--bash` mode — fixed
 
-**Status:** `port-bug`, found 2026-08-28 while wiring `shopt`/`$BASHOPTS`. The option now
+**Status:** `fixed` 2026-10-17, found 2026-08-28 while wiring `shopt`/`$BASHOPTS`. The option now
 round-trips through `$BASHOPTS` correctly; what is missing is the BEHAVIOUR when it is OFF.
 
 **Reproducer:**
@@ -1084,6 +1084,14 @@ with `globstar` ON.
 **Fix shape.** A gate in the glob engine (`src/ported/glob.rs`) consulted only in `--bash` mode,
 not a new zsh option — adding a real zsh option would be a divergence from the C in the other
 direction.
+
+**Resolution.** `parsecomplist` takes that gate. In `--bash`, `**` enters the recursive closure only
+when `globstar` is on AND the `**` is a whole path component; otherwise it compiles like `*`, and
+`***` is never special. Measured against bash 5.3, the ON direction had two more divergences, both
+fixed: a bare trailing `**` matches every file and directory below (`**` → `a a/b a/b/f.txt …`,
+zsh's GLOBSTARSHORT shape, where zsh without it gives `*`), and its zero-directory match names the
+directory itself, when that directory exists (`a/**` → `a/ a/b …`; `nosuch/**` stays literal).
+Pinned by `bash_shopt_parity::globstar_gates_recursive_double_star`. zsh mode does not take the gate.
 
 **Related, and deliberately NOT conflated:** a large set of `shopt` names are recorded-only —
 they list correctly in `shopt`/`$BASHOPTS` but toggle nothing: `array_expand_once`,

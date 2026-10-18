@@ -409,6 +409,11 @@ pub fn statfullpath(s: &str, st: &str, l: bool) -> Option<Metadata> {
 // for the drift gate.
 // ===========================================================
 
+/// `complist::closure` value for bash's bare trailing `**` under
+/// `shopt -s globstar`: a `**` closure (zsh's 1) whose zero-directory match
+/// also names the directory being walked. Rust-only; zsh uses 0, 1 and 2.
+const BASH_STAR_DIR_SELF: i32 = 3;
+
 /// Port of `scanner(Complist q, int shortcircuit)` from `Src/glob.c:500`.
 ///
 /// Walks the `complist` path-component chain built by `parsecomplist`,
@@ -453,6 +458,14 @@ fn scanner(state: &mut globdata, q: Option<&complist>, shortcircuit: i32, in_clo
     // c:510-518 — closure preamble: try zero directories via q.next first
     // (skipped for `(dir/)##` until at least one directory is consumed).
     let closure = q.closure;
+    // !!! BASH-MODE (no C counterpart) !!! bash's bare trailing `**` matches
+    // ZERO directories too, which names the directory being walked:
+    //   $ bash -c 'shopt -s globstar; echo a/**'  → a/ a/b a/b/f.txt
+    // At the top level that is the empty path, which bash does not list.
+    if closure == BASH_STAR_DIR_SELF && !in_closure_repeat && !state.pathbuf.is_empty() {
+        let dir = state.pathbuf.clone();
+        insert(state, Path::new(&dir), 0);
+    }
     if closure != 0 {
         let skip_zero = q.closure == 2 && !in_closure_repeat;
         if !skip_zero {
@@ -748,15 +761,28 @@ pub fn parsecomplist(instr: &str) -> Option<Box<complist>> {
     }; // c:715
 
     let chars: Vec<char> = instr.chars().collect();
+    // !!! BASH-MODE GATE (no C counterpart) !!! bash's `**` recurses only under
+    // `shopt -s globstar`, and only as a WHOLE path component; otherwise it
+    // matches like `*`. `***` is never special. A bare trailing `**` matches
+    // every file and directory below, as zsh's GLOBSTARSHORT does for it
+    // (bash(1), Pattern Matching; BUGS.md #1108):
+    //   $ bash -c 'echo **/*.txt'                      → **/*.txt  (as */*.txt)
+    //   $ bash -c 'shopt -s globstar; echo **'         → a a/b a/b/f.txt top.txt
+    let bash = crate::dash_mode::bash_mode();
+    let bash_recursive = bash
+        && crate::dash_mode::bash_shopt_get("globstar") == Some(true)
+        && matches!(chars.get(2), None | Some('/'));
     if chars.len() >= 2
         && chars[0] == crate::ported::zsh_h::Star
         && chars[1] == crate::ported::zsh_h::Star
+        && (!bash || bash_recursive)
     {
         // c:717
         let mut shortglob: i32 = 0; // c:718
         let cond_a = chars.get(2) == Some(&'/'); // c:719
-        let cond_b =
-            chars.get(2) == Some(&crate::ported::zsh_h::Star) && chars.get(3) == Some(&'/'); // c:719
+        let cond_b = !bash
+            && chars.get(2) == Some(&crate::ported::zsh_h::Star)
+            && chars.get(3) == Some(&'/'); // c:719
                                                                                              // c:719-720 — `instr[2] == '/' || (instr[2] == Star && instr[3] == '/')
                                                                                              // || (shortglob = isset(GLOBSTARSHORT))`. C's `||` SHORT-CIRCUITS:
                                                                                              // the `shortglob = isset(GLOBSTARSHORT)` assignment runs ONLY when
@@ -766,7 +792,7 @@ pub fn parsecomplist(instr: &str) -> Option<Box<complist>> {
                                                                                              // `**/x` advance by 1 (`shortglob ? 1 : 3`) instead of 3, leaving a
                                                                                              // stray `*` that collapsed `**/` to a single directory level.
         let enter = cond_a || cond_b || {
-            shortglob = if crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBSTARSHORT) {
+            shortglob = if bash || crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBSTARSHORT) {
                 1
             } else {
                 0
@@ -808,8 +834,11 @@ pub fn parsecomplist(instr: &str) -> Option<Box<complist>> {
             l1 = Box::new(complist {
                 next: next_l,
                 pat,
-                closure: 1, // c:739
-                follow,     // c:740
+                // c:739 `l1->closure = 1`. 3 marks bash's bare trailing `**`,
+                // whose zero-directory match is the directory itself (see
+                // BASH_STAR_DIR_SELF in `scanner`).
+                closure: if bash && chars.len() == 2 { BASH_STAR_DIR_SELF } else { 1 },
+                follow, // c:740
             });
             return Some(l1); // c:741
         }

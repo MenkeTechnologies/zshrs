@@ -262,6 +262,29 @@ fn nullglob_and_failglob_apply() {
     );
 }
 
+/// bash(1) Pattern Matching: `**` recurses only under `shopt -s globstar`
+/// and only as a whole path component; otherwise it is `*`. A bare
+/// trailing `**` also matches the directory itself (`a/**` → `a/ …`), and
+/// `***` is never special. docs/BUGS.md #1108.
+#[test]
+fn globstar_gates_recursive_double_star() {
+    let Some(bash) = bash_path() else {
+        eprintln!("SKIP: no bash >= 4 with $BASHOPTS found");
+        return;
+    };
+    let tree = "d=$(mktemp -d) && cd \"$d\" && mkdir -p a/b .h/d && \
+                : > a/b/f.txt && : > a/x.c && : > top.txt && : > .h/d/g.txt; ";
+    for body in [
+        "echo **/*.txt; echo **; echo a/**/b; echo ***",
+        "shopt -s globstar; echo **/*.txt; echo **; echo a/** a/b/**; echo **/ a/**/",
+        "shopt -s globstar; echo **.txt; echo ***; echo a/**/b; echo nosuch/** top.txt/**",
+        "shopt -s globstar dotglob; echo **; echo .h/**",
+        "shopt -s globstar; shopt -u globstar; echo **/*.txt",
+    ] {
+        assert_bash_parity(bash, &format!("{tree}{body}"));
+    }
+}
+
 /// bash(1): "nocasematch — If set, bash matches patterns in a
 /// case-insensitive fashion when performing matching while executing case or
 /// [[ conditional commands, when performing pattern substitution word
