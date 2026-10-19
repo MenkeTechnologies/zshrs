@@ -217,17 +217,6 @@ pub static patout: Mutex<Vec<u8>> = Mutex::new(Vec::new()); // c:267
 // C: `static int patflags;` — current PAT_* flag set during compile.
 pub static patflags: AtomicI32 = AtomicI32::new(0); // c:272
 
-/// Publish `flags` as the running match's `patflags` and derive `globdots` from them,
-/// `Src/pattern.c:2494` `globdots = !(patflags & PAT_NOGLD);`. `pattryrefs` does this itself;
-/// a caller that drives `patmatch` directly must too, or the `globdots` a file glob left
-/// behind (`0` when GLOB_DOTS is off) makes `?` and `*` skip a leading `.`.
-///
-/// !!! RUST-ONLY HELPER !!! — no C counterpart.
-pub fn publish_patflags(flags: i32) {
-    patflags.store(flags, Ordering::Relaxed);
-    globdots.store(i32::from((flags & PAT_NOGLD as i32) == 0), Ordering::Relaxed);
-}
-
 // C: `static int patglobflags;` — current globbing flags during compile.
 pub static patglobflags: AtomicI32 = AtomicI32::new(0); // c:273
 

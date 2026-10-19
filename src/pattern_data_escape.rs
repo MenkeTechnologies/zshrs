@@ -778,3 +778,18 @@ pub fn nocasematch_fold(pat: &str) -> String {
     }
     out
 }
+
+/// Publish `flags` as the running match's `patflags` and derive `globdots` from them,
+/// `Src/pattern.c:2494` `globdots = !(patflags & PAT_NOGLD);`. `pattryrefs` does this itself;
+/// a caller that drives `patmatch` directly must too, or the `globdots` a file glob left
+/// behind (`0` when GLOB_DOTS is off) makes `?` and `*` skip a leading `.`.
+///
+/// !!! RUST-ONLY HELPER !!! — no C counterpart, so it lives outside `src/ported/`.
+pub fn publish_patflags(flags: i32) {
+    use std::sync::atomic::Ordering;
+    crate::ported::pattern::patflags.store(flags, Ordering::Relaxed);
+    crate::ported::pattern::globdots.store(
+        i32::from((flags & crate::ported::zsh_h::PAT_NOGLD as i32) == 0),
+        Ordering::Relaxed,
+    );
+}

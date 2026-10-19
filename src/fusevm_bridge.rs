@@ -22042,7 +22042,6 @@ impl fusevm::ShellHost for ZshrsHost {
                 );
             }
         }
-<<<<<<< Updated upstream
         // The `( … )` BUILTIN_SUBSH_FORK forked this process for has finished:
         // the child exits with the subshell's status (c:Src/exec.c:4383-4389).
         let depth = with_executor(|exec| exec.subshell_snapshots.len());
@@ -22057,13 +22056,11 @@ impl fusevm::ShellHost for ZshrsHost {
             let _ = std::io::stderr().flush();
             unsafe { libc::_exit(status) };
         }
-=======
         // !!! DROP-IN GATE (no C counterpart) !!! bash, dash and mksh run the
         // parent's CHLD trap when the forked `( … )` child exits; the in-process
         // subshell has no child to reap, so the trap is run here instead. It
         // runs after the state below is restored, on the parent's trap table.
         let run_chld_trap = crate::dash_mode::chld_trap_on_child_exit();
->>>>>>> Stashed changes
         with_executor(|exec| {
             // c:Src/exec.c::entersubsh — the subshell is a forked child, so a
             // NOMATCH failure raised inside it (c:Src/glob.c:1877) lives and
