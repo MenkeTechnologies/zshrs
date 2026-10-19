@@ -13197,10 +13197,8 @@ pub fn paramsubst(
                         // converted to the 0-based offset; getstrvalue's
                         // scalar tail (not the array slicer) clamps a
                         // negative start to 0.
-                        let chars_flat: Vec<char> =
-                            s_chars.iter().flat_map(|c| c.chars()).collect();
                         let c_start = if lo > 0 { lo - 1 } else { lo };
-                        crate::scalar_range_cut::str_range_cut(&chars_flat, c_start, hi)
+                        crate::scalar_range_cut::units_range_cut(&s_chars, c_start, hi)
                     } else {
                         String::new()
                     }
