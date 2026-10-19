@@ -958,7 +958,7 @@ pub(crate) fn mathevall(prec_tp: prec_type) -> Result<mnumber, String> {
 /// C math.c:856 calls `getkeystring(ptr, NULL, GETKEYS_MATH, &v)` — the
 /// shared 200-line key-string decoder run in GETKEY_SINGLE_CHAR mode
 /// (decode exactly ONE char, report bytes consumed). zshrs's
-/// `getkeystring_with` loops the whole string and has no single-char
+/// `getkeystring` loops the whole string and has no single-char
 /// mode, and the math lexer advances a char cursor (not a byte ptr), so
 /// this small adapter decodes just the one escaped char at the cursor
 /// and returns (code, chars-consumed). It mirrors the GETKEYS_MATH flag
