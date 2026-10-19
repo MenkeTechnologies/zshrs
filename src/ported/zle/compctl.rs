@@ -6524,6 +6524,8 @@ mod tests {
         let _g = zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut p = PATCOMPS.write().unwrap();
+        // Shared state: other tests may have left entries behind.
+        p.clear();
         p.push(("foo*".to_string(), Arc::new(Compctl::default())));
         p.push(("bar*".to_string(), Arc::new(Compctl::default())));
         drop(p);
