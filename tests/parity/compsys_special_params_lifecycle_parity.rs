@@ -123,9 +123,11 @@ fn stock_function_dir() -> Option<String> {
     (!d.is_empty()).then_some(d)
 }
 
-/// `_suffix_alias_files` (zsh-5.9.1 tag) has no `(#q^/)` qualifier — that
-/// line is a dev-branch change (workers/50307) — and backslash-quotes each
-/// alias name with `(q)`, so the candidate count is the verdict.
+/// `_suffix_alias_files` backslash-quotes each alias name with `(kq)`, and
+/// without AUTO_CD appends `(#q^/)` (workers/50307), so the candidate count
+/// is the verdict. That qualifier needs EXTENDED_GLOB, which `_main_complete`
+/// sets for a real completion; the widget calls the function directly, so it
+/// sets it itself (without it the reference zsh aborts on a bad pattern).
 fn suffix_alias_driver(alias: &str) -> Option<String> {
     let fdir = stock_function_dir()?;
     let dir = std::env::temp_dir().join(format!(
@@ -142,7 +144,7 @@ fn suffix_alias_driver(alias: &str) -> Option<String> {
         "cd {}; fpath=({fdir}); autoload -U $fpath[1]/_*(:t); {alias}",
         dir.display()
     ));
-    let body = r#"_suffix_alias_files; print -r -- "rc=$? N=$compstate[nmatches]" >! $OUTFILE 2>&1"#;
+    let body = r#"setopt localoptions extendedglob; _suffix_alias_files; print -r -- "rc=$? N=$compstate[nmatches]" >! $OUTFILE 2>&1"#;
     let driver = widget_driver(body, "");
     Some(driver.replacen(
         "zpty -w -n w 'echo ab'",
@@ -151,8 +153,8 @@ fn suffix_alias_driver(alias: &str) -> Option<String> {
     ))
 }
 
-/// With AUTO_CD unset the 5.9.1 pattern still matches the directory
-/// `d.txt`, so both `a.txt` and `d.txt` are candidates.
+/// With AUTO_CD unset `(#q^/)` drops the directory `d.txt`: only `a.txt` is a
+/// candidate.
 #[test]
 fn suffix_alias_files_keeps_directories() {
     let Some(driver) = suffix_alias_driver("alias -s txt=cat") else {
