@@ -583,7 +583,7 @@ fn stringsubstquote(strstart: &str, pstrdpos: usize) -> (String, usize) {
     // the flags carry GETKEY_DOLLAR_QUOTE, which enables the POSIX_STRINGS
     // NUL cut (c:Src/utils.c:7283-7287) that `setopt posixstrings; print
     // $'a\0b'` on one line relies on.
-    let (strsub, _) = crate::ported::utils::getkeystring_with(
+    let (strsub, _) = crate::ported::utils::getkeystring(
         &content,
         crate::ported::zsh_h::GETKEYS_DOLLARS_QUOTE as u32,
         None,
@@ -3539,7 +3539,7 @@ pub fn untok_and_escape(s: &str, escapes: bool, tok_arg: bool) -> String {
                 // c:1544
                 // C: `dst = getkeystring(dst, &klen,
                 //          GETKEYS_SEP, NULL); dst = pastebuf(...);`
-                getkeystring(&untoked).0 // c:1545
+                getkeystring(&untoked, crate::ported::zsh_h::GETKEYS_SEP as u32, None).0 // c:1547
             } else {
                 untoked // c:1543
             }
@@ -12109,7 +12109,7 @@ pub fn paramsubst(
                                         // so `\t`/`\n`/`\NNN` decode to the literal
                                         // bytes (`(pws:\t:)` splits on a real TAB).
                                         if escapes {
-                                            body = crate::ported::utils::getkeystring_with(
+                                            body = crate::ported::utils::getkeystring(
                                                 &body,
                                                 (crate::ported::zsh_h::GETKEY_OCTAL_ESC
                                                     | crate::ported::zsh_h::GETKEY_EMACS)
@@ -12823,7 +12823,7 @@ pub fn paramsubst(
                                                     }
                                                     if w_escapes {
                                                         // c:1488-1492
-                                                        b = crate::ported::utils::getkeystring_with(
+                                                        b = crate::ported::utils::getkeystring(
                                                             &b,
                                                             (crate::ported::zsh_h::GETKEY_OCTAL_ESC
                                                                 | crate::ported::zsh_h::GETKEY_EMACS)
@@ -23249,7 +23249,7 @@ pub fn paramsubst(
         // getkeystring `$'…'` processor. No C counterpart; --bash only.
         if bash_at_e {
             let e = |s: &str| -> String {
-                crate::ported::utils::getkeystring_with(
+                crate::ported::utils::getkeystring(
                     s,
                     crate::ported::zsh_h::GETKEYS_DOLLARS_QUOTE as u32,
                     None,
@@ -24224,7 +24224,7 @@ pub fn paramsubst(
                         }
                     }
                     let body: String = chars_v[body_start..j].iter().collect();
-                    let (decoded, _) = getkeystring(&body); // c:2261
+                    let (decoded, _) = getkeystring(&body, crate::ported::zsh_h::GETKEYS_DOLLARS_QUOTE as u32, None); // c:212
                     out.push_str(&decoded);
                     i = if j < chars_v.len() { j + 1 } else { j };
                     continue;
@@ -24890,7 +24890,7 @@ pub fn paramsubst(
             // processed `\c`/`\C` unconditionally, so `${(g::)$'\cb'}` wrongly
             // gave `^B` instead of the literal `\cb`.
             let decode_one = |s: &str| -> String {
-                crate::ported::utils::getkeystring_with(s, getkeys as u32, None).0
+                crate::ported::utils::getkeystring(s, getkeys as u32, None).0
             };
             // c:3959 `if (isarr)` — the per-element arm fires only while the
             // expansion is STILL array-shaped HERE. c:3029-3036 has already
@@ -30866,11 +30866,11 @@ mod tests {
     fn test_getkeystring() {
         let _g = crate::test_util::global_state_lock();
         // utils.c:6915
-        assert_eq!(getkeystring("hello").0, "hello"); // utils.c:6915
-        assert_eq!(getkeystring("hello\\nworld").0, "hello\nworld"); // utils.c:6915
-        assert_eq!(getkeystring("\\t\\r\\n").0, "\t\r\n"); // utils.c:6915
-        assert_eq!(getkeystring("\\x41").0, "A"); // utils.c:6915
-        assert_eq!(getkeystring("\\u0041").0, "A"); // utils.c:6915
+        assert_eq!(getkeystring("hello", 0, None).0, "hello"); // utils.c:6915
+        assert_eq!(getkeystring("hello\\nworld", 0, None).0, "hello\nworld"); // utils.c:6915
+        assert_eq!(getkeystring("\\t\\r\\n", 0, None).0, "\t\r\n"); // utils.c:6915
+        assert_eq!(getkeystring("\\x41", 0, None).0, "A"); // utils.c:6915
+        assert_eq!(getkeystring("\\u0041", 0, None).0, "A"); // utils.c:6915
     } // utils.c:6915
 
     #[test]
@@ -31120,12 +31120,12 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // utils.c:6915
         // utils.c — \n \t \r \a \b \f \v \\ \' \"
-        assert_eq!(getkeystring("\\n").0, "\n"); // utils.c:6915
-        assert_eq!(getkeystring("\\t").0, "\t"); // utils.c:6915
-        assert_eq!(getkeystring("\\r").0, "\r"); // utils.c:6915
-        assert_eq!(getkeystring("\\\\").0, "\\"); // utils.c:6915
+        assert_eq!(getkeystring("\\n", 0, None).0, "\n"); // utils.c:6915
+        assert_eq!(getkeystring("\\t", 0, None).0, "\t"); // utils.c:6915
+        assert_eq!(getkeystring("\\r", 0, None).0, "\r"); // utils.c:6915
+        assert_eq!(getkeystring("\\\\", 0, None).0, "\\"); // utils.c:6915
                                                   // Trailing literal — no escape consumed.
-        assert_eq!(getkeystring("plain").0, "plain"); // utils.c:6915
+        assert_eq!(getkeystring("plain", 0, None).0, "plain"); // utils.c:6915
     } // utils.c:6915
 
     #[test] // utils.c:6915
@@ -31133,8 +31133,8 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // utils.c:6915
         // utils.c handles `\xNN` (1-2 hex digits).
-        assert_eq!(getkeystring("\\x41").0, "A"); // 0x41 = 'A' // utils.c:6915
-        assert_eq!(getkeystring("\\x7e").0, "~"); // utils.c:6915
+        assert_eq!(getkeystring("\\x41", 0, None).0, "A"); // 0x41 = 'A' // utils.c:6915
+        assert_eq!(getkeystring("\\x7e", 0, None).0, "~"); // utils.c:6915
     } // utils.c:6915
 
     #[test] // utils.c:6915
@@ -31142,8 +31142,8 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // utils.c:6915
         // utils.c `\uNNNN` form for BMP code points.
-        assert_eq!(getkeystring("\\u00e9").0, "é"); // utils.c:6915
-        assert_eq!(getkeystring("\\u4e2d").0, "中"); // utils.c:6915
+        assert_eq!(getkeystring("\\u00e9", 0, None).0, "é"); // utils.c:6915
+        assert_eq!(getkeystring("\\u4e2d", 0, None).0, "中"); // utils.c:6915
     } // utils.c:6915
 
     // ─── paramsubst — bare ${VAR} ───────────────────────────────────

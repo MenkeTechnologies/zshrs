@@ -20,7 +20,7 @@ use crate::ported::zle::{
 /// indexed by. The C version fills a buffer in place and writes the length
 /// through an out pointer; this returns a fresh `Vec<u8>`.
 ///
-/// Delegates to the one canonical decoder (`utils::getkeystring_with`) rather
+/// Delegates to the one canonical decoder (`utils::getkeystring`) rather
 /// than re-deriving the escape vocabulary. This body used to be a hand-rolled
 /// approximation and disagreed with C on every flag-gated arm:
 ///   - `\M-x` pushed ESC + `x`, where C sets the META BIT (c:7029-7038 then
@@ -36,13 +36,13 @@ use crate::ported::zle::{
 ///   - `\u`/`\U` were unhandled, and the hex arm dropped its output on an
 ///     out-of-range parse.
 ///
-/// `getkeystring_with` returns a char-level METAFIED String (high bytes as
+/// `getkeystring` returns a char-level METAFIED String (high bytes as
 /// `Meta` + `c ^ 32`) because a Rust String must stay valid UTF-8; the keymap
 /// trie indexes RAW bytes, so unmetafy back to bytes on the way out.
 /// Port of `getkeystring()` from `Src/utils.c:6915`.
 pub fn getkeystring(s: &str) -> Vec<u8> {
     // c:utils.c:6915 via c:Src/Zle/zle_keymap.c:1022
-    let (decoded, _) = crate::ported::utils::getkeystring_with(
+    let (decoded, _) = crate::ported::utils::getkeystring(
         s,
         crate::ported::zsh_h::GETKEYS_BINDKEY as u32, // c:zle_keymap.c:1022
         None,

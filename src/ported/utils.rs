@@ -6381,7 +6381,7 @@ pub fn zbeep() {
     queue_signals(); // c:4105
     if let Ok(zbeep) = std::env::var("ZBEEP") {
         // c:4109
-        let (decoded, _) = getkeystring(&zbeep); // c:4111
+        let (decoded, _) = getkeystring(&zbeep, crate::ported::zsh_h::GETKEYS_BINDKEY as u32, None); // c:4113
         #[cfg(unix)]
         {
             let shtty = SHTTY.load(Ordering::Relaxed);
@@ -10335,348 +10335,6 @@ pub fn ucs4tomb(wval: u32, buf: &mut [u8]) -> i32 {
     }
 }
 
-/// Port of `getkeystring()` from `Src/utils.c:6915` — C decl `getkeystring(char *s, int *len, int how, int *misc)`.
-///
-/// Parse getkeystring escape sequences (from utils.c getkeystring)
-/// Handles \n \t \r \e \a \b \f \v \\ \' \" \xNN \uNNNN \UNNNNNNNN \0NNN
-/// WARNING: param names don't match C — Rust=(s) vs C=(s, len, how, misc)
-pub fn getkeystring(s: &str) -> (String, usize) {
-    // c:6915
-    let mut result = String::new();
-    let mut chars = s.chars().peekable();
-    let mut consumed = 0;
-
-    while let Some(c) = chars.next() {
-        consumed += c.len_utf8();
-        if c != '\\' {
-            result.push(c);
-            continue;
-        }
-        match chars.next() {
-            Some('n') => {
-                result.push('\n');
-                consumed += 1;
-            }
-            Some('t') => {
-                result.push('\t');
-                consumed += 1;
-            }
-            Some('r') => {
-                result.push('\r');
-                consumed += 1;
-            }
-            Some('e') | Some('E') => {
-                result.push('\x1b');
-                consumed += 1;
-            }
-            Some('a') => {
-                result.push('\x07');
-                consumed += 1;
-            }
-            Some('b') => {
-                result.push('\x08');
-                consumed += 1;
-            }
-            Some('f') => {
-                result.push('\x0c');
-                consumed += 1;
-            }
-            Some('v') => {
-                result.push('\x0b');
-                consumed += 1;
-            }
-            Some('\\') => {
-                result.push('\\');
-                consumed += 1;
-            }
-            Some('\'') => {
-                result.push('\'');
-                consumed += 1;
-            }
-            Some('"') => {
-                result.push('"');
-                consumed += 1;
-            }
-            Some('x') => {
-                consumed += 1;
-                let mut hex = String::new();
-                for _ in 0..2 {
-                    if let Some(&c) = chars.peek() {
-                        if c.is_ascii_hexdigit() {
-                            hex.push(chars.next().unwrap());
-                            consumed += 1;
-                        } else {
-                            break;
-                        }
-                    }
-                }
-                // c:Src/utils.c:7169-7170 — `\x` ALWAYS runs `*t++ =
-                // zstrtol(s+1, &s, 16)`, even with no hex digit. zstrtol
-                // over a non-hex byte parses zero digits and returns 0, so
-                // a NUL byte is emitted (the offending char is processed
-                // next). `$'\xg'` → NUL + 'g'; `$'\x'` → NUL. Previously
-                // `from_str_radix("")` errored and nothing was pushed.
-                let val: u8 = if hex.is_empty() {
-                    0 // c:7170 zstrtol on empty reads as 0
-                } else {
-                    u8::from_str_radix(&hex, 16).unwrap_or(0)
-                };
-                // c:Src/utils.c — `\xNN` is one raw BYTE; metafied
-                // per c:7289-7294 (vm_helper::meta_encode_byte) so
-                // the String stays valid UTF-8. Bug #127.
-                {
-                    // c:Src/utils.c metafy byte-encode step:
-                    // `if (imeta(c)) {{ *p++ = Meta; *p++ = c ^ 32; }}`
-                    let b_ = val;
-                    if b_ < 0x80 {
-                        result.push(b_ as char);
-                    } else {
-                        result.push('\u{83}');
-                        result.push(char::from(b_ ^ 32));
-                    }
-                }
-            }
-            Some('u') => {
-                consumed += 1;
-                let mut hex = String::new();
-                for _ in 0..4 {
-                    if let Some(&c) = chars.peek() {
-                        if c.is_ascii_hexdigit() {
-                            hex.push(chars.next().unwrap());
-                            consumed += 1;
-                        } else {
-                            break;
-                        }
-                    }
-                }
-                if let Ok(val) = u32::from_str_radix(&hex, 16) {
-                    if let Some(c) = char::from_u32(val) {
-                        result.push(c);
-                    }
-                }
-            }
-            Some('U') => {
-                consumed += 1;
-                let mut hex = String::new();
-                for _ in 0..8 {
-                    if let Some(&c) = chars.peek() {
-                        if c.is_ascii_hexdigit() {
-                            hex.push(chars.next().unwrap());
-                            consumed += 1;
-                        } else {
-                            break;
-                        }
-                    }
-                }
-                if let Ok(val) = u32::from_str_radix(&hex, 16) {
-                    if let Some(c) = char::from_u32(val) {
-                        result.push(c);
-                    }
-                }
-            }
-            Some(c @ '0'..='7') => {
-                consumed += 1;
-                let mut oct = String::new();
-                oct.push(c);
-                for _ in 0..2 {
-                    if let Some(&c) = chars.peek() {
-                        if ('0'..='7').contains(&c) {
-                            oct.push(chars.next().unwrap());
-                            consumed += 1;
-                        } else {
-                            break;
-                        }
-                    }
-                }
-                if let Ok(val) = u8::from_str_radix(&oct, 8) {
-                    // c:Src/utils.c — octal escape is one raw BYTE;
-                    // metafied per c:7289-7294. Bug #127.
-                    {
-                        // c:Src/utils.c metafy byte-encode step:
-                        // `if (imeta(c)) {{ *p++ = Meta; *p++ = c ^ 32; }}`
-                        let b_ = val;
-                        if b_ < 0x80 {
-                            result.push(b_ as char);
-                        } else {
-                            result.push('\u{83}');
-                            result.push(char::from(b_ ^ 32));
-                        }
-                    }
-                }
-            }
-            Some('c') => {
-                consumed += 1;
-                // \cX = control character
-                if let Some(c) = chars.next() {
-                    consumed += 1;
-                    result.push((c as u8 & 0x1f) as char);
-                }
-            }
-            Some(mod_letter @ ('C' | 'M')) => {
-                // c:Src/utils.c:7029-7052 + c:7265-7275 — `\C` /
-                // `\M` set control / meta flags; optional `-`
-                // separator; then read the next char (possibly
-                // through additional `\C`/`\M` chains) and apply
-                // the mask: control → `& 0x9f` (or `\C-?` → 0x7f),
-                // meta → `| 0x80`. Bug #113 in docs/BUGS.md: the
-                // previous Rust port matched these in the default
-                // arm and emitted literal `\C` / `\M`. This is the
-                // second getkeystring (utils.rs); the in-tree
-                // `getkeystring_dollar_quote` (lex.rs) also needs
-                // the fix and gets it in the same commit.
-                consumed += 1;
-                let mut control = mod_letter == 'C';
-                let mut meta = mod_letter == 'M';
-                // Consume optional `-` separator + chained `\C`/`\M`.
-                loop {
-                    if chars.peek() == Some(&'-') {
-                        chars.next();
-                        consumed += 1;
-                        continue;
-                    }
-                    // chained `\C` / `\M`?
-                    let mut iter_clone = chars.clone();
-                    if iter_clone.next() == Some('\\') {
-                        if let Some(nx) = iter_clone.next() {
-                            if nx == 'C' || nx == 'M' {
-                                chars.next(); // consume '\'
-                                chars.next(); // consume C/M
-                                consumed += 2;
-                                if nx == 'C' {
-                                    control = true;
-                                } else {
-                                    meta = true;
-                                }
-                                continue;
-                            }
-                        }
-                    }
-                    break;
-                }
-                // Read one base character (allowing nested simple
-                // escapes for common cases).
-                let base: Option<char> = if chars.peek() == Some(&'\\') {
-                    chars.next();
-                    consumed += 1;
-                    match chars.next() {
-                        Some('n') => {
-                            consumed += 1;
-                            Some('\n')
-                        }
-                        Some('t') => {
-                            consumed += 1;
-                            Some('\t')
-                        }
-                        Some('r') => {
-                            consumed += 1;
-                            Some('\r')
-                        }
-                        Some('a') => {
-                            consumed += 1;
-                            Some('\x07')
-                        }
-                        Some('b') => {
-                            consumed += 1;
-                            Some('\x08')
-                        }
-                        Some('e') | Some('E') => {
-                            consumed += 1;
-                            Some('\x1b')
-                        }
-                        Some('f') => {
-                            consumed += 1;
-                            Some('\x0c')
-                        }
-                        Some('v') => {
-                            consumed += 1;
-                            Some('\x0b')
-                        }
-                        Some('\\') => {
-                            consumed += 1;
-                            Some('\\')
-                        }
-                        Some('\'') => {
-                            consumed += 1;
-                            Some('\'')
-                        }
-                        Some('"') => {
-                            consumed += 1;
-                            Some('"')
-                        }
-                        Some(other) => {
-                            consumed += 1;
-                            Some(other)
-                        }
-                        None => None,
-                    }
-                } else {
-                    chars.next().inspect(|c| {
-                        consumed += c.len_utf8();
-                    })
-                };
-                if let Some(ch) = base {
-                    let mut byte = ch as u32;
-                    if control {
-                        if byte == '?' as u32 {
-                            byte = 0x7f;
-                        } else {
-                            byte &= 0x9f;
-                        }
-                    }
-                    if meta {
-                        byte |= 0x80;
-                    }
-                    // c:Src/utils.c:7265-7275 — masked result is one
-                    // raw BYTE (`$'\M-i'` = 0xe9), metafied per
-                    // c:7289-7294. Multibyte base chars (> 0xff)
-                    // keep the codepoint form. Bug #127.
-                    if byte <= 0xff {
-                        {
-                            // c:Src/utils.c metafy byte-encode step:
-                            // `if (imeta(c)) {{ *p++ = Meta; *p++ = c ^ 32; }}`
-                            let b_ = byte as u8;
-                            if b_ < 0x80 {
-                                result.push(b_ as char);
-                            } else {
-                                result.push('\u{83}');
-                                result.push(char::from(b_ ^ 32));
-                            }
-                        }
-                    } else if let Some(c) = char::from_u32(byte) {
-                        result.push(c);
-                    }
-                }
-            }
-            Some(c)
-                if isset(BANGHIST)
-                    && crate::ported::hist::bangchar.load(std::sync::atomic::Ordering::SeqCst)
-                        != 0
-                    && c as u32
-                        == crate::ported::hist::bangchar.load(std::sync::atomic::Ordering::SeqCst)
-                            as u32 =>
-            {
-                // The reverse of quotestring's BANGHIST escape (c:Src/utils.c:6230
-                // — `\!` is emitted for the history char): unquoting `$'a\!b'`
-                // must strip the backslash so `${(Q)${(qqqq)v}}` round-trips.
-                // In zsh this happens because `(Q)` re-lexes the string and
-                // history expansion consumes the `\<bangchar>`; here the decoder
-                // consumes it directly.
-                consumed += 1;
-                result.push(c);
-            }
-            Some(c) => {
-                consumed += 1;
-                result.push('\\');
-                result.push(c);
-            }
-            None => {
-                result.push('\\');
-            }
-        }
-    }
-    (result, consumed)
-}
-
 /// Check if s is a prefix of t (from utils.c strpfx)
 // Return non-zero if s is a prefix of t.                                  // c:7345
 /// Port of `strpfx()` from `Src/utils.c:7334`.
@@ -11515,7 +11173,7 @@ pub static RESETNEEDED: std::sync::atomic::AtomicI32 = std::sync::atomic::Atomic
 pub static WINCHANGED: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:1827
 
 /// Port of C's `GETKEY_*` flag enumeration from `Src/zsh.h:3143`.
-/// Passed to `getkeystring_with` to alter escape interpretation:
+/// Passed to `getkeystring` to alter escape interpretation:
 ///   - GETKEY_OCTAL_ESC: `\NNN` octal escapes are interpreted (1<<0)
 ///   - GETKEY_EMACS: unknown `\<char>` drops the backslash (1<<1)
 ///   - GETKEY_BACKSLASH_C: `\c` truncates the result (1<<3)
@@ -12121,7 +11779,7 @@ pub fn getppid() -> i32 {
 /// limitation documented on `set_comp_sep` (compcore.rs), not new here.
 ///
 /// Callers with no offset to track pass `misc = None`.
-pub fn getkeystring_with(s: &str, how: u32, mut misc: Option<&mut i32>) -> (String, usize) {
+pub fn getkeystring(s: &str, how: u32, mut misc: Option<&mut i32>) -> (String, usize) {
     // c:utils.c:6915
     let update_off = (how & crate::ported::zsh_h::GETKEY_UPDATE_OFFSET as u32) != 0;
     let bash_dollar_quote = (how & crate::ported::zsh_h::GETKEY_DOLLAR_QUOTE as u32) != 0
@@ -12633,7 +12291,7 @@ pub fn getkeystring_with(s: &str, how: u32, mut misc: Option<&mut i32>) -> (Stri
             // print / print -b / $'…' have it, echo does not (so echo keeps
             // `\C-a` literal via the default arm). Mirrors the same handler
             // already present in `getkeystring` (utils.rs) and
-            // `getkeystring_dollar_quote` (lex.rs); print's `getkeystring_with`
+            // `getkeystring_dollar_quote` (lex.rs); print's `getkeystring`
             // path lacked it, so `print "\C-a"` emitted literal `C-a`.
             Some(mod_letter @ ('C' | 'M')) if (how & GETKEY_EMACS) != 0 => {
                 consumed += 1;
@@ -12817,7 +12475,7 @@ pub fn getkeystring_with(s: &str, how: u32, mut misc: Option<&mut i32>) -> (Stri
 }
 
 thread_local! {
-    /// Sticky flag set by `getkeystring_with` when a `\c` escape
+    /// Sticky flag set by `getkeystring` when a `\c` escape
     /// truncates the input under `GETKEY_BACKSLASH_C`. The caller
     /// (bin_print / bin_echo) reads + clears via `getkey_truncated_take()`
     /// to suppress the trailing newline and skip any subsequent args
@@ -12829,10 +12487,10 @@ thread_local! {
 /// !!! WARNING: RUST-ONLY HELPER !!! No C counterpart exists as a
 /// standalone function.
 /// C returns the `\c`-truncation signal through `getkeystring`'s `int *misc`
-/// out-parameter (`Src/utils.c:6915`). Rust's `getkeystring_with` records it
+/// out-parameter (`Src/utils.c:6915`). Rust's `getkeystring` records it
 /// in a thread-local instead; this reads and clears that flag.
 /// Read + clear the `\c`-truncated flag set by the previous
-/// `getkeystring_with` call. Returns true once after a truncation
+/// `getkeystring` call. Returns true once after a truncation
 /// fires, false otherwise.
 pub fn getkey_truncated_take() -> bool {
     GETKEY_TRUNCATED.with(|c| {
@@ -16955,45 +16613,45 @@ mod tests {
     /// Anchor: `print -r -- $'\n\t\r'` produces the three bytes.
     #[test]
     fn getkeystring_decodes_common_escapes() {
-        assert_eq!(getkeystring("\\n").0, "\n");
-        assert_eq!(getkeystring("\\t").0, "\t");
-        assert_eq!(getkeystring("\\r").0, "\r");
+        assert_eq!(getkeystring("\\n", 0, None).0, "\n");
+        assert_eq!(getkeystring("\\t", 0, None).0, "\t");
+        assert_eq!(getkeystring("\\r", 0, None).0, "\r");
     }
 
     /// `\\` → single backslash.
     #[test]
     fn getkeystring_double_backslash_yields_single() {
-        assert_eq!(getkeystring("\\\\").0, "\\");
+        assert_eq!(getkeystring("\\\\", 0, None).0, "\\");
     }
 
     /// `\xNN` hex escape → byte value.
     /// Anchor: `print -r -- $'\x41'` → "A" (0x41 = 65 = 'A').
     #[test]
     fn getkeystring_hex_escape_lowercase_x() {
-        assert_eq!(getkeystring("\\x41").0, "A");
-        assert_eq!(getkeystring("\\x7E").0, "~");
+        assert_eq!(getkeystring("\\x41", 0, None).0, "A");
+        assert_eq!(getkeystring("\\x7E", 0, None).0, "~");
     }
 
     /// `\u{NNNN}` Unicode escape → corresponding char.
     /// Anchor: `print -r -- $'é'` → "é".
     #[test]
     fn getkeystring_unicode_escape_u_four_digits() {
-        assert_eq!(getkeystring("\\u00E9").0, "é");
+        assert_eq!(getkeystring("\\u00E9", 0, None).0, "é");
     }
 
     /// Plain text passes through unchanged.
     #[test]
     fn getkeystring_plain_text_passes_through() {
-        assert_eq!(getkeystring("hello").0, "hello");
-        assert_eq!(getkeystring("").0, "");
+        assert_eq!(getkeystring("hello", 0, None).0, "hello");
+        assert_eq!(getkeystring("", 0, None).0, "");
     }
 
     /// Mixed plain + escapes → both handled.
     #[test]
     fn getkeystring_mixed_text_and_escapes() {
-        assert_eq!(getkeystring("a\\nb").0, "a\nb");
+        assert_eq!(getkeystring("a\\nb", 0, None).0, "a\nb");
         assert_eq!(
-            getkeystring("line1\\nline2\\tindented").0,
+            getkeystring("line1\\nline2\\tindented", 0, None).0,
             "line1\nline2\tindented"
         );
     }

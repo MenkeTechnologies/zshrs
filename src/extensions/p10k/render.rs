@@ -226,7 +226,7 @@ fn get_icon(seg: Option<&Segment>, key: &str, default: &str) -> String {
     match user {
         Some(v) => {
             // p10k:524 — _p9k__ret=${(g::)_p9k__ret}
-            let decoded = getkeystring(&v).0;
+            let decoded = getkeystring(&v, 0, None).0;
             // p10k:525 — [[ $_p9k__ret != $'\b'? ]] || _p9k__ret="%{$_p9k__ret%}"
             // — "penance for past sins": backspace + exactly one char
             // becomes a zero-width %{...%} group.
@@ -492,7 +492,7 @@ fn render_left_segment(seg: &Segment, joined: bool, st: &mut LeftState, out: &mu
     // "false" keeps the left-side default of icon first.
     if seg_param(seg, "ICON_BEFORE_CONTENT", "") != "false" {
         // Icon-first branch (p10k:763-791).
-        let prefix = getkeystring(&seg_param(seg, "PREFIX", "")).0; // p10k:763-765 ${(g::)}
+        let prefix = getkeystring(&seg_param(seg, "PREFIX", ""), 0, None).0; // p10k:763-765 ${(g::)}
         out.push_str(&prefix);
         let need_style = prefix.contains('%'); // p10k:767
         if has_icon {
@@ -521,7 +521,7 @@ fn render_left_segment(seg: &Segment, joined: bool, st: &mut LeftState, out: &mu
         out.push_str(&style);
     } else {
         // Icon-last branch (p10k:792-817).
-        let prefix = getkeystring(&seg_param(seg, "PREFIX", "")).0; // p10k:793-796
+        let prefix = getkeystring(&seg_param(seg, "PREFIX", ""), 0, None).0; // p10k:793-796
         out.push_str(&prefix);
         if prefix.contains('%') {
             out.push_str(&style); // p10k:797
@@ -545,7 +545,7 @@ fn render_left_segment(seg: &Segment, joined: bool, st: &mut LeftState, out: &mu
     }
 
     // p10k:819-824 — SUFFIX then trailing whitespace.
-    let suffix = getkeystring(&seg_param(seg, "SUFFIX", "")).0;
+    let suffix = getkeystring(&seg_param(seg, "SUFFIX", ""), 0, None).0;
     out.push_str(&suffix);
     if suffix.contains('%') && !right_space.is_empty() {
         out.push_str(&style); // p10k:823
@@ -748,7 +748,7 @@ fn render_right_segment(
     // unless ICON_BEFORE_CONTENT is the literal "true".
     if seg_param(seg, "ICON_BEFORE_CONTENT", "") != "true" {
         // Content-first branch (p10k:994-1017).
-        let prefix = getkeystring(&seg_param(seg, "PREFIX", "")).0; // p10k:994-997
+        let prefix = getkeystring(&seg_param(seg, "PREFIX", ""), 0, None).0; // p10k:994-997
         out.push_str(&prefix);
         if prefix.contains('%') {
             out.push_str(&style); // p10k:998
@@ -770,7 +770,7 @@ fn render_right_segment(
         }
     } else {
         // Icon-first branch (p10k:1019-1047).
-        let prefix = getkeystring(&seg_param(seg, "PREFIX", "")).0;
+        let prefix = getkeystring(&seg_param(seg, "PREFIX", ""), 0, None).0;
         out.push_str(&prefix);
         let need_style = prefix.contains('%'); // p10k:1023
         if has_icon {
@@ -797,7 +797,7 @@ fn render_right_segment(
     }
 
     // p10k:1050-1053 — SUFFIX (no style/space handling on the right).
-    let suffix = getkeystring(&seg_param(seg, "SUFFIX", "")).0;
+    let suffix = getkeystring(&seg_param(seg, "SUFFIX", ""), 0, None).0;
     out.push_str(&suffix);
 
     // p10k:1055-1067 — the deferred `_p9k__w`: trailing whitespace +
@@ -940,7 +940,7 @@ fn prompt_visible_width(s: &str) -> usize {
 
 /// p10k:8240 — `${(g::)_POWERLEVEL9K_EMPTY_LINE_RIGHT_PROMPT_FIRST_SEGMENT_START_SYMBOL}`.
 fn empty_line_right_symbol() -> String {
-    getkeystring(&p9k_global("EMPTY_LINE_RIGHT_PROMPT_FIRST_SEGMENT_START_SYMBOL", "")).0
+    getkeystring(&p9k_global("EMPTY_LINE_RIGHT_PROMPT_FIRST_SEGMENT_START_SYMBOL", ""), 0, None).0
 }
 
 /// p10k:8126 — `_p9k__ind::=${${ZLE_RPROMPT_INDENT:-1}/#-*/0}`:

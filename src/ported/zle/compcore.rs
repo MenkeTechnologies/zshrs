@@ -2790,7 +2790,7 @@ pub fn comp_quoting_string(stype: i32) -> &'static str {
 /// `get_comp_string` quote-form tail; see that function's note.
 ///
 /// The `QT_DOLLARS` (`$'...'`) arm (c:1613-1622) is fully wired: the
-/// `getkeystring_with` decode applies `GETKEY_UPDATE_OFFSET`, so
+/// `getkeystring` decode applies `GETKEY_UPDATE_OFFSET`, so
 /// both the `dolq` byte-count delta and the `css += zlemetacs - j`
 /// cursor micro-adjustment are computed (inheriting the same non-ASCII
 /// byte/char caveat noted above).
@@ -2801,7 +2801,7 @@ pub fn set_comp_sep() -> i32 {
         LEX_LEXFLAGS,
     };
     use crate::ported::string::{dupstring_wlen, tricat};
-    use crate::ported::utils::getkeystring_with;
+    use crate::ported::utils::getkeystring;
     use crate::ported::zle::comp_h::{CP_QUOTE, CP_QUOTING};
     // COMPPREFIX/COMPSUFFIX/COMPIPREFIX/COMPQSTACK are already imported at
     // the module top; only the remaining comp* globals are pulled in here.
@@ -2991,10 +2991,10 @@ pub fn set_comp_sep() -> i32 {
         // `css += zlemetacs - j` (c:1621) folds the delta into the word
         // offset. GETKEYS_DOLLARS_QUOTE carries the port's decode flags;
         // GETKEY_UPDATE_OFFSET enables the offset bookkeeping in
-        // getkeystring_with.
+        // getkeystring.
         let j = ZLEMETACS.load(Ordering::Relaxed); // c:1614 — j = zlemetacs
         let mut zcs = j;
-        let (dec, _consumed) = getkeystring_with(
+        let (dec, _consumed) = getkeystring(
             &tmp,
             (GETKEYS_DOLLARS_QUOTE | GETKEY_UPDATE_OFFSET) as u32,
             Some(&mut zcs),

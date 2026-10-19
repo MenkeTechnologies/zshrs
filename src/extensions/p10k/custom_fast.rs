@@ -21,7 +21,7 @@
 //! own (`GETKEYS_ECHO`, same call the builtin makes).
 
 use crate::ported::params::{getaparam, getsparam, mypid};
-use crate::ported::utils::{getkeystring_with, GETKEYS_ECHO};
+use crate::ported::utils::{getkeystring, GETKEYS_ECHO};
 use std::sync::atomic::Ordering;
 
 /// Evaluate `cmd` against the live shell state, or `None` when it is
@@ -65,7 +65,7 @@ fn eval_with(
     if word.starts_with('-') {
         return None;
     }
-    Some(getkeystring_with(&word, GETKEYS_ECHO, None).0)
+    Some(getkeystring(&word, GETKEYS_ECHO, None).0)
 }
 
 /// The shell's double-quote pass over `inner` (the text between the

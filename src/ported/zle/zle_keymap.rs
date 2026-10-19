@@ -206,8 +206,8 @@ pub fn refkeymap_by_name(kmn: &str) {
     }
 }
 
-/// Port of `scanprimaryname(HashNode hn, int ignored)` from
-/// `Src/Zle/zle_keymap.c:224`. Per-node callback of the sorted
+/// Port of `scanprimaryname()` from `Src/Zle/zle_keymap.c:224` —
+/// C decl `scanprimaryname(HashNode hn, int ignored)`. Per-node callback of the sorted
 /// `scanhashtable` walk in [`unrefkeymap_by_name`]; C's `km_rename_me`
 /// file static is the `km_rename_me` argument and its `primary` slot is
 /// `found`.
@@ -232,8 +232,8 @@ pub fn scanprimaryname(
     }
 }
 
-/// Port of `unrefkeymap_by_name(KeymapName kmname)` from
-/// `Src/Zle/zle_keymap.c:246`. `kmname` / `km` are the node's name and
+/// Port of `unrefkeymap_by_name()` from `Src/Zle/zle_keymap.c:246` —
+/// C decl `unrefkeymap_by_name(KeymapName kmname)`. `kmname` / `km` are the node's name and
 /// `kmname->keymap`.
 /// ```c
 /// Keymap km = kmname->keymap;

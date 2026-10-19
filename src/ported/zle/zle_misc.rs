@@ -2310,7 +2310,7 @@ pub fn makesuffixstr(f: Option<&str>, s: Option<&str>, n: i32) {
         // c:1657 — `s = getkeystring(s, &i, GETKEYS_SUFFIX, &z);`
         // GETKEYS_SUFFIX carries GETKEY_BACKSLASH_MINUS, so `\-` sets `z` and
         // contributes no character to the removal set (c:Src/utils.c:7058).
-        let (decoded, _consumed) = crate::ported::utils::getkeystring_with(
+        let (decoded, _consumed) = crate::ported::utils::getkeystring(
             s_iter_start,
             crate::ported::zsh_h::GETKEYS_SUFFIX as u32,
             Some(&mut z),

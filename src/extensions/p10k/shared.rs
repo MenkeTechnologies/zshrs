@@ -75,7 +75,7 @@ pub(crate) fn esc_pct(s: &str) -> String {
 /// user-supplied icons/templates/mode strings (p10k:524 and every
 /// `_p9k_declare -e`).
 pub(crate) fn decode_g(s: &str) -> String {
-    getkeystring(s).0
+    getkeystring(s, 0, None).0
 }
 
 /// Port of `_p9k_get_icon $1 $2` (p10k:511-530) —

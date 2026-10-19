@@ -68,7 +68,7 @@ use crate::ported::pattern::{patcompile, pattry};
 use crate::ported::signals::settrap;
 use crate::ported::sort::strmetasort;
 use crate::ported::utils::{
-    argzero, errflag, fprintdir, getkeystring, getkeystring_with, getshfunc, gettempfile, lchdir,
+    argzero, errflag, fprintdir, getkeystring, getshfunc, gettempfile, lchdir,
     print_if_link, printprompt4, quotedzputs, scriptname_get, set_argzero, zerr, zerrnam, zwarn,
     zwarnnam, GETKEYS_BINDKEY, GETKEYS_ECHO, GETKEYS_PRINT,
 };
@@ -14436,7 +14436,7 @@ pub fn bin_print(
             } else {
                 a.clone()
             };
-            let (s, _) = getkeystring_with(a, escape_how, None);
+            let (s, _) = getkeystring(a, escape_how, None);
             new_args.push(s);
             if crate::ported::utils::getkey_truncated_take() {
                 // c:utils.c:7045 — `\c` truncated; drop remaining
@@ -22069,11 +22069,11 @@ fn printf_format(
         fmt.to_string()
     };
     let fmt = fmt.as_str();
-    let (fmt, _) = getkeystring_with(fmt, crate::ported::zsh_h::GETKEYS_PRINTF_FMT as u32, None); // c:builtin.c:4711
+    let (fmt, _) = getkeystring(fmt, crate::ported::zsh_h::GETKEYS_PRINTF_FMT as u32, None); // c:builtin.c:4711
                                                                                                   // c:Src/builtin.c:4696/5382/5527 — a `\c` in the FORMAT (or, below, in
                                                                                                   // a `%b` arg) sets `fmttrunc`, which (a) truncates output here and
                                                                                                   // (b) stops the format-reuse loop entirely (no reapplication over the
-                                                                                                  // remaining args). getkeystring_with already cut `fmt` at the `\c`;
+                                                                                                  // remaining args). getkeystring already cut `fmt` at the `\c`;
                                                                                                   // take the TLS flag it set so the reuse loop knows to stop.
     let mut fmttrunc = crate::ported::utils::getkey_truncated_take();
     let mut out = String::new();
@@ -22930,7 +22930,7 @@ fn printf_format(
                     let (s, arg_truncated) = if crate::dash_mode::ksh93_mode() {
                         crate::dash_mode::ksh93_print_escapes(&a)
                     } else {
-                        let (s, _) = getkeystring_with(
+                        let (s, _) = getkeystring(
                             &a,
                             crate::ported::zsh_h::GETKEYS_PRINTF_ARG as u32,
                             None,
@@ -22939,7 +22939,7 @@ fn printf_format(
                     };
                     // c:5380-5383 — a `\c` inside the `%b` arg truncates:
                     // emit the expansion up to `\c`, then stop the whole
-                    // printf (no rest-of-format, no reuse). getkeystring_with
+                    // printf (no rest-of-format, no reuse). getkeystring
                     // already cut `s` at the `\c` and set the TLS flag.
                     // c:5307-5360 — `%b` shares the `%s` width+precision
                     // handling (`%5b`→"   ab", `%3.1b`→"  a"), applied to the

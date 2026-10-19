@@ -20416,7 +20416,7 @@ fn base64_encode(bytes: &[u8]) -> String {
 /// defers such a word to run time, which is where C reports the error.
 fn decode_ansi_c(body: &str) -> Option<String> {
     let out = quietly(|| {
-        crate::ported::utils::getkeystring_with(
+        crate::ported::utils::getkeystring(
             body,
             crate::ported::zsh_h::GETKEYS_DOLLARS_QUOTE as u32,
             None,

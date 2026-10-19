@@ -3578,7 +3578,7 @@ pub(crate) fn getarg<'a>(
                 };
                 let arg = &rest[i + 2..i + 2 + len];
                 sep_explicit = Some(if escapes {
-                    crate::ported::utils::getkeystring_with(
+                    crate::ported::utils::getkeystring(
                         arg,
                         (crate::ported::zsh_h::GETKEY_OCTAL_ESC | crate::ported::zsh_h::GETKEY_EMACS)
                             as u32,

@@ -4152,7 +4152,7 @@ pub fn set_default_colour_sequences() {
 /// Port of `set_colour_code()` from `Src/prompt.c:2353`.
 pub fn set_colour_code(spec: &str) -> String {
     // c:2353
-    let (keyseq, _len) = crate::ported::utils::getkeystring_with(
+    let (keyseq, _len) = crate::ported::utils::getkeystring(
         spec,
         GETKEYS_BINDKEY as u32, // c:2359
         None,

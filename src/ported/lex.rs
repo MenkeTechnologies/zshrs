@@ -5957,7 +5957,7 @@ pub fn untokenize_preserve_quotes(s: &str) -> String {
 pub(crate) fn getkeystring_dollar_quote(chars: &[char], start: usize) -> (String, usize) {
     // c:Src/subst.c:211 — `getkeystring(strdpos+2, &len,
     // GETKEYS_DOLLARS_QUOTE, NULL)`: decode through the ported
-    // `getkeystring_with`, the same call `stringsubstquote` makes, so every
+    // `getkeystring`, the same call `stringsubstquote` makes, so every
     // escape (`\x` with no hex digit is a NUL, c:Src/utils.c:7156-7178)
     // decodes identically wherever `$'...'` is expanded. A `Bnull` quotes
     // the `\` or `'` after it (c:Src/lex.c:1303-1306); it goes to the
@@ -5972,7 +5972,7 @@ pub(crate) fn getkeystring_dollar_quote(chars: &[char], start: usize) -> (String
         content.push(chars[i]);
         i += 1;
     }
-    let (out, _) = crate::ported::utils::getkeystring_with(
+    let (out, _) = crate::ported::utils::getkeystring(
         &content,
         crate::ported::zsh_h::GETKEYS_DOLLARS_QUOTE as u32,
         None,
