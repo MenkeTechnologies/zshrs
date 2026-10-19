@@ -17315,14 +17315,23 @@ fn test_expansion_error_in_function_arguments_fails_the_command() {
 
 #[test]
 fn test_dash_keeps_empty_positionals_of_unquoted_star_under_empty_ifs() {
-    // dash does no field splitting with IFS empty, so an unquoted `$*` / `$@`
-    // keeps its empty positionals as fields. bash, ksh93, mksh and zsh drop them.
+    // An unquoted `$*` / `$@` with IFS empty, against the dash on PATH. The
+    // expectation used to be hard-coded as "dash keeps the empty positionals"
+    // (`<><a><b>`), but dash itself drops them — measured 2026-10-19 with
+    // macOS dash-16 and Ubuntu dash 0.5.12 (`<a><b>`, `<a>`) — so the
+    // reference shell decides.
     let script = "set -- '' a b; IFS=; for x in $*; do printf '<%s>' \"$x\"; done; echo; \
                   for x in $@; do printf '<%s>' \"$x\"; done; echo";
+    let trail = "set -- '' a ''; IFS=; printf '<%s>' $*; echo";
+    let Ok(dash_ref) = Command::new("dash").args(["-c", script]).output() else {
+        eprintln!("skip: dash not installed");
+        return;
+    };
+    let dash_trail_ref = Command::new("dash").args(["-c", trail]).output().expect("dash");
     let (_, dash, _) = run_zshrs_with_args(&["--dash", "-c", script]);
-    assert_eq!(dash, "<><a><b>\n<><a><b>\n");
-    let (_, dash_trail, _) = run_zshrs_with_args(&["--dash", "-c", "set -- '' a ''; IFS=; printf '<%s>' $*; echo"]);
-    assert_eq!(dash_trail, "<><a>\n");
+    assert_eq!(dash, String::from_utf8_lossy(&dash_ref.stdout));
+    let (_, dash_trail, _) = run_zshrs_with_args(&["--dash", "-c", trail]);
+    assert_eq!(dash_trail, String::from_utf8_lossy(&dash_trail_ref.stdout));
     let (_, bash, _) = run_zshrs_with_args(&["--bash", "-c", script]);
     assert_eq!(bash, "<a><b>\n<a><b>\n");
 }
