@@ -816,26 +816,27 @@ mod tests {
     #[test]
     fn lastdescr_appends_trimmed_description() {
         // sh:13-14
-        let _ = with_incompfunc(|| {
+        // Read back inside the closure: it holds the global-state lock.
+        let arr = with_incompfunc(|| {
             setaparam("_lastdescr", Vec::new());
             _description_impl(&[
                 "tagX".to_string(),
                 "varX".to_string(),
                 "  hello  ".to_string(),
-            ])
+            ]);
+            getaparam("_lastdescr").unwrap_or_default()
         });
-        let arr = getaparam("_lastdescr").unwrap_or_default();
         assert_eq!(arr.last().map(|s| s.as_str()), Some("hello"));
     }
 
     #[test]
     fn empty_description_not_appended_to_lastdescr() {
         // sh:14 — `[[ -n "$3" ]]` guard.
-        let _ = with_incompfunc(|| {
+        let arr = with_incompfunc(|| {
             setaparam("_lastdescr", vec!["seed".to_string()]);
-            _description_impl(&["t".to_string(), "v".to_string(), "".to_string()])
+            _description_impl(&["t".to_string(), "v".to_string(), "".to_string()]);
+            getaparam("_lastdescr").unwrap_or_default()
         });
-        let arr = getaparam("_lastdescr").unwrap_or_default();
         assert_eq!(arr, vec!["seed".to_string()]);
     }
 
