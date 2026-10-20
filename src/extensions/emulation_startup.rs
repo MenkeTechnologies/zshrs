@@ -57,7 +57,7 @@
 //!     whose stdin is a socket reads `~/.bashrc`) is not modeled.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU8, Ordering};
 use std::sync::Mutex;
 
 /// Which shell zshrs is standing in for. Selected once by the binary's
@@ -801,6 +801,43 @@ pub fn arm_dropin_fatal_signals() {
     }
 }
 
+/// The process whose handlers were installed or reset last. A forked child
+/// inherits the parent's value until [`reset_dropin_fatal_signals`] runs, so a
+/// mismatch with `getpid()` marks a child still wearing the parent's handlers.
+static HANDLER_OWNER_PID: AtomicI32 = AtomicI32::new(0);
+
+/// Record this process as the owner of its signal handlers
+/// (`signals::install_handler`, [`reset_dropin_fatal_signals`]).
+pub fn note_handler_owner() {
+    HANDLER_OWNER_PID.store(unsafe { libc::getpid() }, Ordering::Relaxed);
+}
+
+/// Called first in `signals::zhandler`. A signal can reach a forked child
+/// between `fork()` and its [`reset_dropin_fatal_signals`] — a loaded machine
+/// takes that long to run `kill $!` after `sleep 5 &`. The parent's armed
+/// handler then ran in the child: it ran the parent's EXIT trap there and the
+/// child did not die of the signal (CI saw `wait $!` report 137, 265 under
+/// ksh93, for a TERM). Give such a signal the default disposition the reset
+/// would have, and re-raise it; it is delivered once the handler returns.
+/// Async-signal-safe: atomics, `getpid`, `signal`, `kill`.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn reraise_in_unreset_child(sig: i32) -> bool {
+    let owner = HANDLER_OWNER_PID.load(Ordering::Relaxed);
+    let pid = unsafe { libc::getpid() };
+    if owner == 0
+        || owner == pid
+        || !crate::dash_mode::forked_child_resets_fatal_signals()
+        || !crate::dash_mode::DROPIN_FATAL_SIGNALS.contains(&sig)
+        || crate::dash_mode::fatal_signal_action(sig) == crate::dash_mode::FatalSignalAction::Default
+    {
+        return false;
+    }
+    crate::ported::signals_h::signal_default(sig);
+    unsafe { libc::kill(pid, sig) };
+    true
+}
+
 /// A forked child's dispositions (`dash_mode::forked_child_resets_fatal_signals`):
 /// bash's `make_child` puts the original ones back, so `sleep 5 & kill $!` leaves a
 /// child that died of the signal, not one that exited 128+sig from the handler.
@@ -838,6 +875,7 @@ pub fn reset_dropin_fatal_signals() {
             crate::ported::signals_h::signal_default(sig);
         }
     }
+    note_handler_owner();
     unsafe { libc::sigprocmask(libc::SIG_SETMASK, &old, std::ptr::null_mut()) };
 }
 
@@ -1564,5 +1602,48 @@ mod tests {
             assert_eq!(selected_emulate_name(), Some(p.emulate_name()));
         }
         set_personality(saved);
+    }
+
+    /// A signal that reaches a forked child before `reset_dropin_fatal_signals`
+    /// kills it, as bash's restored dispositions do. Without the gate the
+    /// parent's armed handler ran in the child (its EXIT trap, then 128+sig), and
+    /// `sleep 5 & kill $!; wait $!` reported 137 on loaded CI runners. The child
+    /// here signals itself before any reset, which makes the window certain.
+    #[test]
+    fn a_signal_before_the_fork_reset_kills_the_child() {
+        let _g = GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        std::sync::LazyLock::force(&crate::ported::signals::signal_mask_queue);
+        // SAFETY: both children only touch atomics, signal dispositions and
+        // waitpid before `_exit`; the test process keeps its own handlers.
+        let shell = unsafe { libc::fork() };
+        assert!(shell >= 0, "fork: {}", std::io::Error::last_os_error());
+        if shell == 0 {
+            // The drop-in shell: bash mode, TERM armed by this process.
+            crate::dash_mode::set_bash_mode(true);
+            crate::ported::signals::install_handler(libc::SIGTERM);
+            let child = unsafe { libc::fork() };
+            if child == 0 {
+                unsafe { libc::kill(libc::getpid(), libc::SIGTERM) };
+                unsafe { libc::_exit(0) };
+            }
+            let mut st = 0;
+            unsafe { libc::waitpid(child, &mut st, 0) };
+            let died_of_term = libc::WIFSIGNALED(st) && libc::WTERMSIG(st) == libc::SIGTERM;
+            unsafe { libc::_exit(if died_of_term { 0 } else { 1 }) };
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        let mut st = 0;
+        while unsafe { libc::waitpid(shell, &mut st, libc::WNOHANG) } != shell {
+            if std::time::Instant::now() > deadline {
+                unsafe { libc::kill(shell, libc::SIGKILL) };
+                unsafe { libc::waitpid(shell, &mut st, 0) };
+                panic!("the drop-in shell hung waiting for its signalled child");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(
+            libc::WIFEXITED(st) && libc::WEXITSTATUS(st) == 0,
+            "the child did not die of SIGTERM (shell status {st:#x})"
+        );
     }
 }

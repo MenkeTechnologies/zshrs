@@ -86,6 +86,8 @@ pub fn install_handler(sig: i32) {
     // itself (glibc `main_arena`, seen as a prompt that never returns after `ls`).
     // Build it now, before any handler can run.
     std::sync::LazyLock::force(&signal_mask_queue);
+    // !!! RUST-ONLY !!! see `emulation_startup::reraise_in_unreset_child`.
+    crate::extensions::emulation_startup::note_handler_owner();
     unsafe {
         let mut act: libc::sigaction = std::mem::zeroed();
         act.sa_sigaction = zhandler as *const () as usize;
@@ -379,6 +381,11 @@ pub fn wait_for_processes() -> Vec<(i32, i32)> {
 /// #104 in docs/BUGS.md.)
 /// Port of `zhandler()` from `Src/signals.c:399`.
 pub extern "C" fn zhandler(sig: libc::c_int) {
+    // !!! DROP-IN GATE (no C counterpart) !!! a forked child that has not
+    // reset the parent's drop-in handlers yet dies of the signal instead.
+    if crate::extensions::emulation_startup::reraise_in_unreset_child(sig) {
+        return;
+    }
     last_signal.store(sig, Ordering::Relaxed); // c:403
 
     // c:405-407 — `sigfillset(&newmask); oldmask = signal_block(newmask);`
