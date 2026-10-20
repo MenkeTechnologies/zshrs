@@ -15,10 +15,13 @@
 //!     processes, so digits are masked and the FORMAT is what is asserted
 //!     (field count, separators, zero-padding). That still catches a
 //!     precision or padding change, which is the whole point.
-//!   * `--sh` against a bash-backed `/bin/sh`. macOS ships bash 3.2 as
-//!     `/bin/sh`, and bash-as-sh keeps bash's own listings; `--sh` targets
-//!     POSIX sh (dash on Debian), the same split this repo already
-//!     documents for startup files. Detected, reported and skipped.
+//!   * `--sh` against a bash-backed `/bin/sh` (macOS ships bash 3.2 there,
+//!     which keeps bash's own listings) or a dash-backed one (Debian's).
+//!     `--sh` renders what macOS `/bin/sh` prints where bash 3.2 and zsh
+//!     agree (`emulation_output::kill_list`, `dash_mode::sh_mode`), and
+//!     dash's listings belong to `--dash`, which has its own leg — the
+//!     same skip `tests/emulation_parity.rs` makes. Detected, reported and
+//!     skipped.
 
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -164,6 +167,14 @@ fn reference_is_bash(refbin: &str) -> bool {
     !run(refbin, &[], r#"printf %s "${BASH_VERSION:-}""#).is_empty()
 }
 
+/// True when `path` resolves to dash (Debian/Ubuntu's `/bin/sh`).
+fn resolves_to_dash(path: &str) -> bool {
+    std::fs::canonicalize(path)
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .is_some_and(|n| n == "dash")
+}
+
 fn mask_digits(s: &str) -> String {
     s.chars()
         .map(|c| if c.is_ascii_digit() { 'D' } else { c })
@@ -188,11 +199,16 @@ fn compare_with(zsh: Zsh, what: &str, script: &str, mask: bool, sort_lines: bool
             }
             continue;
         };
-        // `--sh` targets POSIX sh, which on Debian is dash. macOS ships
-        // bash 3.2 as `/bin/sh`, and bash-as-sh keeps bash's own
-        // listings — a different implementation, not a zshrs defect.
+        // macOS ships bash 3.2 as `/bin/sh`, and bash-as-sh keeps bash's
+        // own listings — a different implementation, not a zshrs defect.
         if leg.name == "sh" && reference_is_bash(&refbin) {
             eprintln!("  note: {refbin} is bash wearing sh's name; skipping `{what}` for --sh");
+            continue;
+        }
+        // Debian's `/bin/sh` is dash, whose listings the dash leg compares
+        // against `--dash`; `--sh` is not dash (see the module docs).
+        if leg.name == "sh" && resolves_to_dash(&refbin) {
+            eprintln!("  note: {refbin} is dash (covered by the dash leg); skipping `{what}` for --sh");
             continue;
         }
         tested += 1;
