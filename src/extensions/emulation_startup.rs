@@ -57,7 +57,7 @@
 //!     whose stdin is a socket reads `~/.bashrc`) is not modeled.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::Mutex;
 
 /// Which shell zshrs is standing in for. Selected once by the binary's
@@ -801,41 +801,71 @@ pub fn arm_dropin_fatal_signals() {
     }
 }
 
-/// The process whose handlers were installed or reset last. A forked child
-/// inherits the parent's value until [`reset_dropin_fatal_signals`] runs, so a
-/// mismatch with `getpid()` marks a child still wearing the parent's handlers.
-static HANDLER_OWNER_PID: AtomicI32 = AtomicI32::new(0);
-
-/// Record this process as the owner of its signal handlers
-/// (`signals::install_handler`, [`reset_dropin_fatal_signals`]).
-pub fn note_handler_owner() {
-    HANDLER_OWNER_PID.store(unsafe { libc::getpid() }, Ordering::Relaxed);
+thread_local! {
+    /// The forking thread's mask from before [`fork_prepare`] blocked the
+    /// drop-in fatal signals; `None` when it blocked nothing. Const-initialised,
+    /// so the fork handlers never allocate.
+    static PRE_FORK_MASK: std::cell::Cell<Option<libc::sigset_t>> = const { std::cell::Cell::new(None) };
 }
 
-/// Called first in `signals::zhandler`. A signal can reach a forked child
-/// between `fork()` and its [`reset_dropin_fatal_signals`] — a loaded machine
-/// takes that long to run `kill $!` after `sleep 5 &`. The parent's armed
-/// handler then ran in the child: it ran the parent's EXIT trap there and the
-/// child did not die of the signal (CI saw `wait $!` report 137, 265 under
-/// ksh93, for a TERM). Give such a signal the default disposition the reset
-/// would have, and re-raise it; it is delivered once the handler returns.
-/// Async-signal-safe: atomics, `getpid`, `signal`, `kill`.
-///
+/// Register the fork handlers below, once (`signals::install_handler`).
+pub fn register_fork_handlers() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| unsafe {
+        libc::pthread_atfork(Some(fork_prepare), Some(fork_parent), Some(fork_child));
+    });
+}
+
 /// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
-pub fn reraise_in_unreset_child(sig: i32) -> bool {
-    let owner = HANDLER_OWNER_PID.load(Ordering::Relaxed);
-    let pid = unsafe { libc::getpid() };
-    if owner == 0
-        || owner == pid
-        || !crate::dash_mode::forked_child_resets_fatal_signals()
-        || !crate::dash_mode::DROPIN_FATAL_SIGNALS.contains(&sig)
-        || crate::dash_mode::fatal_signal_action(sig) == crate::dash_mode::FatalSignalAction::Default
-    {
-        return false;
+/// A drop-in child (bash, /bin/sh, ksh93) has to die of a terminating signal,
+/// as bash's `make_child` restores the original dispositions. Until the child
+/// changes them it still has the parent's armed handler, and a signal in that
+/// window ran the parent's EXIT trap in the child, or crashed it inside
+/// `fork()` itself: loaded CI runners saw `sleep 5 & kill $!; wait $!` report
+/// 137 (265 under ksh93) where the shells say 143 (271). So the signals are
+/// blocked from before `fork()` until the child has its defaults back.
+extern "C" fn fork_prepare() {
+    if !crate::dash_mode::forked_child_resets_fatal_signals() {
+        PRE_FORK_MASK.with(|m| m.set(None));
+        return;
     }
-    crate::ported::signals_h::signal_default(sig);
-    unsafe { libc::kill(pid, sig) };
-    true
+    unsafe {
+        let mut held: libc::sigset_t = std::mem::zeroed();
+        let mut old: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut held);
+        for sig in crate::dash_mode::DROPIN_FATAL_SIGNALS {
+            libc::sigaddset(&mut held, sig);
+        }
+        libc::pthread_sigmask(libc::SIG_BLOCK, &held, &mut old);
+        PRE_FORK_MASK.with(|m| m.set(Some(old)));
+    }
+}
+
+extern "C" fn fork_parent() {
+    if let Some(old) = PRE_FORK_MASK.with(|m| m.take()) {
+        unsafe { libc::pthread_sigmask(libc::SIG_SETMASK, &old, std::ptr::null_mut()) };
+    }
+}
+
+/// The child's half: every drop-in fatal signal still caught by `zhandler`
+/// goes back to its default, an ignored one stays ignored, then the mask is
+/// restored and a pending signal is delivered with that disposition. Reads the
+/// installed handler with `sigaction` rather than `sigtrapped`, whose lock
+/// another parent thread may have held across the fork.
+extern "C" fn fork_child() {
+    let Some(old) = PRE_FORK_MASK.with(|m| m.take()) else {
+        return;
+    };
+    let caught = crate::ported::signals::zhandler as *const () as libc::sighandler_t;
+    unsafe {
+        for sig in crate::dash_mode::DROPIN_FATAL_SIGNALS {
+            let mut cur: libc::sigaction = std::mem::zeroed();
+            if libc::sigaction(sig, std::ptr::null(), &mut cur) == 0 && cur.sa_sigaction == caught {
+                crate::ported::signals_h::signal_default(sig);
+            }
+        }
+        libc::pthread_sigmask(libc::SIG_SETMASK, &old, std::ptr::null_mut());
+    }
 }
 
 /// A forked child's dispositions (`dash_mode::forked_child_resets_fatal_signals`):
@@ -875,7 +905,6 @@ pub fn reset_dropin_fatal_signals() {
             crate::ported::signals_h::signal_default(sig);
         }
     }
-    note_handler_owner();
     unsafe { libc::sigprocmask(libc::SIG_SETMASK, &old, std::ptr::null_mut()) };
 }
 
@@ -1604,11 +1633,11 @@ mod tests {
         set_personality(saved);
     }
 
-    /// A signal that reaches a forked child before `reset_dropin_fatal_signals`
-    /// kills it, as bash's restored dispositions do. Without the gate the
-    /// parent's armed handler ran in the child (its EXIT trap, then 128+sig), and
-    /// `sleep 5 & kill $!; wait $!` reported 137 on loaded CI runners. The child
-    /// here signals itself before any reset, which makes the window certain.
+    /// A signal that reaches a forked child before its own code runs kills it,
+    /// as bash's restored dispositions do (`fork_prepare` / `fork_child`).
+    /// Without them the parent's armed handler ran in the child (its EXIT trap,
+    /// then 128+sig), and `sleep 5 & kill $!; wait $!` reported 137 on loaded CI
+    /// runners. The child here signals itself first thing after `fork()`.
     #[test]
     fn a_signal_before_the_fork_reset_kills_the_child() {
         let _g = GUARD.lock().unwrap_or_else(|e| e.into_inner());
