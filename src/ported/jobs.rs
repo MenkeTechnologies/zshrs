@@ -4649,6 +4649,23 @@ pub fn bin_kill(
                         return 2;
                     }
                     if let Ok(n) = token.parse::<i32>() {
+                        // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash names
+                        // slot N (N-128 above 128) from its own table and rejects
+                        // anything outside 1..NSIG-1, 0 included, with status 2 —
+                        // on Linux too, where zsh's table runs through RTMAX.
+                        // It names only the first number.
+                        if crate::extensions::dash_mode::dash_faithful() {
+                            return match crate::extensions::emulation_output::dash_kill_l_number(n) {
+                                Some(name) => {
+                                    println!("{name}");
+                                    0
+                                }
+                                None => {
+                                    zwarnnam(nam, &format!("invalid signal number or exit status: {token}"));
+                                    2
+                                }
+                            };
+                        }
                         // c:2821 numeric
                         let s = (n & !0o200) as i32; // c:2882
                         // c:2883 — `if (1 <= sig && sig <= SIGCOUNT)`: slot 0
@@ -4656,19 +4673,17 @@ pub fn bin_kill(
                         let in_range = (1..=crate::ported::signals_h::SIGCOUNT).contains(&s);
                         // !!! DROP-IN GATE (no C counterpart) !!! `kill -l 0` is EXIT in bash
                         // and ksh93 (ksh93 for 128 too); a number past the table is an
-                        // "invalid signal specification" (bash 1, dash 2; dash also for 0).
+                        // "invalid signal specification" (bash and /bin/sh, status 1).
                         if (crate::dash_mode::ksh93_mode() && s == 0) || (crate::dash_mode::bash_mode() && n == 0) {
                             println!("EXIT");
                             continue;
                         }
                         if !in_range
                             && cfg!(not(target_os = "linux"))
-                            && (crate::dash_mode::bash_mode()
-                                || crate::dash_mode::sh_mode()
-                                || crate::dash_mode::dash_faithful())
+                            && (crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode())
                         {
                             zwarnnam(nam, &format!("{}: invalid signal specification", n));
-                            return if crate::dash_mode::dash_faithful() { 2 } else { 1 };
+                            return 1;
                         }
                         let rt_name = || {
                             // c:2884-2886 — `else if ((signame = rtsigname(sig, 0)))`.
@@ -4687,10 +4702,6 @@ pub fn bin_kill(
                             println!("{}", name);
                         } else {
                             println!("{}", n); // c:2862
-                        }
-                        // dash's `kill -l N M` names only the first number.
-                        if crate::dash_mode::dash_faithful() {
-                            return 0;
                         }
                     } else {
                         // !!! PDKSH GATE (no C counterpart) !!! mksh's `kill -l` takes

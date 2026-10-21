@@ -96,6 +96,28 @@ pub fn kill_l_signals() -> Vec<(i32, String)> {
     sigs
 }
 
+/// dash's name for signal slot `slot`: its mksignames.c table, which knows no
+/// STKFLT and calls Linux's signal 29 IO, with the number for an unnamed slot.
+fn dash_slot_name(sigs: &[(i32, &str)], slot: i32) -> String {
+    match sigs.iter().find(|(num, name)| *num == slot && *name != "STKFLT") {
+        Some((_, "POLL")) => "IO".to_string(),
+        Some((_, name)) => name.to_string(),
+        None => slot.to_string(),
+    }
+}
+
+/// dash's `kill -l N`: the name of slot N, or of N-128 for an exit status
+/// above 128, when that slot is in 1..NSIG-1; `None` is dash's "invalid
+/// signal number or exit status" (0 included). Same table as its bare
+/// `kill -l` ([`kill_list`]).
+pub fn dash_kill_l_number(n: i32) -> Option<String> {
+    let sigs = kill_l_signals();
+    let sigs: Vec<(i32, &str)> = sigs.iter().map(|(num, name)| (*num, name.as_str())).collect();
+    let nsig = sigs.last().map_or(1, |(num, _)| num + 1);
+    let slot = if n > 128 { n - 128 } else { n };
+    (0 < slot && slot < nsig).then(|| dash_slot_name(&sigs, slot))
+}
+
 /// `kill -l`, rendered the way this personality's shell renders it.
 ///
 /// Returns `None` for native zsh, whose own single-line listing stays in
@@ -152,10 +174,7 @@ pub fn kill_list(sigs: &[(i32, String)]) -> Option<String> {
         Personality::Dash => {
             out.push_str("0\n");
             for slot in 1..nsig {
-                match sigs.iter().find(|(num, name)| *num == slot && *name != "STKFLT") {
-                    Some((_, name)) => out.push_str(name),
-                    None => out.push_str(&slot.to_string()),
-                }
+                out.push_str(&dash_slot_name(&sigs, slot));
                 out.push('\n');
             }
         }
@@ -1093,4 +1112,29 @@ pub fn ksh93_empty_ifs_join(elems: &[String]) -> String {
 /// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
 pub fn mksh_builtin_command(name: &str) -> bool {
     matches!(name, "cat" | "echo" | "kill" | "pwd" | "test" | "true" | "false" | "sleep")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// dash's `kill -l N`: an exit status above 128 names its signal, 0 and
+    /// 128 are "invalid signal number or exit status", and so is one past
+    /// the table — which on Linux runs through RTMAX, where zsh's own range
+    /// check (SIGCOUNT) stops short and once let `kill -l 0` print `0`.
+    #[test]
+    fn dash_kill_l_number_follows_dashs_table() {
+        assert_eq!(dash_kill_l_number(9).as_deref(), Some("KILL"));
+        assert_eq!(dash_kill_l_number(143).as_deref(), Some("TERM"));
+        assert_eq!(dash_kill_l_number(0), None);
+        assert_eq!(dash_kill_l_number(128), None);
+        let last = kill_l_signals().last().map(|(n, _)| *n).expect("a signal table");
+        assert!(dash_kill_l_number(last).is_some());
+        assert_eq!(dash_kill_l_number(last + 1), None);
+        #[cfg(target_os = "linux")]
+        {
+            assert_eq!(dash_kill_l_number(16).as_deref(), Some("16"), "dash's table has no STKFLT");
+            assert_eq!(dash_kill_l_number(29).as_deref(), Some("IO"));
+        }
+    }
 }
