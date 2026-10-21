@@ -100,7 +100,10 @@ jobs:
           git -C src/zsh checkout -q FETCH_HEAD
       # tests/builtin_output_parity.rs and the emulation suites diff against the
       # `bash` and `ksh` that `command -v` finds. The ones in /bin are 2007 and 2012
-      # builds (see the Emulation parity job), so put Homebrew's modern ones first.
+      # builds (see the Emulation parity job), so put Homebrew's modern ones first;
+      # Linux builds the same two releases (Ubuntu's packages lag them).
+      - if: runner.os == 'Linux'
+        uses: ./.github/actions/ref-shells
       - name: Install reference shells (macOS runner)
         if: runner.os == 'macOS'
         run: |
@@ -196,9 +199,9 @@ jobs:
     # has to be RECENT enough to have the features the corpus exercises. Only
     # `/bin/sh` and `/bin/dash` are taken as the platform ships them (they are
     # resolved by absolute path); `bash`, `ksh` and `zsh` are resolved through
-    # `command -v` and are installed per-runner below — ubuntu needs zsh and
-    # ksh at all, macOS needs bash and ksh REPLACED because the ones in /bin
-    # are 13-18 years old (see the macOS step).
+    # `command -v` and are installed per-runner below — ubuntu builds bash and
+    # ksh (its packages lag the releases zshrs follows), macOS needs them
+    # REPLACED because the ones in /bin are 13-18 years old (see the macOS step).
     name: Emulation parity
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
@@ -215,34 +218,25 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install reference shells (ubuntu runner)
         if: runner.os == 'Linux'
-        # Core five (zsh/ksh/dash + bash & /bin/sh already present) are
-        # enforced; mksh is a real package (best-effort leg). `ash` is exposed
-        # as a symlink to dash — the Almquist family is the same shell, and
-        # `/bin/ash` is a dash symlink on real Debian/Ubuntu systems — so the
-        # ash leg verifies the `--ash` alias end-to-end against a real binary.
+        # zsh/dash from the distro, mksh best-effort; `ash` is dash under its
+        # Debian name, so the ash leg runs the `--ash` alias against a real binary.
         run: |
-          sudo apt-get update && sudo apt-get install -y zsh ksh dash mksh
+          sudo apt-get update && sudo apt-get install -y zsh dash mksh
           sudo ln -sf "$(command -v dash)" /usr/local/bin/ash
+      # bash 5.3.20 and ksh93u+m 1.0.10, the releases `--bash` / `--ksh` follow;
+      # Ubuntu 24.04 ships bash 5.2.21 and ksh93u+m 1.0.8.
+      - if: runner.os == 'Linux'
+        uses: ./.github/actions/ref-shells
       - name: Install reference shells (macOS runner)
         if: runner.os == 'macOS'
-        # macOS ships bash and ksh, but both are museum pieces: /bin/bash is
-        # 3.2.57 (2007 — the last GPLv2 bash) and /bin/ksh is AT&T 93u+
-        # 2012-08-01. They predate features the EXTENDED corpus uses, so they
-        # diverge from zshrs where a MODERN bash/ksh agrees with it exactly:
-        #   * bash 3.2 has no brace-expansion STEP (`{2..8..2}` is bash 4.0),
-        #     so it emits the braces literally instead of `2 4 6 8`.
-        #   * ksh 93u+ 2012 fails `${v:(-3):2}` / `${v:(-2)}` (parenthesised
-        #     negative substring offset) with an arithmetic syntax error, and
-        #     silently no-ops the anchored array replacements `${a[@]/#/x}`
-        #     and `${a[@]/%/y}`, leaving the array unchanged.
-        # Homebrew's bash 5.x and ksh93u+m 1.0.10 agree with zshrs on all of
-        # those, which is why the ubuntu leg — running against modern distro
-        # packages — is green on the same corpus. `find_shell`
-        # (tests/emulation_parity.rs:648) tries the bare names `bash` / `ksh`
-        # through `command -v` BEFORE the /bin/* absolute fallbacks, so
-        # prepending the Homebrew prefix to PATH is what selects them.
-        # `/bin/sh` and `/bin/dash` are absolute candidates and stay exactly
-        # as the platform ships them — this step cannot affect those ways.
+        # /bin/bash is 3.2.57 (2007) and /bin/ksh AT&T 93u+ 2012-08-01: they
+        # predate features the extended corpus uses (bash 4.0 brace-expansion
+        # steps; ksh's `${v:(-3):2}` and anchored `${a[@]/#/x}`). Homebrew's
+        # bash 5.3 and ksh93u+m 1.0.10 are the releases zshrs follows (the
+        # ubuntu runners build the same two, .github/actions/ref-shells).
+        # `find_shell` tries `bash` / `ksh` through `command -v` before the /bin
+        # fallbacks, so prepending the Homebrew prefix selects them; /bin/sh and
+        # /bin/dash are absolute candidates and stay as the platform ships them.
         run: |
           brew install bash ksh93
           echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"

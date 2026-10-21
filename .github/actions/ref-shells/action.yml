@@ -1,0 +1,24 @@
+name: bash and ksh93 references
+description: >
+  Build (or restore from cache) the bash 5.3.20 and ksh93u+m 1.0.10 that
+  `--bash` / `--ksh` are diffed against, via scripts/build_ref_shells.sh, and
+  put them first on PATH. Linux only: the distro packages lag both releases
+  (Ubuntu 24.04 ships bash 5.2.21 and ksh93u+m 1.0.8), while the macOS jobs
+  get the same two releases from Homebrew.
+runs:
+  using: composite
+  steps:
+    - id: cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/zshrs/ref-shells
+        key: ref-shells-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build_ref_shells.sh', '.github/actions/ref-shells/action.yml') }}
+    - name: Build bash and ksh93
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: sh scripts/build_ref_shells.sh "$HOME/.cache/zshrs/ref-shells"
+    - shell: bash
+      run: |
+        echo "$HOME/.cache/zshrs/ref-shells/bin" >> "$GITHUB_PATH"
+        "$HOME/.cache/zshrs/ref-shells/bin/bash" --version | head -1
+        "$HOME/.cache/zshrs/ref-shells/bin/ksh" -c 'echo "$KSH_VERSION"'
