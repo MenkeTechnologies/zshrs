@@ -7535,9 +7535,27 @@ pub fn paramsubst(
                 };
                 // c:2709-2716 — the name-splice array resolved above replaces
                 // whatever the inner produced.
-                let isarr = isarr || aspar_arr.is_some();
+                let spliced_name = aspar_arr.is_some(); // c:2717 `subexp = 0`
+                let isarr = isarr || spliced_name;
                 let arr_parts = aspar_arr.unwrap_or(arr_parts);
-                if isarr {
+                if spliced_name {
+                    // c:Src/subst.c:2717-2719 — `s = dyncat(val, s); subexp = 0;`:
+                    // after a `${(P)name}` inner the OUTER instance behaves as
+                    // if the dereferenced NAME had been written in its place
+                    // and fetches that parameter itself (c:2800 fetchvalue).
+                    // Nothing new is created in the parameter table, so a
+                    // scan of it (`$parameters`, c:Src/Modules/parameter.c:135)
+                    // cannot see anything extra. zshrs used to stash the
+                    // referenced array/assoc values in a `__subexp_arr_N`
+                    // scratch node here anyway, and because that node went
+                    // into the global paramtab BEFORE the outer arms ran,
+                    // `t=parameters; ${(k)${(P)t}}` enumerated the scratch
+                    // name as a real parameter (zsh: absent). Bind the real
+                    // name instead; the var_name rebind below picks it up.
+                    subexp_array_temp = subexp_aspar_name.clone();
+                    subexp_arr_parts = Some(arr_parts);
+                    subexp_aspar_name.clone().unwrap_or_default()
+                } else if isarr {
                     // c:Src/subst.c:2681 — an inner expansion that is
                     // ARRAY-shaped (isarr) stays an array through the nesting
                     // EVEN WHEN EMPTY, so an outer subscript/length sees the

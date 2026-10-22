@@ -493,6 +493,20 @@ mod special_flags {
         assert_parity("TARGET=value; REF=TARGET; echo ${(P)REF}");
     }
 
+    /// `${(k)${(P)t}}` with `t=parameters` — the inner `(P)` only hands
+    /// the NAME to the outer instance (subst.c:2717 `s = dyncat(val, s);
+    /// subexp = 0;`), so the `$parameters` scan (Modules/parameter.c:135)
+    /// must see no extra parameter: no `__subexp_arr_N` scratch node,
+    /// neither during the expansion nor in a later command.
+    #[test]
+    fn p_indirect_parameters_scan_sees_no_scratch_temp() {
+        assert_parity(
+            "t=parameters; print ${#${(M)${(k)${(P)t}}:#__subexp*}}; \
+             print -- \"<${(ko)${(P)t}[(I)__subexp*]}>\"; \
+             x=${(P)t}; print ${+parameters[__subexp_arr_0]} ${+parameters[__subexp_arr_1]}",
+        );
+    }
+
     /// `${(P)name[sub]}` — the subscript binds to the NAMED parameter and
     /// is resolved BEFORE the (P) dereference (subst.c:2800: the first
     /// fetchvalue processes `name[sub]`, then aspar refetches the result
