@@ -1,16 +1,16 @@
 //! Port of `_module_math_func` from
 //! `Completion/Zsh/Type/_module_math_func`.
 //!
-//! Full body (12 lines verbatim) as it stands in the tree this shell
-//! actually runs against — Homebrew zsh 5.9.2's
-//! `share/zsh/functions/_module_math_func`, byte-identical to the copy
-//! zshrs bundles at `vendor/zsh/functions/_module_math_func`:
+//! Full body (12 lines verbatim) from zsh master
+//! `Completion/Zsh/Type/_module_math_func`, byte-identical to the copy
+//! zshrs bundles into `~/.zshrs/functions/_module_math_func` and keeps
+//! beside this file as `src/compsys/ported/Zsh/Type/_module_math_func`:
 //! ```text
 //! sh: 1  #autoload
 //! sh: 2
 //! sh: 3  local mod
 //! sh: 4  local -a funcs alts
-//! sh: 5  local -a modules=( example mathfunc system )
+//! sh: 5  local -a modules=( example mathfunc system random )
 //! sh: 6
 //! sh: 7  for mod in $modules; do
 //! sh: 8    funcs=( ${${${(f)"$(zmodload -Fl zsh/$mod 2>/dev/null)"}:#^+f:*}##+f:} )
@@ -52,21 +52,16 @@
 use crate::compsys::ported::shared::dispatch_action_command;
 use crate::ported::module::{enables_module, features_module, MODULESTAB};
 
-// sh:5 — local -a modules=( example mathfunc system )
+// sh:5 — local -a modules=( example mathfunc system random )
 //
-// zsh AFTER 5.9.2 adds a fourth entry, `random` — upstream
-// `Completion/Zsh/Type/_module_math_func:5` reads
-// `modules=( example mathfunc system random )`, and the newer copy kept
-// beside this file in `src/compsys/ported/Zsh/Type/_module_math_func`
-// has it. `zsh/random` is a real module
-// (`/Users/wizard/forkedRepos/zsh/Src/Modules/random.mdd:1: name=zsh/random`),
-// not an invention. This list tracks the RELEASE, matching both the
-// reference binary and the bundle zshrs installs into
-// `~/.zshrs/functions`; a fourth entry would be inert here anyway, since
-// neither shell can load `zsh/random` (`zmodload -Fl zsh/random` reports
-// "module `zsh/random' is not yet loaded" on both) and sh:8 would leave
-// `funcs` empty.
-const MODULES: &[&str] = &["example", "mathfunc", "system"];
+// `random` entered this list after zsh 5.9.2 (upstream
+// `Completion/Zsh/Type/_module_math_func:5`); the reference oracle and the
+// bundle zshrs installs into `~/.zshrs/functions` both carry it. The entry
+// is NOT inert when the module is unloaded: sh:9 appends the alt
+// unconditionally, so `_alternative` still registers the tag and its
+// description reaches the "no matches" message (`math function from
+// zsh/random`) even though sh:8 left `funcs` empty.
+const MODULES: &[&str] = &["example", "mathfunc", "system", "random"];
 
 /// sh:8 — reproduce `${${${(f)"$(zmodload -Fl zsh/$mod 2>/dev/null)"}:#^+f:*}##+f:}`.
 ///   Query `zsh/$mod`'s features; keep enabled (`+`) math-function
@@ -177,8 +172,7 @@ mod tests {
     fn alts_cover_exact_source_modules() {
         // sh:5,9 — one alt per module, in order, with the source's
         //   `module-math-functions.<mod>` tag, human description, and a
-        //   `compadd -S '('` action. Pins the fix: the fabricated
-        //   `random` module is gone and the action is the real
+        //   `compadd -S '('` action, and the action is the real
         //   `compadd -S '('` (not a bare parameter name).
         let _g = crate::test_util::global_state_lock();
         let alts = build_alts();
@@ -202,14 +196,12 @@ mod tests {
                 spec
             );
         }
-        // Tracks the release list (see `MODULES`): zsh 5.9.2 and the zshrs
-        // bundle both stop at `system`. `zsh/random` is a real module that
-        // upstream added to sh:5 after 5.9.2 — if this list is ever moved
-        // forward to the newer spec, update this assertion rather than the
-        // list, and re-measure `echo $((1+<TAB>` against the reference.
+        // sh:5 — `random` is the fourth entry (zsh master); its alt is
+        // appended even when the module is unloaded, which is what puts
+        // `math function from zsh/random` into the no-matches message.
         assert!(
-            !alts.iter().any(|s| s.contains("random")),
-            "MODULES tracks zsh 5.9.2, whose sh:5 stops at `system`"
+            alts.iter().any(|s| s.starts_with("module-math-functions.random:")),
+            "MODULES must carry sh:5's fourth entry, `random`"
         );
     }
 }
