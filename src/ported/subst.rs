@@ -28806,6 +28806,10 @@ pub fn arithsubst(expr: &str, prefix: &str, rest: &str) -> String {
     let outputunderscore: i32 = crate::math::outputunderscore(); // c:583
     let b: String = if v.type_ == MN_UNSET {
         "0".to_string() // c:4498 — MN_UNSET falls through to zero in practice
+    } else if (v.type_ == MN_FLOAT) && outputradix == 0 && crate::dash_mode::ksh93_mode() {
+        // !!! KSH93 GATE (no C counterpart) !!! the result's long double, printed as
+        // ksh93 prints it (macro.c:2188-2193).
+        crate::ksh_long_double::format_result(&v)
     } else if (v.type_ == MN_FLOAT) && outputradix == 0 {
         // c:4493-4494
         convfloat_underscore(v.d, outputunderscore)

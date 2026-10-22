@@ -397,6 +397,22 @@ pub const LDBL_DIG: i32 = if cfg!(any(target_arch = "x86", target_arch = "x86_64
     15
 };
 
+/// C's `LDBL_MANT_DIG`, the significand bits of the host's long double: 64
+/// for x87, 113 for binary128, 106 for powerpc64's double-double, 53 where
+/// long double is double. `ksh_long_double` computes ksh93's arithmetic at
+/// this width.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub const LDBL_MANT_DIG: u32 = if cfg!(any(target_arch = "x86", target_arch = "x86_64")) {
+    64
+} else if cfg!(target_arch = "powerpc64") {
+    106
+} else if SIZEOF_LONG_DOUBLE == 16 {
+    113
+} else {
+    53
+};
+
 /// glibc prints an x87 long double's `%La` from its explicit 64-bit mantissa:
 /// the leading digit is the top NIBBLE (8..f) and the exponent is three
 /// lower, so bash's `printf '%a' 1` is `0x8p-3` on x86 Linux

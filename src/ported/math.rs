@@ -101,39 +101,15 @@ pub const DIV: i32 = 12; // c:121  /
 /// `MOD` constant.
 pub const MOD: i32 = 13; // c:122  %
 
-/// !!! KSH93 GATE (no C counterpart) !!! ksh93 evaluates `+ - *` in long double —
-/// plain double on Apple arm64 — and prints the result as an integer only when C's
-/// `(Sflong_t)d` round-trips (ksh93u+m macro.c:2188 `if((Sflong_t)num!=num)`). That
-/// cast is the host CPU's (`zlong_cast`): aarch64 saturates, so `INT64_MAX + 1000`
-/// is INT64_MAX while `INT64_MAX + 1000000` is `9.22337203685577e+18`; x86 gives
-/// INT64_MIN for anything out of range, so there `2**63` is already the float
-/// `9.22337203685477581e+18`. zsh wraps. Used for every ksh93 integer `+ - *`, so
-/// the sub-2^53 rounding (`2**60 + 1` is 2**60) comes with it.
-macro_rules! ksh93_overflow {
-    ($d:expr) => {{
-        let d: f64 = $d;
-        let sat = crate::zlong_cast::zlong_from_double(d);
-        if sat as f64 == d {
-            mnumber { l: sat, d: 0.0, type_: MN_INTEGER }
-        } else {
-            mnumber { l: 0, d, type_: MN_FLOAT }
-        }
-    }};
-}
-
-/// !!! KSH93 GATE (no C counterpart) !!! ksh93 holds every arithmetic value as a
-/// double, so an integer above 2^53 is rounded to the nearest representable one:
-/// `$((9007199254740993))` is 9007199254740992 and `9007199254740993 % 10` is 2.
-/// Applied to integer operands and to the final result; floats pass through.
-macro_rules! ksh93_round_int {
-    ($n:expr) => {{
-        let mut n = $n;
-        if n.type_ == MN_INTEGER {
-            n.l = (n.l as f64) as i64;
-        }
-        n
-    }};
-}
+// !!! KSH93 GATE (no C counterpart) !!! ksh93 evaluates every value in the host's
+// long double and prints a result as an integer only when C's `(Sflong_t)d`
+// round-trips (ksh93u+m macro.c:2188). `crate::ksh_long_double` holds that
+// arithmetic: `int_add`/`int_sub`/`int_mul`/`int_pow` for integer operands
+// (`INT64_MAX + 1000` is INT64_MAX on aarch64 and `9.22337203685477681e+18` on
+// x86, whose cast gives INT64_MIN for anything out of range), `float_*` for
+// float-typed ones, and `round_int` for every integer operand and result (on
+// Apple arm64, where long double is double, `9007199254740993` is
+// 9007199254740992 and `9007199254740993 % 10` is 2). zsh wraps.
 /// `PLUS` constant.
 pub const PLUS: i32 = 14; // c:123  +
 /// `MINUS` constant.
@@ -1446,10 +1422,18 @@ pub(crate) fn lexconstant() -> i32 {
         // Rust's parser wants digits on both sides of the dot.
         let int_part = if int_end == 0 { "0" } else { &text[..int_end] };
         let frac_part = if mant_end > int_end + 1 { &text[int_end + 1..mant_end] } else { "0" };
-        let val: f64 = format!("{}.{}{}", int_part, frac_part, &text[mant_end..n])
-            .parse()
-            .unwrap_or(0.0);
+        let normalized = format!("{}.{}{}", int_part, frac_part, &text[mant_end..n]);
+        let val: f64 = normalized.parse().unwrap_or(0.0);
         m_pos_set(num_start + n); // c:560 `ptr = nptr;`
+        // !!! KSH93 GATE (no C counterpart) !!! ksh93 reads the constant with
+        // `strtold`, exact in the host's long double (`0.1` differs from the
+        // double past bit 53).
+        if crate::dash_mode::ksh93_mode() {
+            if let Some(n) = crate::ksh_long_double::float_constant(&normalized, is_neg) {
+                m_yyval_set(n);
+                return NUM;
+            }
+        }
         m_yyval_set(mnumber {
             l: 0,
             d: if is_neg { -val } else { val },
@@ -1558,8 +1542,8 @@ pub(crate) fn lexconstant() -> i32 {
                 && !int_str.is_empty()
                 && int_str.chars().all(|c| c.is_ascii_digit()) =>
         {
-            let d: f64 = int_str.parse().unwrap_or(0.0);
-            let n = ksh93_overflow!(if is_neg { -d } else { d });
+            let n = crate::ksh_long_double::integer_constant(&int_str, is_neg)
+                .unwrap_or(mnumber { l: 0, d: 0.0, type_: MN_INTEGER });
             m_yyval_set(n);
             return NUM;
         }
@@ -3735,10 +3719,11 @@ pub(crate) fn op(what: i32) {
         } else {
             mv_a.val
         };
-        // ksh93 rounds integer operands through a double before any operator sees them
-        // (see `ksh93_round_int!`); an unresolved plain-assignment LHS is left alone.
+        // ksh93 rounds integer operands through the long double before any operator
+        // sees them (`ksh_long_double::round_int`); an unresolved plain-assignment LHS
+        // is left alone.
         let (a, b) = if crate::dash_mode::ksh93_mode() {
-            (ksh93_round_int!(a), ksh93_round_int!(b))
+            (crate::ksh_long_double::round_int(a), crate::ksh_long_double::round_int(b))
         } else {
             (a, b)
         };
@@ -3819,7 +3804,9 @@ pub(crate) fn op(what: i32) {
                 },
 
                 MUL | MULEQ => {
-                    if is_float {
+                    if is_float && crate::dash_mode::ksh93_mode() {
+                        crate::ksh_long_double::float_mul(&a, &b)
+                    } else if is_float {
                         mnumber {
                             l: 0,
                             d: (if a.type_ == MN_FLOAT { a.d } else { a.l as f64 })
@@ -3830,7 +3817,7 @@ pub(crate) fn op(what: i32) {
                         let al = if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l };
                         let bl = if b.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(b.d) } else { b.l };
                         if crate::dash_mode::ksh93_mode() {
-                            ksh93_overflow!(al as f64 * bl as f64)
+                            crate::ksh_long_double::int_mul(al, bl)
                         } else {
                             mnumber { l: al.wrapping_mul(bl), d: 0.0, type_: MN_INTEGER }
                         }
@@ -3843,7 +3830,9 @@ pub(crate) fn op(what: i32) {
                     // Only INTEGER div-by-zero raises the error.
                     // Without this gate `1/0.0` errored out instead
                     // of returning `Inf`.
-                    if is_float {
+                    if is_float && crate::dash_mode::ksh93_mode() {
+                        crate::ksh_long_double::float_div(&a, &b)
+                    } else if is_float {
                         // Let f64 semantics handle 0.0, -0.0, NaN.
                         mnumber {
                             l: 0,
@@ -3904,7 +3893,9 @@ pub(crate) fn op(what: i32) {
                 }
 
                 PLUS | PLUSEQ => {
-                    if is_float {
+                    if is_float && crate::dash_mode::ksh93_mode() {
+                        crate::ksh_long_double::float_add(&a, &b)
+                    } else if is_float {
                         mnumber {
                             l: 0,
                             d: (if a.type_ == MN_FLOAT { a.d } else { a.l as f64 })
@@ -3915,7 +3906,7 @@ pub(crate) fn op(what: i32) {
                         let al = if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l };
                         let bl = if b.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(b.d) } else { b.l };
                         if crate::dash_mode::ksh93_mode() {
-                            ksh93_overflow!(al as f64 + bl as f64)
+                            crate::ksh_long_double::int_add(al, bl)
                         } else {
                             mnumber { l: al.wrapping_add(bl), d: 0.0, type_: MN_INTEGER }
                         }
@@ -3923,7 +3914,9 @@ pub(crate) fn op(what: i32) {
                 }
 
                 MINUS | MINUSEQ => {
-                    if is_float {
+                    if is_float && crate::dash_mode::ksh93_mode() {
+                        crate::ksh_long_double::float_sub(&a, &b)
+                    } else if is_float {
                         mnumber {
                             l: 0,
                             d: (if a.type_ == MN_FLOAT { a.d } else { a.l as f64 })
@@ -3934,7 +3927,7 @@ pub(crate) fn op(what: i32) {
                         let al = if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l };
                         let bl = if b.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(b.d) } else { b.l };
                         if crate::dash_mode::ksh93_mode() {
-                            ksh93_overflow!(al as f64 - bl as f64)
+                            crate::ksh_long_double::int_sub(al, bl)
                         } else {
                             mnumber { l: al.wrapping_sub(bl), d: 0.0, type_: MN_INTEGER }
                         }
@@ -3955,7 +3948,11 @@ pub(crate) fn op(what: i32) {
                 },
 
                 LES => mnumber {
-                    l: if is_float {
+                    l: if is_float && crate::dash_mode::ksh93_mode() {
+                        // !!! KSH93 GATE (no C counterpart) !!! compared as long doubles.
+                        let o = crate::ksh_long_double::float_cmp(&a, &b);
+                        matches!(o, Some(std::cmp::Ordering::Less)) as i64
+                    } else if is_float {
                         ((if a.type_ == MN_FLOAT { a.d } else { a.l as f64 })
                             < (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }))
                             as i64
@@ -3968,7 +3965,11 @@ pub(crate) fn op(what: i32) {
                     type_: MN_INTEGER,
                 },
                 LEQ => mnumber {
-                    l: if is_float {
+                    l: if is_float && crate::dash_mode::ksh93_mode() {
+                        // !!! KSH93 GATE (no C counterpart) !!! compared as long doubles.
+                        let o = crate::ksh_long_double::float_cmp(&a, &b);
+                        matches!(o, Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)) as i64
+                    } else if is_float {
                         ((if a.type_ == MN_FLOAT { a.d } else { a.l as f64 })
                             <= (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }))
                             as i64
@@ -3981,7 +3982,11 @@ pub(crate) fn op(what: i32) {
                     type_: MN_INTEGER,
                 },
                 GRE => mnumber {
-                    l: if is_float {
+                    l: if is_float && crate::dash_mode::ksh93_mode() {
+                        // !!! KSH93 GATE (no C counterpart) !!! compared as long doubles.
+                        let o = crate::ksh_long_double::float_cmp(&a, &b);
+                        matches!(o, Some(std::cmp::Ordering::Greater)) as i64
+                    } else if is_float {
                         ((if a.type_ == MN_FLOAT { a.d } else { a.l as f64 })
                             > (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }))
                             as i64
@@ -3994,7 +3999,11 @@ pub(crate) fn op(what: i32) {
                     type_: MN_INTEGER,
                 },
                 GEQ => mnumber {
-                    l: if is_float {
+                    l: if is_float && crate::dash_mode::ksh93_mode() {
+                        // !!! KSH93 GATE (no C counterpart) !!! compared as long doubles.
+                        let o = crate::ksh_long_double::float_cmp(&a, &b);
+                        matches!(o, Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)) as i64
+                    } else if is_float {
                         ((if a.type_ == MN_FLOAT { a.d } else { a.l as f64 })
                             >= (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }))
                             as i64
@@ -4007,7 +4016,11 @@ pub(crate) fn op(what: i32) {
                     type_: MN_INTEGER,
                 },
                 DEQ => mnumber {
-                    l: if is_float {
+                    l: if is_float && crate::dash_mode::ksh93_mode() {
+                        // !!! KSH93 GATE (no C counterpart) !!! compared as long doubles.
+                        let o = crate::ksh_long_double::float_cmp(&a, &b);
+                        matches!(o, Some(std::cmp::Ordering::Equal)) as i64
+                    } else if is_float {
                         ((if a.type_ == MN_FLOAT { a.d } else { a.l as f64 })
                             == (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }))
                             as i64
@@ -4020,7 +4033,11 @@ pub(crate) fn op(what: i32) {
                     type_: MN_INTEGER,
                 },
                 NEQ => mnumber {
-                    l: if is_float {
+                    l: if is_float && crate::dash_mode::ksh93_mode() {
+                        // !!! KSH93 GATE (no C counterpart) !!! compared as long doubles.
+                        let o = crate::ksh_long_double::float_cmp(&a, &b);
+                        !matches!(o, Some(std::cmp::Ordering::Equal)) as i64
+                    } else if is_float {
                         ((if a.type_ == MN_FLOAT { a.d } else { a.l as f64 })
                             != (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }))
                             as i64
@@ -4089,9 +4106,9 @@ pub(crate) fn op(what: i32) {
                     }
                     if !cf && crate::dash_mode::ksh93_mode() {
                         // !!! KSH93 GATE (no C counterpart) !!! ksh93 raises in double:
-                        // `2**63` saturates to INT64_MAX, `2**64` and `3**40` print as
-                        // floats (see `ksh93_overflow!`).
-                        ksh93_overflow!((a.l as f64).powf(b.l as f64))
+                        // `2**64` and `3**40` print as floats, `2**63` is INT64_MAX on
+                        // aarch64 and a float on x86 (`ksh_long_double::int_pow`).
+                        crate::ksh_long_double::int_pow(a.l, b.l)
                     } else if !cf {
                         // c:1344 — for (c.u.l = 1; b.u.l--; c.u.l *= a.u.l).
                         // zsh's naive O(e) loop times out on a pathological
@@ -4260,7 +4277,10 @@ pub(crate) fn op(what: i32) {
             push(val, None);
         }
         UMINUS => {
-            let result = if (val.type_ == MN_FLOAT) {
+            let result = if val.type_ == MN_FLOAT && crate::dash_mode::ksh93_mode() {
+                // !!! KSH93 GATE (no C counterpart) !!! keep the long double's bits.
+                crate::ksh_long_double::float_neg(&val)
+            } else if (val.type_ == MN_FLOAT) {
                 mnumber {
                     l: 0,
                     d: -(if val.type_ == MN_FLOAT {
@@ -4565,6 +4585,11 @@ pub fn matheval(s: &str) -> Result<mnumber, String> {
     if M_LEVEL.with(|c| c.get()) == 0 {
         // c:1486
         reset_output_format(); // c:1487
+        // !!! KSH93 GATE (no C counterpart) !!! a new top-level evaluation retires
+        // the previous one's long doubles (`ksh_long_double`).
+        if crate::dash_mode::ksh93_mode() {
+            crate::ksh_long_double::begin_evaluation();
+        }
     }
 
     // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash's `$(( ))` is an error:
@@ -4775,7 +4800,7 @@ pub fn matheval(s: &str) -> Result<mnumber, String> {
     let result = mathevall(prec_type::MPREC_TOP);
     drop(math_ctx);
     // ksh93: a bare literal or variable never meets an operator, so round the result too.
-    let result = if crate::dash_mode::ksh93_mode() { result.map(|n| ksh93_round_int!(n)) } else { result };
+    let result = if crate::dash_mode::ksh93_mode() { result.map(crate::ksh_long_double::round_int) } else { result };
     // c:455 — `stack = xstack;`, the cache goes out of scope with the
     // frame that owns it. At top level both maps were empty on entry,
     // so this is a clear; under a nested `matheval` it restores the

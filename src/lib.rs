@@ -336,6 +336,9 @@ pub mod dap;
 /// `dash_mode` submodule — strict-dash emulation flag (Rust-only).
 #[path = "extensions/dash_mode.rs"]
 pub mod dash_mode;
+/// `ksh_long_double` submodule — ksh93's host long double in software (Rust-only).
+#[path = "extensions/ksh_long_double.rs"]
+pub mod ksh_long_double;
 /// `dumpers` submodule.
 #[path = "extensions/dumpers.rs"]
 pub mod dumpers;

@@ -61909,7 +61909,30 @@ raises SIGFPE on x86; `dash_decodes_esc`, `mksh_has_cat_builtin` and
 `utf8-mode` from the same predicate); the drop-in signal arming skips a signal
 that is currently ignored; `fwrite_stdout` and `print -u` write one buffer.
 
-**Not fixed.** ksh93's float arithmetic itself runs in the host's long double,
-so on x86_64 `print $((1.0/3))` is `0.333333333333333333` (80-bit) where zshrs,
-computing in f64, prints `0.333333333333333315` at 18 digits. Matching it needs
-a software long double behind `mnumber`, which is a design change, not a gate.
+**Follow-up: the arithmetic itself.** ksh93 computes in the host's long
+double, so on x86_64 `print $((1.0/3))` is `0.333333333333333333` (an 80-bit
+quotient) where f64 arithmetic gives `0.333333333333333315` at 18 digits, and
+`INT64_MAX + 1000` is the exact `9.22337203685477681e+18`, not the double's
+`...786e+18`. `src/extensions/ksh_long_double.rs` now evaluates ksh93's
+`+ - * /`, unary minus, comparisons and constants in a software long double of
+`LDBL_MANT_DIG` bits (64 x87, 113 binary128, 53 where long double is double):
+exact `BigUint` arithmetic rounded once, half to even. The value rides in the
+`mnumber` through a per-evaluation arena — `l` is the C union's dead half when
+`type_` is `MN_FLOAT`, so it carries the arena handle while `d` keeps the f64
+rounding for every other reader — and `arithsubst` prints the result as
+macro.c:2188-2193 does: the integer when the host cast round-trips, `%Lg` for
+zero, else `%.*Lg` with `LDBL_DIG`. `pow` and the math functions stay in
+double, as ksh93's own calls do (`2**0.5` prints the double's digits on every
+host). Subnormals flush to zero on parse and on every result, as ksh93's do
+(`$((1e-310))` and `$((2.2e-308 / 4))` print `0`, `$((-1e-320))` prints `-0`).
+Variables still store a double: `float x=$((1.0/3)); print $x` prints through
+`typeset -F`'s precision, where ksh keeps the long double.
+
+Found on the way and fixed too: ksh93's `print` rejects a dash-digit word
+(`print -9 x` is "-9: unknown option", 2) where zsh's option parser passes it
+through as an operand; and ksh93 (every builtin) and bash 3.2's `/bin/sh`
+(`read`, `umask`, `hash`) report a bad option with status 2 where zsh uses 1.
+Still open in the same family: zsh-only option letters the drop-ins accept
+(`read -q`, `cd -q` are usage errors in bash, ksh93, mksh and dash), which
+needs per-shell option sets like `dash_builtin_optstr` for the other shells;
+and `--sh` answering `print` where bash 3.2 has no such command (127).

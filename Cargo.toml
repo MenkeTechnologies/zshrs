@@ -159,6 +159,10 @@ zshrs-daemon = { workspace = true, optional = true }
 # is the foundational Rust dlopen wrapper (cross-platform dlopen/dlsym).
 # See src/extensions/plugin_host.rs and docs/PLUGINS.md.
 libloading = "0.8"
+# Exact long-double arithmetic for the ksh93 drop-in (src/extensions/ksh_long_double.rs):
+# every operation is computed exactly in a big integer and rounded once.
+num-bigint = "0.4"
+num-traits = "0.2"
 znative = { workspace = true }
 fusevm = { version = "0.26.7", features = ["jit", "jit-disk-cache", "aot", "ffi", "rkyv-archive"] }
 regex = "1.11"

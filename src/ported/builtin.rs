@@ -703,12 +703,14 @@ pub fn execbuiltin(
                 if crate::dash_mode::dash_faithful() {
                     return 2;
                 }
-                // ksh93's `ulimit` usage error is 2 as well; so is a bad `read` option
-                // in ksh93, mksh and /bin/sh.
-                if crate::dash_mode::ksh93_mode() && name == "ulimit" {
+                // ksh93's optget reports every builtin usage error with 2 (`print -q`,
+                // `read -q`, `umask -q`, `hash -q`, `ulimit -q` all measured on
+                // ksh93u+m 1.0.10), and so does bash 3.2's `/bin/sh` for `read`,
+                // `umask` and `hash`. mksh is 2 for `read` and 1 elsewhere.
+                if crate::dash_mode::ksh93_mode() || crate::dash_mode::sh_mode() {
                     return 2;
                 }
-                if name == "read" && (crate::dash_mode::korn_mode() || crate::dash_mode::sh_mode()) {
+                if name == "read" && crate::dash_mode::korn_mode() {
                     return 2;
                 }
                 return 1; // c:393
@@ -13799,6 +13801,18 @@ pub fn bin_print(
     {
         zwarnnam(name, &format!("Illegal option {}", &args[0][..2]));
         return 2;
+    }
+    // !!! KSH93 GATE (no C counterpart) !!! zsh's option parser leaves a dash
+    // followed by a digit to print as an operand (`print -9 x` prints `-9 x`);
+    // ksh93's `print` hands every leading dash word to optget, which rejects it:
+    // `print -9 x` is "print: -9: unknown option", status 2. `--` ends options.
+    if func == BIN_PRINT && crate::dash_mode::ksh93_mode() && !OPT_ISSET(ops, b'-') {
+        if let Some(a) = args.first().filter(|a| a.len() > 1 && a.starts_with('-')) {
+            if a.as_bytes()[1].is_ascii_digit() {
+                zwarnnam(name, &format!("{a}: unknown option"));
+                return 2;
+            }
+        }
     }
     // !!! DROP-IN GATE (no C counterpart) !!! `printf -n …`: bash, ksh93 and /bin/sh
     // report an invalid option (2; `-v NAME` is theirs); mksh runs the system printf,
