@@ -79,6 +79,27 @@ import shutil
 import subprocess
 from dataclasses import dataclass, field
 
+
+def reference_zsh() -> str:
+    """The zsh the harnesses compare against.
+
+    Resolved the way `tests/parity/oracle.rs` resolves it: `$ZSHRS_ORACLE_ZSH`,
+    then the build `scripts/build_zsh_oracle.sh` installs from the development
+    tree, then whatever `zsh` is on PATH. The function tree both shells load
+    (vendor/zsh/functions, bundled as ~/.zshrs/functions) tracks that
+    development tree, and a released zsh cannot run it: 5.9.2 rejects the
+    `zformat -Fq` in `_description`, so every described listing broke on the
+    REFERENCE side and a run that defaulted to `zsh` measured that version
+    split instead of the engine.
+    """
+    explicit = os.environ.get("ZSHRS_ORACLE_ZSH")
+    if explicit and os.path.exists(explicit):
+        return explicit
+    built = os.path.join(os.path.expanduser("~"), ".cache", "zshrs", "zsh-oracle", "bin", "zsh")
+    if os.path.exists(built):
+        return built
+    return "zsh"
+
 # ── keystroke vocabulary ─────────────────────────────────────────────────────
 #
 # Byte sequences are what an xterm-family terminal actually transmits, because
@@ -1809,8 +1830,10 @@ def sequences_for_case(case: Case, fallback=None) -> list[str]:
 _OPTION_PROBE = ("for o in {names}; do print -r -- \"$o=${{options[$o]}}\"; done")
 
 
-def probe_option_defaults(argv=("zsh", "-f"), timeout: int = 20) -> dict[str, bool]:
-    """Ask a real shell for the `-f` state of every option in the table."""
+def probe_option_defaults(argv=None, timeout: int = 20) -> dict[str, bool]:
+    """Ask a real shell (the reference by default) for the `-f` state of every
+    option in the table."""
+    argv = list(argv) if argv else [reference_zsh(), "-f"]
     script = _OPTION_PROBE.format(names=" ".join(sorted(SHELL_OPTIONS)))
     out = subprocess.run(list(argv) + ["-c", script],
                          capture_output=True, text=True, timeout=timeout).stdout
@@ -1822,7 +1845,7 @@ def probe_option_defaults(argv=("zsh", "-f"), timeout: int = 20) -> dict[str, bo
     return state
 
 
-def check_option_defaults(argv=("zsh", "-f")) -> list[tuple[str, bool, str]]:
+def check_option_defaults(argv=None) -> list[tuple[str, bool, str]]:
     """`(option, table_default, shell_state)` for every disagreement.
 
     An option the shell does not know comes back as `"missing"`, which is just
@@ -2321,10 +2344,10 @@ DISCOVER_UNSAFE = frozenset("""
 
 
 def _fpath_dirs() -> list[str]:
-    """The fpath a bare `zsh -f` sees on this host."""
+    """The fpath a bare `zsh -f` (the reference) sees on this host."""
     try:
         out = subprocess.run(
-            ["zsh", "-f", "-c", "print -rl -- $fpath"],
+            [reference_zsh(), "-f", "-c", "print -rl -- $fpath"],
             capture_output=True, text=True, timeout=15,
         ).stdout
     except Exception:
@@ -2452,7 +2475,7 @@ def main() -> int:
             opts = gen_option_set(rng, profile=args.option_profile)
             print(f"{option_set_id(opts):16s} {describe_option_set(opts)}")
     if args.check_option_defaults is not None:
-        shells = args.check_option_defaults or ["zsh -f"]
+        shells = args.check_option_defaults or [reference_zsh() + " -f"]
         rc = 0
         for shell in shells:
             argv = shell.split()

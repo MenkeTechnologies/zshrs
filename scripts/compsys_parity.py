@@ -292,6 +292,7 @@ PROMPT_SENTINEL = "@ZP@"
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from parity_corpus import (  # noqa: E402
     CASES as SHARED_CASES,
+    reference_zsh,
     DEFAULT_SEQUENCES,
     KEY_SEQUENCES,
     KEYS,
@@ -890,7 +891,7 @@ def ref_ostype() -> str | None:
     try:
         import subprocess
         out = subprocess.run(
-            ["zsh", "-f", "-c", "print -r -- $OSTYPE"],
+            [reference_zsh(), "-f", "-c", "print -r -- $OSTYPE"],
             capture_output=True, text=True, timeout=10,
         ).stdout.strip()
         return out or None
@@ -899,14 +900,14 @@ def ref_ostype() -> str | None:
 
 
 @functools.lru_cache(maxsize=1)
-def _user_fpath_cached() -> tuple:
-    """The user's real completion fpath, as `zsh -f` sees it on this host
-    (global rc populates it even under -f). Used so both shells scan the
-    identical function set the user's `.zcompdump` was built from."""
+def _user_fpath_cached(zsh: str) -> tuple:
+    """The user's real completion fpath, as the reference `zsh -f` sees it on
+    this host (global rc populates it even under -f). Used so both shells scan
+    the identical function set the user's `.zcompdump` was built from."""
     try:
         import subprocess
         out = subprocess.run(
-            ["zsh", "-f", "-c", "print -rl -- $fpath"],
+            [zsh, "-f", "-c", "print -rl -- $fpath"],
             capture_output=True, text=True, timeout=10,
         ).stdout
         return tuple(d for d in out.splitlines() if d and os.path.isdir(d))
@@ -914,8 +915,8 @@ def _user_fpath_cached() -> tuple:
         return ()
 
 
-def user_fpath() -> list[str]:
-    return list(_user_fpath_cached())
+def user_fpath(zsh: str) -> list[str]:
+    return list(_user_fpath_cached(zsh))
 
 
 # The editing modes `--edit-fuzz` runs under. Each is a line appended to the
@@ -1035,6 +1036,9 @@ PROMPT='{PROMPT_SENTINEL} '
 RPROMPT=''
 PS2=''
 setopt no_beep
+# Both shells read libc rand() for $RANDOM, so one seed makes the value a
+# verbose listing prints (`echo $((<TAB>`) comparable instead of random.
+RANDOM=7
 {ostype_line}\
 
 {fpath_line}{zstyle_line}{compinit}{autoload_line}{mode_line}{cwd_line}{probe_line}
@@ -5456,7 +5460,10 @@ def run_session_replay(args, dump, fpath_dirs, env):
 def main():
     ap = argparse.ArgumentParser(description="compsys parity harness")
     ap.add_argument("--zshrs", default=default_zshrs())
-    ap.add_argument("--zsh", default="zsh")
+    ap.add_argument("--zsh", default=reference_zsh(),
+                    help="reference zsh: $ZSHRS_ORACLE_ZSH, else the build under "
+                         "~/.cache/zshrs/zsh-oracle (scripts/build_zsh_oracle.sh), "
+                         "else `zsh` on PATH")
     ap.add_argument("--dump", default=None)
     ap.add_argument("--no-dump", action="store_true",
                     help="force fresh compinit fpath-scan on both shells (no cached dump)")
@@ -5823,7 +5830,7 @@ def main():
     elif args.fpath:
         fpath_dirs = list(args.fpath)
     else:
-        fpath_dirs = user_fpath()
+        fpath_dirs = user_fpath(args.zsh)
     zstyle_file = None if args.no_zstyle else args.zstyle
     if not os.path.exists(args.zshrs):
         sys.exit(f"zshrs binary not found: {args.zshrs} (run: cargo build --bin zshrs)")
