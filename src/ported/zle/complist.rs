@@ -2286,10 +2286,33 @@ pub fn compprintfmt(
             // wcwidth(3)'s -1 for a non-printable back to 1 — so the ANSI
             // escape bytes and control characters a format string carries
             // still count one column each, exactly as before. What moves is
-            // wide glyphs (2) and combining marks (0). The `cchar == WEOF`
-            // arm at c:1094-1097 has no counterpart: this loop yields decoded
-            // `char`s, so there is no undecodable unit to fall back for.
-            cc += crate::ported::zsh_h::WCWIDTH_WINT(c); // c:1270
+            // wide glyphs (2) and combining marks (0).
+            //
+            // c:1092-1097 — `len = MB_METACHARLENCONV(p, &cchar); if (cchar
+            // == WEOF) { cchar = (*p == Meta ? p[1] ^ 32 : *p); width = 1; }`:
+            // a `Meta` pair is ONE unit, decoded to the raw byte it carries.
+            // zshrs metafies at the character level — the byte is stored as
+            // `U+0083` followed by `char::from(byte ^ 32)`, the encoding
+            // `unmetafy_str` decodes — and `compdescribe` cuts a described
+            // match at the screen edge one BYTE at a time under a single-byte
+            // codeset (computil.c:699-715, `copy_desc` in computil.rs), so a
+            // description holding a multibyte glyph reaches this loop as such
+            // pairs. Walking them as two decoded `char`s wrote the pair's own
+            // UTF-8 (`C2 83 C3 82` for a `\xe2`) where C `putc`s the one byte
+            // at c:1288-1295 below, and booked two columns for one: `git
+            // checkout <TAB>` under `LC_ALL=C` rendered a commit subject's
+            // `…` as `ÂÃÂÂ ÂÂ` (fingerprint caaf365eac). Same idiom as
+            // `clprintfmt` (:1189-1196) and `printfmt` (zle_tricky.rs:4559).
+            let meta_byte = if c == char::from(crate::ported::zsh_h::Meta) {
+                chars
+                    .next_if(|n| (0x80..=0xff).contains(&(*n as u32)))
+                    .map(|n| ((n as u32) as u8) ^ 32)
+            } else {
+                None
+            };
+            // c:1270 — `cc += width;` where `width` is `WCWIDTH_WINT(cchar)`
+            //          and `cchar` is the DECODED byte for a Meta pair.
+            cc += crate::ported::zsh_h::WCWIDTH_WINT(meta_byte.map_or(c, char::from));
                      // c:1272 — once we reach the right margin (or a newline) in stat
                      // mode, downgrade to measure-only so the tail is counted, not printed.
             if (cc >= zterm_columns - 2 || c == '\n') && stat {
@@ -2316,9 +2339,13 @@ pub fn compprintfmt(
                     dopr = 0; // c:1284
                     continue; // c:1286
                 }
+                // c:1288-1295 — `while (len--) { if (*p == Meta) { len--; p++;
+                //                 putc(*p++ ^ 32, shout); } else putc(*p++, shout); }`
                 let mut buf = [0u8; 4];
-                let bs = c.encode_utf8(&mut buf).as_bytes();
-                crate::shout::write(bs); // c:1288-1295
+                match meta_byte {
+                    Some(b) => crate::shout::write(&[b]), // c:1289-1292
+                    None => crate::shout::write(c.encode_utf8(&mut buf).as_bytes()), // c:1294
+                }
                                          // c:1300-1303 — a wrap lands us on a new screen row.
                 let beg = (cc % zterm_columns) == 0;
                 if beg && !stat {
