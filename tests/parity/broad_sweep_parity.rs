@@ -23,9 +23,16 @@ fn zshrs() -> std::path::PathBuf {
 }
 
 /// The fixture every row runs in: a few files, a dotfile and a subdirectory.
+///
+/// Each shell gets its own copy, so the files' mtimes are set explicitly:
+/// `a.txt` two seconds before `b.log`, the rest at `b.log`'s time. Left to
+/// the writes, the `-nt` / `-ot` row depended on whether the two writes
+/// straddled a tick of the filesystem clock (Linux ext4 has a coarse one),
+/// which was true in one shell's directory and false in the other's.
 fn fixture(tag: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("zshrs-sweep-{}-{tag}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
+    let now = std::time::SystemTime::now();
     for (name, body) in [
         ("a.txt", "hello\nworld\n"),
         ("b.log", "x"),
@@ -35,7 +42,9 @@ fn fixture(tag: &str) -> std::path::PathBuf {
     ] {
         let p = dir.join(name);
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-        std::fs::write(p, body).unwrap();
+        std::fs::write(&p, body).unwrap();
+        let older = if name == "a.txt" { std::time::Duration::from_secs(2) } else { std::time::Duration::ZERO };
+        std::fs::File::open(&p).unwrap().set_modified(now - older).unwrap();
     }
     dir
 }
