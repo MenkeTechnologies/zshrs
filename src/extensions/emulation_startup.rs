@@ -781,10 +781,10 @@ pub fn init_dropin_signals() {
     for sig in crate::dash_mode::DROPIN_FATAL_SIGNALS {
         match crate::dash_mode::fatal_signal_action(sig) {
             crate::dash_mode::FatalSignalAction::Default => {}
-            crate::dash_mode::FatalSignalAction::Ignore => crate::ported::signals::install_handler(sig),
+            crate::dash_mode::FatalSignalAction::Ignore => arm_unless_ignored(sig),
             crate::dash_mode::FatalSignalAction::ExitTrap => {
                 if !lazy {
-                    crate::ported::signals::install_handler(sig);
+                    arm_unless_ignored(sig);
                 }
             }
         }
@@ -796,8 +796,24 @@ pub fn init_dropin_signals() {
 pub fn arm_dropin_fatal_signals() {
     for sig in crate::dash_mode::DROPIN_FATAL_SIGNALS {
         if crate::dash_mode::fatal_signal_action(sig) != crate::dash_mode::FatalSignalAction::Default {
-            crate::ported::signals::install_handler(sig);
+            arm_unless_ignored(sig);
         }
+    }
+}
+
+/// Install the handler for `sig` unless the signal is currently ignored. A
+/// disposition inherited as SIG_IGN stays so: ksh93's `sh_sigtrap` puts it
+/// back when `signal(sig, sh_fault)` returns SIG_IGN and marks the signal
+/// `SH_SIGOFF` ("off by parent", ksh93u+m fault.c:289-293), so
+/// `trap '' USR1; exec ksh -c 'trap : USR1; kill -USR1 $$; echo alive'`
+/// prints `alive`. Arming over the ignore ran the EXIT-trap exit instead.
+fn arm_unless_ignored(sig: i32) {
+    let ignored = unsafe {
+        let mut cur: libc::sigaction = std::mem::zeroed();
+        libc::sigaction(sig, std::ptr::null(), &mut cur) == 0 && cur.sa_sigaction == libc::SIG_IGN
+    };
+    if !ignored {
+        crate::ported::signals::install_handler(sig);
     }
 }
 

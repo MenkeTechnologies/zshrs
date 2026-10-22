@@ -14729,9 +14729,12 @@ pub fn paramsubst(
                     // the count from characters to display CELLS, so
                     // `${(m)#日本語}` returns 6 (3 wide chars × 2 cells),
                     // not 3. width != 0 ⇔ multi_width set.
-                    // !!! DROP-IN GATE (no C counterpart) !!! dash and a non-interactive
-                    // mksh count BYTES (`x=héllo; ${#x}` is 6).
-                    if crate::dash_mode::dash_faithful() || crate::dash_mode::pdksh_family() {
+                    // !!! DROP-IN GATE (no C counterpart) !!! dash and an mksh whose
+                    // utf8-mode is off count BYTES (`x=héllo; ${#x}` is 6); Debian's
+                    // mksh turns the mode on from a UTF-8 locale (`mksh_utf8_mode`).
+                    if crate::dash_mode::dash_faithful()
+                        || (crate::dash_mode::pdksh_family() && !crate::dash_mode::mksh_utf8_mode())
+                    {
                         crate::ported::utils::unmetafy_str(&raw_value_for_len).len()
                     } else {
                         crate::ported::utils::mb_metastrlenend(

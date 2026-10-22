@@ -15439,10 +15439,12 @@ pub fn convfloat(dval: f64, digits: i32, pm_flags: u32) -> String {
         return "NaN".to_string();
     }
     // !!! EMULATION-ONLY (no C counterpart) !!! ksh93 prints through `%g`:
-    // `-E[n]` is `%.{n}g` (default 10), plain float arithmetic is `%.15g`, and
-    // neither appends zsh's trailing dot. Measured against ksh93u+m:
-    // `typeset -E f=1.5; print $f` -> `1.5`, `print $((2**0.5))` ->
-    // `1.4142135623731`, `print $((5.0))` -> `5`.
+    // `-E[n]` is `%.{n}g` (default 10), plain float arithmetic is `%.*Lg` with
+    // the host's LDBL_DIG (ksh93u+m macro.c:2190: 15 on Apple arm64, 18 on
+    // x86_64, 33 on aarch64 Linux), and neither appends zsh's trailing dot.
+    // Measured against ksh93u+m 1.0.10: `typeset -E f=1.5; print $f` -> `1.5`,
+    // `print $((5.0))` -> `5`, `print $((2**0.5))` -> `1.4142135623731` on
+    // Apple arm64 and `1.41421356237309515` on x86_64 Linux.
     let ksh93 = crate::dash_mode::ksh93_mode();
     // digits < 0 is ksh93's explicit `-F0` / `-E0` (see `float_precision_base`).
     let ksh93_zero = ksh93 && digits < 0 && (pm_flags & (PM_EFLOAT | PM_FFLOAT)) != 0;
@@ -15460,7 +15462,7 @@ pub fn convfloat(dval: f64, digits: i32, pm_flags: u32) -> String {
         let d = if digits <= 0 { 10 } else { digits }; // c:5718
         ('f', d)
     } else {
-        let d = if digits == 0 { if ksh93 { 15 } else { 17 } } else { digits }; // c:5713
+        let d = if digits == 0 { if ksh93 { crate::dash_mode::LDBL_DIG } else { 17 } } else { digits }; // c:5713
         ('g', d)
     };
     // Mirror zsh's snprintf path (Src/params.c:5751) — the C source

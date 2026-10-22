@@ -563,6 +563,9 @@ struct SetOpt {
     zsh: Option<&'static str>,
     invert: bool,
     default_on: bool,
+    /// Computes the fresh-shell state when it depends on the host or the
+    /// environment (mksh's `utf8-mode`); overrides `default_on`.
+    startup_state: Option<fn() -> bool>,
 }
 
 const fn o(name: &'static str, zsh: &'static str) -> SetOpt {
@@ -571,6 +574,7 @@ const fn o(name: &'static str, zsh: &'static str) -> SetOpt {
         zsh: Some(zsh),
         invert: false,
         default_on: false,
+        startup_state: None,
     }
 }
 const fn inv(name: &'static str, zsh: &'static str) -> SetOpt {
@@ -579,6 +583,7 @@ const fn inv(name: &'static str, zsh: &'static str) -> SetOpt {
         zsh: Some(zsh),
         invert: true,
         default_on: false,
+        startup_state: None,
     }
 }
 const fn fixed(name: &'static str, default_on: bool) -> SetOpt {
@@ -587,6 +592,16 @@ const fn fixed(name: &'static str, default_on: bool) -> SetOpt {
         zsh: None,
         invert: false,
         default_on,
+        startup_state: None,
+    }
+}
+const fn computed(name: &'static str, startup_state: fn() -> bool) -> SetOpt {
+    SetOpt {
+        name,
+        zsh: None,
+        invert: false,
+        default_on: false,
+        startup_state: Some(startup_state),
     }
 }
 
@@ -699,7 +714,7 @@ const MKSH_SET_O: &[SetOpt] = &[
     fixed("sh", false),
     o("stdin", "stdin"),
     fixed("trackall", true),
-    fixed("utf8-mode", false),
+    computed("utf8-mode", crate::dash_mode::mksh_utf8_mode),
     o("verbose", "verbose"),
     o("vi", "vi"),
     fixed("vi-esccomplete", false),
@@ -768,7 +783,7 @@ impl SetOpt {
                     on
                 }
             }
-            None => self.default_on,
+            None => self.startup_state.map_or(self.default_on, |state| state()),
         }
     }
 }
@@ -1107,11 +1122,13 @@ pub fn ksh93_empty_ifs_join(elems: &[String]) -> String {
 }
 
 /// mksh implements these commands itself, so running one never enters the tracked-alias
-/// (command hash) table that `hash` / `alias -t` lists.
+/// (command hash) table that `hash` / `alias -t` lists. `cat` is one of them only
+/// where the emulated mksh still has the builtin (`dash_mode::mksh_has_cat_builtin`).
 ///
 /// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
 pub fn mksh_builtin_command(name: &str) -> bool {
-    matches!(name, "cat" | "echo" | "kill" | "pwd" | "test" | "true" | "false" | "sleep")
+    (name == "cat" && crate::dash_mode::mksh_has_cat_builtin())
+        || matches!(name, "echo" | "kill" | "pwd" | "test" | "true" | "false" | "sleep")
 }
 
 #[cfg(test)]

@@ -61855,3 +61855,61 @@ zshrs   3
 `set_undo_limit_change`: the integer assignment path in `params.rs` stores
 `pm.u_val` instead of dispatching `pm->gsu.i->setfn` (c:Src/params.c:2874), so
 the limit never applies.
+
+## #1190 — the Linux emulation matrix diverged on host-specific answers: x87 `%a`, ksh93 long-double digits and casts, Debian's dash `\e` and mksh build, an inherited `SIG_IGN` armed over, and `print` split across two writes — fixed
+
+**Symptom.** CI's ubuntu `Emulation parity` job failed 7 matrix cases and the
+ksh93 float probe after the reference shells were pinned to the same releases
+macOS uses (bash 5.3.20, ksh93u+m 1.0.10); every one passed on macOS with the
+same binaries. The `Test (ubuntu)` job also failed the inherited-`SIG_IGN`
+trap parity and two multios rows (`print x >&1 > f | cat` came out `xx\n\n`).
+
+**Causes, each verified against the reference source or the installed shell.**
+
+- bash formats `%a` with `%La` (printf.def:208-213), and glibc prints an x87
+  long double from its explicit 64-bit mantissa: leading nibble `8`..`f`,
+  exponent three lower (`sysdeps/ieee754/ldbl-96/printf_fphex.c`), so
+  `printf '%a' 1` is `0x8p-3` on x86 Linux. zshrs printed the double layout.
+- ksh93 prints floats with `%.*Lg` and `LDBL_DIG` (macro.c:2190): 18 digits
+  on x86_64, 15 on Apple arm64 (long double is double), 33 on aarch64 Linux.
+  zshrs hardcoded 15. Its `%a` precision is `2*(sizeof(Sfdouble_t)-2)`
+  (sfio/sfvprintf.c:1175-1178): 28 digits with a 16-byte long double, 12 with
+  an 8-byte one; zshrs hardcoded 12.
+- ksh93 decides integer-vs-float output by `(Sflong_t)num != num`
+  (macro.c:2188); that C cast is the host CPU's, which `zlong_cast` already
+  models for zsh. `ksh93_overflow!` used Rust's saturating `as`, so `2**63`
+  printed `9223372036854775807` where x86 ksh prints `9.22337203685477581e+18`.
+- ksh93's integer `/` and `%` have no `-1` guard (streval.c:346, :361); on x86
+  `INT64_MIN / -1` traps and ksh dies of SIGFPE with no output. zshrs wrapped.
+- Ubuntu's dash 0.5.12-6ubuntu5 carries
+  `0008-Support-e-in-echo-and-printf-builtins.diff` (`case 'e'` in the shared
+  `conv_escape`), and upstream dash has `\e` after 0.5.12; Apple's `/bin/dash`
+  prints `\e` as two characters. zshrs always printed two.
+- Ubuntu's `mksh 59c-37` is R59c plus an upstream snapshot to 2025/12
+  (`debian-changes` removes `{Tbcat, c_cat}`) built with
+  `-DMKSH_EARLY_LOCALE_TRACKING` (debian/meat:457), so `cat` is external
+  (`hash` lists it) and `utf8-mode` follows a UTF-8 locale in a `-c` shell
+  (`x=héllo; ${#x}` is 5). zshrs modelled Homebrew's R59c: `cat` builtin,
+  bytes.
+- `init_dropin_signals` armed ksh93's terminating-signal handler over an
+  inherited `SIG_IGN`; ksh93's `sh_sigtrap` keeps the ignore and marks the
+  signal `SH_SIGOFF` (fault.c:289-293). So `trap '' USR1; exec zshrs --ksh -c
+  'trap : USR1; kill -USR1 $$; echo alive'` ran the EXIT-trap exit (138 on
+  Linux, 158 on macOS) instead of printing `alive`.
+- `fwrite_stdout` issued one write(2) per piece, so `print x` was `x` then
+  `\n`; a multios tee that woke between them relayed `x` to every target
+  first. C's stdio buffer delivers `x\n` in one write.
+
+**Fix.** `dash_mode` gains the host constants `SIZEOF_LONG_DOUBLE`,
+`LDBL_DIG`, `LONG_DOUBLE_HEX_X87` and a `HexFloatStyle` for `hex_float`
+(glibc's half-to-even rounding and leading-digit carry included);
+`ksh93_overflow!` casts through `zlong_from_double`; `ksh93_int_divide_traps`
+raises SIGFPE on x86; `dash_decodes_esc`, `mksh_has_cat_builtin` and
+`mksh_utf8_mode` gate the Linux answers (the `set -o` listing computes
+`utf8-mode` from the same predicate); the drop-in signal arming skips a signal
+that is currently ignored; `fwrite_stdout` and `print -u` write one buffer.
+
+**Not fixed.** ksh93's float arithmetic itself runs in the host's long double,
+so on x86_64 `print $((1.0/3))` is `0.333333333333333333` (80-bit) where zshrs,
+computing in f64, prints `0.333333333333333315` at 18 digits. Matching it needs
+a software long double behind `mnumber`, which is a design change, not a gate.

@@ -102,14 +102,17 @@ pub const DIV: i32 = 12; // c:121  /
 pub const MOD: i32 = 13; // c:122  %
 
 /// !!! KSH93 GATE (no C counterpart) !!! ksh93 evaluates `+ - *` in long double —
-/// plain double on Apple arm64 — and prints the result as an integer only when its
-/// saturating conversion round-trips: `INT64_MAX + 1000` is INT64_MAX, while
-/// `INT64_MAX + 1000000` is `9.22337203685577e+18`. zsh wraps. Used for every ksh93
-/// integer `+ - *`, so the sub-2^53 rounding (`2**60 + 1` is 2**60) comes with it.
+/// plain double on Apple arm64 — and prints the result as an integer only when C's
+/// `(Sflong_t)d` round-trips (ksh93u+m macro.c:2188 `if((Sflong_t)num!=num)`). That
+/// cast is the host CPU's (`zlong_cast`): aarch64 saturates, so `INT64_MAX + 1000`
+/// is INT64_MAX while `INT64_MAX + 1000000` is `9.22337203685577e+18`; x86 gives
+/// INT64_MIN for anything out of range, so there `2**63` is already the float
+/// `9.22337203685477581e+18`. zsh wraps. Used for every ksh93 integer `+ - *`, so
+/// the sub-2^53 rounding (`2**60 + 1` is 2**60) comes with it.
 macro_rules! ksh93_overflow {
     ($d:expr) => {{
         let d: f64 = $d;
-        let sat = d as i64;
+        let sat = crate::zlong_cast::zlong_from_double(d);
         if sat as f64 == d {
             mnumber { l: sat, d: 0.0, type_: MN_INTEGER }
         } else {
@@ -3853,20 +3856,17 @@ pub(crate) fn op(what: i32) {
                             m_error_set("division by zero".to_string());
                             return;
                         }
+                        let ai = (if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l });
                         let bi = (if b.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(b.d) } else { b.l });
+                        // !!! KSH93 GATE (no C counterpart) !!! ksh93 has no `-1` guard, so
+                        // on x86 `INT64_MIN / -1` kills it with SIGFPE.
+                        if crate::dash_mode::ksh93_int_divide_traps(ai, bi) {
+                            crate::dash_mode::die_of_sigfpe();
+                        }
                         if bi == -1 {
-                            mnumber {
-                                l: (if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l })
-                                    .wrapping_neg(),
-                                d: 0.0,
-                                type_: MN_INTEGER,
-                            }
+                            mnumber { l: ai.wrapping_neg(), d: 0.0, type_: MN_INTEGER }
                         } else {
-                            mnumber {
-                                l: (if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l }) / bi,
-                                d: 0.0,
-                                type_: MN_INTEGER,
-                            }
+                            mnumber { l: ai / bi, d: 0.0, type_: MN_INTEGER }
                         }
                     }
                 }
@@ -3888,19 +3888,17 @@ pub(crate) fn op(what: i32) {
                         m_error_set("division by zero".to_string());
                         return;
                     } else {
+                        let ai = (if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l });
                         let bi = (if b.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(b.d) } else { b.l });
+                        // !!! KSH93 GATE (no C counterpart) !!! ksh93 has no `-1` guard, so
+                        // on x86 `INT64_MIN % -1` kills it with SIGFPE (streval.c:346).
+                        if crate::dash_mode::ksh93_int_divide_traps(ai, bi) {
+                            crate::dash_mode::die_of_sigfpe();
+                        }
                         if bi == -1 {
-                            mnumber {
-                                l: 0,
-                                d: 0.0,
-                                type_: MN_INTEGER,
-                            }
+                            mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
                         } else {
-                            mnumber {
-                                l: (if a.type_ == MN_FLOAT { crate::zlong_cast::zlong_from_double(a.d) } else { a.l }) % bi,
-                                d: 0.0,
-                                type_: MN_INTEGER,
-                            }
+                            mnumber { l: ai % bi, d: 0.0, type_: MN_INTEGER }
                         }
                     }
                 }

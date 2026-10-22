@@ -14841,10 +14841,12 @@ pub fn bin_print(
         if let Some(mut f) = dest_fd_active {
             // c:4847 — write to dup'd file descriptor.
             use std::io::Write as _;
-            let _ = f.write_all(&body_bytes); // c:5124 fwrite
-            let _ = f.write_all(final_term); // c:5132
-                                             // f closes on drop (close(dup_fd)) — user's original fd
-                                             // remains open per c:4843 dup semantics.
+            // c:5124 fwrite + c:5132 fputc, both into fout's stdio buffer, so one
+            // write(2) carries the line — a reader on a pipe (a multios tee) sees
+            // `x\n`, not `x` then `\n`.
+            let _ = f.write_all(&[body_bytes.as_slice(), final_term].concat());
+            // f closes on drop (close(dup_fd)) — user's original fd
+            // remains open per c:4843 dup semantics.
         } else {
             // stdout path. -N writes NUL via raw stdout; print!/println!
             // would mangle a NUL inside a String literal via format
@@ -22497,7 +22499,7 @@ fn printf_format(
                         }),
                     };
                     let (left, _zero, width, prec) = parse_flags_width_prec(&spec);
-                    let body = crate::dash_mode::hex_float(v, conv == 'A', crate::dash_mode::ksh93_mode(), prec);
+                    let body = crate::dash_mode::hex_float(v, conv == 'A', crate::dash_mode::hex_float_style(), prec);
                     let body = if spec.contains('+') && v >= 0.0 { format!("+{body}") } else { body };
                     let pad = width.saturating_sub(body.chars().count());
                     if left {
@@ -22897,8 +22899,12 @@ fn printf_format(
                             if cs[i] != BS || i + 1 >= cs.len() {
                                 o.push(cs[i]);
                                 i += 1;
-                            } else if matches!(cs[i + 1], 'x' | 'e' | 'E') && crate::dash_mode::dash_faithful() {
-                                // dash: `\x` and `\e` are no escapes; keep the backslash itself.
+                            } else if crate::dash_mode::dash_faithful()
+                                && (matches!(cs[i + 1], 'x' | 'E')
+                                    || (cs[i + 1] == 'e' && !crate::dash_mode::dash_decodes_esc()))
+                            {
+                                // dash: `\x` and `\E` are no escapes, nor is `\e` outside Linux
+                                // (`dash_decodes_esc`); keep the backslash itself.
                                 o.push(BS);
                                 o.push(BS);
                                 o.push(cs[i + 1]);

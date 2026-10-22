@@ -355,13 +355,114 @@ pub fn take_korn_fn_readonly() -> Option<i32> {
     }
 }
 
-/// The C99 `%a` hex float the real shells' printf prints and zsh's lacks:
-/// `0x1p+0`, `0x1.8p+0`, `0x0p+0`, with the mantissa's trailing zeros dropped
-/// (`pad13` keeps all 13 digits, ksh93's `0x1.0000000000000p+0`) and `prec`
-/// rounding it to that many hex digits. `upper` is `%A`.
+/// C's `sizeof(long double)` on this target: 16 on x86_64 (x87 80-bit in a
+/// 16-byte slot) and on the 64-bit Linux targets with IEEE binary128 or IBM
+/// double-double (aarch64, riscv64, s390x, loongarch64, powerpc64, mips64),
+/// 12 on 32-bit x86, 8 where long double IS double (Apple arm64, 32-bit arm).
 ///
 /// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
-pub fn hex_float(v: f64, upper: bool, pad13: bool, prec: Option<usize>) -> String {
+pub const SIZEOF_LONG_DOUBLE: usize = if cfg!(target_arch = "x86_64") {
+    16
+} else if cfg!(target_arch = "x86") {
+    12
+} else if cfg!(all(target_arch = "aarch64", target_vendor = "apple")) {
+    8
+} else if cfg!(any(
+    target_arch = "aarch64",
+    target_arch = "riscv64",
+    target_arch = "s390x",
+    target_arch = "loongarch64",
+    target_arch = "powerpc64",
+    target_arch = "mips64",
+)) {
+    16
+} else {
+    8
+};
+
+/// C's `LDBL_DIG`, the decimal digits a long double carries: 18 for the x87
+/// 64-bit mantissa, 33 for binary128, 31 for powerpc64's double-double, and
+/// `DBL_DIG` 15 where long double is double. ksh93 prints every float through
+/// `%.*Lg` with this precision (ksh93u+m macro.c:2190, name.c:1869), so
+/// `print $((1.0/3))` has 15 digits on Apple arm64 and 18 on x86_64.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub const LDBL_DIG: i32 = if cfg!(any(target_arch = "x86", target_arch = "x86_64")) {
+    18
+} else if cfg!(target_arch = "powerpc64") {
+    31
+} else if SIZEOF_LONG_DOUBLE == 16 {
+    33
+} else {
+    15
+};
+
+/// glibc prints an x87 long double's `%La` from its explicit 64-bit mantissa:
+/// the leading digit is the top NIBBLE (8..f) and the exponent is three
+/// lower, so bash's `printf '%a' 1` is `0x8p-3` on x86 Linux
+/// (glibc sysdeps/ieee754/ldbl-96/printf_fphex.c: "We have 3 bits from the
+/// mantissa in the leading nibble"). Every other long double format prints
+/// `0x1p+0`. bash formats with `%La` (printf.def:208-213 `floatmax_t` is
+/// `long double`, `FLOATMAX_CONV "L"`).
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub const LONG_DOUBLE_HEX_X87: bool = cfg!(all(
+    any(target_arch = "x86", target_arch = "x86_64"),
+    target_os = "linux",
+    target_env = "gnu"
+));
+
+/// How `%a` lays out its hex digits: the shells differ, and so do the
+/// host's libc and long double.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HexFloatStyle {
+    /// A `double`: leading `1` (or `0`), thirteen fraction digits with the
+    /// trailing zeros dropped (`0x1.8p+0`). dash, /bin/sh and bash on a
+    /// host whose long double prints like a double.
+    Double,
+    /// glibc's x87 long double (see [`LONG_DOUBLE_HEX_X87`]): leading nibble
+    /// `8`..`f`, fifteen fraction digits, exponent three lower (`0xcp-3`).
+    X87,
+    /// ksh93's sfio: the mantissa is always printed to `digits` places,
+    /// zero-padded (`0x1.800000000000p+0`); [`ksh93_hex_float_digits`].
+    Ksh93 { digits: usize },
+}
+
+/// The `%a` style for the shell being emulated on this host.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn hex_float_style() -> HexFloatStyle {
+    if ksh93_mode() {
+        HexFloatStyle::Ksh93 { digits: ksh93_hex_float_digits() }
+    } else if bash_mode() && LONG_DOUBLE_HEX_X87 {
+        HexFloatStyle::X87
+    } else {
+        HexFloatStyle::Double
+    }
+}
+
+/// ksh93's default `%a` precision: `2*(sizeof(Sfdouble_t)-2)` hex digits
+/// (ksh93u+m sfio/sfvprintf.c:1175-1178) — 12 where long double is double
+/// (`0x1.800000000000p+0` on Apple arm64), 28 with a 16-byte long double
+/// (`0x1.8000000000000000000000000000p+0` on x86_64 and aarch64 Linux).
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn ksh93_hex_float_digits() -> usize {
+    2 * (SIZEOF_LONG_DOUBLE - 2)
+}
+
+/// The C99 `%a` hex float the real shells' printf prints and zsh's lacks,
+/// in `style`'s layout, with `prec` rounding the mantissa to that many hex
+/// digits (glibc's rule: round half to even on the dropped bits, a carry out
+/// of the leading digit becomes `1` with the exponent four higher —
+/// stdio-common/printf_fphex.c:222-299). `upper` is `%A`.
+///
+/// The value is the `f64` the argument parsed to, so an x87 mantissa shows
+/// the double's 53 bits followed by zeros; a literal that is exact in binary
+/// (`1`, `1.5`, `0.25`) prints exactly as the C shells print it.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn hex_float(v: f64, upper: bool, style: HexFloatStyle, prec: Option<usize>) -> String {
     if v.is_nan() {
         return if upper { "NAN" } else { "nan" }.to_string();
     }
@@ -369,31 +470,44 @@ pub fn hex_float(v: f64, upper: bool, pad13: bool, prec: Option<usize>) -> Strin
     if v.is_infinite() {
         return format!("{sign}{}", if upper { "INF" } else { "inf" });
     }
-    let bits = v.to_bits();
-    let exp_bits = ((bits >> 52) & 0x7ff) as i64;
-    let mant = bits & ((1u64 << 52) - 1);
-    let (mut lead, exp) = if exp_bits == 0 {
-        (0u64, if mant == 0 { 0 } else { -1022 })
-    } else {
-        (1u64, exp_bits - 1023)
+    let (lead, frac, frac_digits, exp) = match style {
+        HexFloatStyle::X87 => x87_hex_parts(v),
+        HexFloatStyle::Double | HexFloatStyle::Ksh93 { .. } => double_hex_parts(v),
     };
-    let digits = match prec {
-        Some(p) if p < 13 => {
-            let shift = 4 * (13 - p);
-            let rounded = (((lead << 52) | mant) + (1u64 << (shift - 1))) >> shift;
-            lead = rounded >> (4 * p);
+    let precision = match (prec, style) {
+        (Some(p), _) => Some(p),
+        (None, HexFloatStyle::Ksh93 { digits }) => Some(digits),
+        (None, _) => None,
+    };
+    let mut lead = lead;
+    let mut exp = exp;
+    let digits = match precision {
+        None => format!("{:0width$x}", frac, width = frac_digits).trim_end_matches('0').to_string(),
+        Some(p) if p >= frac_digits => format!("{:0<width$}", format!("{:0fd$x}", frac, fd = frac_digits), width = p),
+        Some(p) => {
+            // Round the whole significand (leading digit included) to p
+            // fraction digits, half to even.
+            let shift = 4 * (frac_digits - p);
+            let whole = ((lead as u128) << (4 * frac_digits)) | frac as u128;
+            let dropped = whole & ((1u128 << shift) - 1);
+            let half = 1u128 << (shift - 1);
+            let mut kept = whole >> shift;
+            if dropped > half || (dropped == half && kept & 1 == 1) {
+                kept += 1;
+            }
+            lead = (kept >> (4 * p)) as u64;
+            if lead == 0x10 {
+                lead = 1;
+                exp += 4;
+            }
             if p == 0 {
                 String::new()
             } else {
-                format!("{:0width$x}", rounded & ((1u64 << (4 * p)) - 1), width = p)
+                format!("{:0width$x}", kept & ((1u128 << (4 * p)) - 1), width = p)
             }
         }
-        Some(p) => format!("{:0<width$}", format!("{:013x}", mant), width = p),
-        // ksh93 shows twelve mantissa digits (`0x1.800000000000p+0`).
-        None if pad13 => format!("{:013x}", mant)[..12].to_string(),
-        None => format!("{:013x}", mant).trim_end_matches('0').to_string(),
     };
-    let mut s = format!("0x{lead}");
+    let mut s = format!("0x{lead:x}");
     if !digits.is_empty() {
         s.push('.');
         s.push_str(&digits);
@@ -403,6 +517,112 @@ pub fn hex_float(v: f64, upper: bool, pad13: bool, prec: Option<usize>) -> Strin
         s = s.to_uppercase();
     }
     format!("{sign}{s}")
+}
+
+/// A finite `f64` as a double prints it: (leading digit, 52-bit fraction,
+/// 13 fraction digits, unbiased exponent). A subnormal has leading `0` and
+/// exponent -1022 (glibc printf_fphex.c:190-212).
+fn double_hex_parts(v: f64) -> (u64, u64, usize, i64) {
+    let bits = v.to_bits();
+    let exp_bits = ((bits >> 52) & 0x7ff) as i64;
+    let mant = bits & ((1u64 << 52) - 1);
+    if exp_bits == 0 {
+        (0, mant, 13, if mant == 0 { 0 } else { -1022 })
+    } else {
+        (1, mant, 13, exp_bits - 1023)
+    }
+}
+
+/// A finite `f64` as glibc prints an x87 long double: the value's 64-bit
+/// significand (explicit integer bit, normalized, so a double subnormal is
+/// an ordinary x87 number) split into its top nibble and 60 fraction bits
+/// (15 digits), exponent three lower (glibc ldbl-96/printf_fphex.c:24-78).
+fn x87_hex_parts(v: f64) -> (u64, u64, usize, i64) {
+    let bits = v.to_bits();
+    let exp_bits = ((bits >> 52) & 0x7ff) as i64;
+    let mant = bits & ((1u64 << 52) - 1);
+    if exp_bits == 0 && mant == 0 {
+        return (0, 0, 15, 0);
+    }
+    let (significand, exp) = if exp_bits == 0 {
+        let shifted = mant << 11;
+        let lz = shifted.leading_zeros() as i64;
+        (shifted << lz, -1022 - lz)
+    } else {
+        ((1u64 << 63) | (mant << 11), exp_bits - 1023)
+    };
+    (significand >> 60, significand & ((1u64 << 60) - 1), 15, exp - 3)
+}
+
+/// ksh93 divides integers as `(Sflong_t)a / (Sflong_t)b` with no guard
+/// (ksh93u+m streval.c:361, `%` at :346), so `INT64_MIN / -1` and
+/// `INT64_MIN % -1` are the one case C leaves to the hardware: x86's `idiv`
+/// raises #DE and ksh dies of SIGFPE with nothing printed; aarch64's `sdiv`
+/// wraps to INT64_MIN. zsh guards the case and wraps on every host.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn ksh93_int_divide_traps(a: i64, b: i64) -> bool {
+    cfg!(any(target_arch = "x86", target_arch = "x86_64")) && ksh93_mode() && a == i64::MIN && b == -1
+}
+
+/// Die the way ksh93 dies of that division: the default SIGFPE action.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn die_of_sigfpe() -> ! {
+    unsafe {
+        libc::signal(libc::SIGFPE, libc::SIG_DFL);
+        libc::raise(libc::SIGFPE);
+    }
+    std::process::exit(128 + libc::SIGFPE)
+}
+
+/// Whether dash's `echo`, printf FORMAT and `%b` decode `\e` to ESC. They
+/// share one `conv_escape` (bltin/printf.c), which upstream dash gave `\e`
+/// after 0.5.12 and Debian/Ubuntu patched in long before
+/// (dash 0.5.12-6ubuntu5 `0008-Support-e-in-echo-and-printf-builtins.diff`:
+/// `case 'e': value = '\e'`). Apple's `/bin/dash` prints the two characters.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn dash_decodes_esc() -> bool {
+    cfg!(target_os = "linux")
+}
+
+/// Whether the mksh being emulated has the `cat` builtin. mksh R59c
+/// registers `!cat` (funcs.c:101), used unless the command has flags; the
+/// 2025 upstream snapshot Debian ships as `mksh 59c-37` removes it
+/// (debian-changes: `-{Tbcat, c_cat}`), so there `cat` is the external and
+/// `hash` lists it after a run.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn mksh_has_cat_builtin() -> bool {
+    !cfg!(target_os = "linux")
+}
+
+/// mksh's `utf8-mode` at startup. R59c decides it from the locale only for an
+/// interactive shell (main.c: `if (Flag(FTALKING)) … utf_flag = 4`), so a
+/// `-c` script counts bytes. Debian builds with `-DMKSH_EARLY_LOCALE_TRACKING`
+/// (debian/meat:457), under which every shell reads LC_ALL, then LC_CTYPE,
+/// then LANG and turns the mode on for a UTF-8 codeset (`recheck_ctype`).
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn mksh_utf8_mode() -> bool {
+    static MODE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *MODE.get_or_init(|| {
+        cfg!(target_os = "linux")
+            && ["LC_ALL", "LC_CTYPE", "LANG"]
+                .iter()
+                .find_map(|name| std::env::var(name).ok().filter(|v| !v.is_empty()))
+                .is_some_and(|value| locale_names_utf8(&value))
+    })
+}
+
+/// mksh's test of a locale name's codeset (main.c `isuc`): the part after
+/// the dot, or the whole name, is `UTF-8` or `UTF8` in any case, optionally
+/// followed by an `@modifier`.
+pub fn locale_names_utf8(value: &str) -> bool {
+    let codeset = value.split_once('.').map_or(value, |(_, codeset)| codeset);
+    let codeset = codeset.split('@').next().unwrap_or(codeset);
+    codeset.eq_ignore_ascii_case("UTF-8") || codeset.eq_ignore_ascii_case("UTF8")
 }
 
 /// True for the bare `zshrs --dash` drop-in (not the zsh-style
@@ -454,7 +674,11 @@ pub fn dash_echo_octal_normalize(s: &str) -> String {
             let digits: String = b[i + 2..].iter().take(3).take_while(|c| c.is_digit(8)).collect();
             out.push_str(&format!("\\{:0>3}", digits));
             i += 2 + digits.len();
-        } else if "abcfnrtv\\".contains(b[i + 1]) || b[i + 1].is_digit(8) {
+        } else if "abcfnrtv\\".contains(b[i + 1])
+            || b[i + 1].is_digit(8)
+            // Linux dash decodes `\e` (`dash_decodes_esc`); zsh's echo does too.
+            || (b[i + 1] == 'e' && dash_decodes_esc())
+        {
             out.push('\\');
             out.push(b[i + 1]);
             i += 2;
@@ -4442,4 +4666,74 @@ pub fn read_soft_readonly_reject(msg: &str) -> bool {
 /// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
 pub fn read_soft_readonly_armed() -> bool {
     READ_SOFT_READONLY.with(|c| c.get().is_some())
+}
+
+#[cfg(test)]
+mod host_float_tests {
+    use super::*;
+
+    /// The styles are host-independent given a style, so every host checks
+    /// the layouts the real shells print: glibc's x87 (bash on x86 Linux),
+    /// a plain double (dash, bash elsewhere) and ksh93's padded mantissa.
+    #[test]
+    fn hex_float_prints_each_shells_layout() {
+        let x87 = HexFloatStyle::X87;
+        assert_eq!(hex_float(1.0, false, x87, None), "0x8p-3");
+        assert_eq!(hex_float(1.5, false, x87, None), "0xcp-3");
+        assert_eq!(hex_float(0.0, false, x87, None), "0x0p+0");
+        assert_eq!(hex_float(1.5, false, x87, Some(2)), "0xc.00p-3");
+        assert_eq!(hex_float(1.5, true, x87, None), "0XCP-3");
+        assert_eq!(hex_float(-0.25, false, x87, None), "-0x8p-5");
+        let dbl = HexFloatStyle::Double;
+        assert_eq!(hex_float(1.0, false, dbl, None), "0x1p+0");
+        assert_eq!(hex_float(1.5, false, dbl, None), "0x1.8p+0");
+        assert_eq!(hex_float(1.5, false, dbl, Some(2)), "0x1.80p+0");
+        assert_eq!(hex_float(0.0, false, dbl, Some(2)), "0x0.00p+0");
+        assert_eq!(hex_float(f64::INFINITY, true, dbl, None), "INF");
+        assert_eq!(hex_float(1.5, false, HexFloatStyle::Ksh93 { digits: 12 }, None), "0x1.800000000000p+0");
+        assert_eq!(
+            hex_float(1.5, false, HexFloatStyle::Ksh93 { digits: 28 }, None),
+            "0x1.8000000000000000000000000000p+0"
+        );
+    }
+
+    /// glibc rounds the dropped hex digits half to even and carries into the
+    /// leading digit (printf_fphex.c:222-299): a carry out of `f` or past the
+    /// double's `1` becomes `1` four binades up, or `2` as glibc prints it.
+    #[test]
+    fn hex_float_rounds_half_to_even_with_carry() {
+        let dbl = HexFloatStyle::Double;
+        assert_eq!(hex_float(1.15625, false, dbl, Some(1)), "0x1.2p+0"); // 0x1.28: tie, 2 is even
+        assert_eq!(hex_float(1.21875, false, dbl, Some(1)), "0x1.4p+0"); // 0x1.38: tie, 3 is odd
+        assert_eq!(hex_float(1.99, false, dbl, Some(0)), "0x2p+0");
+        let x87 = HexFloatStyle::X87;
+        assert_eq!(hex_float(1.9375, false, x87, Some(0)), "0x1p+1"); // 0xf.8p-3 rounds out of the nibble
+        assert_eq!(hex_float(1.0 / 3.0, false, x87, Some(3)), "0xa.aabp-5");
+    }
+
+    /// The host constants agree with each other and with C on the two
+    /// machines the emulation matrix runs on.
+    #[test]
+    fn long_double_constants_match_the_host() {
+        assert_eq!(ksh93_hex_float_digits(), 2 * (SIZEOF_LONG_DOUBLE - 2));
+        if cfg!(all(target_arch = "aarch64", target_vendor = "apple")) {
+            assert_eq!((SIZEOF_LONG_DOUBLE, LDBL_DIG), (8, 15));
+        }
+        if cfg!(target_arch = "x86_64") {
+            assert_eq!((SIZEOF_LONG_DOUBLE, LDBL_DIG), (16, 18));
+        }
+        assert!(!LONG_DOUBLE_HEX_X87 || cfg!(any(target_arch = "x86", target_arch = "x86_64")));
+    }
+
+    /// mksh's `isuc`: the codeset is UTF-8 in any spelling, an `@modifier`
+    /// may follow, anything else is not.
+    #[test]
+    fn locale_names_utf8_follows_mksh_isuc() {
+        for yes in ["C.UTF-8", "en_US.UTF-8", "en_US.utf8", "de_DE.UTF-8@euro", "UTF-8"] {
+            assert!(locale_names_utf8(yes), "{yes}");
+        }
+        for no in ["C", "POSIX", "en_US.ISO8859-1", "en_US", "UTF-16", ""] {
+            assert!(!locale_names_utf8(no), "{no}");
+        }
+    }
 }
