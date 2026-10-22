@@ -651,3 +651,77 @@ mod join_then_split_then_sort {
         );
     }
 }
+
+/// c:Src/lex.c:1050-1057 + c:1168 — a `,` directly inside a `${…}` body is
+/// never the brace-expansion `Comma` token (`bct > in_brace_param` fails);
+/// only a `{…}` GROUP nested inside the body tokenizes its commas. The `(@)`
+/// compile route hands the nested `${…}` to paramsubst as raw ASCII, and the
+/// re-tokenizing adapter in `multsub_operand` used to treat the parameter's
+/// own `{` as a group, so `(s:,:)` compared a `Comma` against `,` and split
+/// nothing. Expected strings are what `zsh -fc` prints.
+mod nested_subexp_comma_stays_literal {
+    use super::*;
+
+    fn out(script: &str) -> String {
+        run_zshrs(script).stdout
+    }
+
+    /// The default word's commas survive the `(@)` route, so the outer
+    /// `(s:,:)` splits them; unquoted output elides the empty field.
+    #[test]
+    fn at_flag_split_of_default_word() {
+        assert_eq!(out(r#"print -rl -- ${(@s:,:)${:-a,b,c}}"#), "a\nb\nc\n");
+        assert_eq!(out(r#"print -rl -- ${(@s:,:)${y:-a,b,,c}}"#), "a\nb\nc\n");
+        assert_eq!(out(r#"print -rl -- ${(@s:,:)${(Q):-a,b,c}}"#), "a\nb\nc\n");
+        assert_eq!(out(r#"f() { print -rl -- ${(@s:,:)${1:-d,e}}; }; f; f x,y"#), "d\ne\nx\ny\n");
+        for s in [
+            r#"print -rl -- ${(@s:,:)${:-a,b,c}}"#,
+            r#"print -rl -- ${(@s:,:)${y:-a,b,,c}}"#,
+            r#"print -rl -- "${(@s:,:)${:-a,b,,c}}""#,
+            r#"print -rl -- ${(@s:,:)${(Q):-a,b,c}}"#,
+            r#"print -r -- ${#${(@s:,:)${:-a,b,c}}}"#,
+        ] {
+            assert_parity(s);
+        }
+    }
+
+    /// An operator after the nested body (`#a`, `:1`, `//b/X`) and glued
+    /// text work on the split words, not on one comma-joined word.
+    #[test]
+    fn operators_apply_to_the_split_words() {
+        assert_eq!(out(r#"print -rl -- ${(@s:,:)${:-a,b,c}#a}"#), "b\nc\n");
+        assert_eq!(out(r#"print -rl -- ${(@s:,:)${:-a,b,c}:1}"#), "b\nc\n");
+        assert_eq!(out(r#"print -rl -- ${(@s:,:)${:-a,b,c}//b/X}"#), "a\nX\nc\n");
+        assert_eq!(out(r#"print -rl -- ${(@s:,:)${:-a,b}}x"#), "a\nbx\n");
+        for s in [
+            r#"print -rl -- ${(@s:,:)${:-a,b,c}#a}"#,
+            r#"print -rl -- ${(@s:,:)${:-a,b,c}:1}"#,
+            r#"print -rl -- ${(@s:,:)${:-a,b}}x"#,
+        ] {
+            assert_parity(s);
+        }
+    }
+
+    /// A deeper `${…}` keeps its commas literal too, while a brace GROUP
+    /// inside the body still expands (c:1168: the group's `bct` is above
+    /// `in_brace_param`), and IGNORE_BRACES switches the group off.
+    #[test]
+    fn nested_parameter_literal_but_group_expands() {
+        assert_eq!(out(r#"print -rl -- ${(@s:,:)${x:-${y:-p,q}}}"#), "p\nq\n");
+        assert_eq!(out(r#"print -rl -- ${(@s:,:)${:-a,${y:-b,c}}}"#), "a\nb\nc\n");
+        assert_eq!(out(r#"print -rl -- ${(@)${:-${y:-p,q},z}}"#), "p,q,z\n");
+        assert_eq!(out(r#"print -rl -- ${(@s:,:)${:-a,{b,c}}}"#), "a\nb\na\nc\n");
+        assert_eq!(out(r#"print -rl -- ${(@s:,:)${:-x{1,2},y}}"#), "x1\ny\nx2\ny\n");
+        assert_eq!(out(r#"print -rl -- ${(@s:,:)${:-{a,b}}}"#), "a\nb\n");
+        assert_eq!(out(r#"setopt ignorebraces; print -rl -- ${(@s:,:)${:-{a,b}}}"#), "{a,b}\n");
+        for s in [
+            r#"print -rl -- ${(@s:,:)${x:-${y:-p,q}}}"#,
+            r#"print -rl -- ${(@s:,:)${:-a,${y:-b,c}}}"#,
+            r#"print -rl -- ${(@s:,:)${:-a,{b,c}}}"#,
+            r#"print -rl -- ${(@s:,:)${:-x{1,2},y}}"#,
+            r#"setopt ignorebraces; print -rl -- ${(@s:,:)${:-{a,b}}}"#,
+        ] {
+            assert_parity(s);
+        }
+    }
+}

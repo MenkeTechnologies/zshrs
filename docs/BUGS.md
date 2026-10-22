@@ -19,6 +19,45 @@ CI green pending the underlying fix.
 
 ---
 
+## #1197 — `${(@s:,:)${:-a,b,c}}` did not split: the nested body's commas became brace-expansion tokens — fixed
+
+**Status:** `fixed` 2026-10-22.
+
+```
+$ zsh   -fc 'print -rl -- ${(@s:,:)${:-a,b,c}}'          → a / b / c
+$ zshrs -fc '…same…'                                      → a,b,c            ✗
+$ zshrs -fc 'print -rl -- ${(@s:,:)${y:-a,b,,c}}'          → a,b,,c           ✗
+$ zshrs -fc 'print -rl -- ${(@s:,:)${:-a,b,c}#a}'          → ,b,c             ✗
+$ zshrs -fc 'f() { print -rl -- ${(@s:,:)${1:-d,e}}; }; f' → d,e              ✗
+$ zshrs -fc 'print -rl -- ${(s:,:)${:-a,b,c}}'             → a / b / c        (no `(@)`: fine)
+$ zshrs -fc 'x=a,b,c; print -rl -- ${(@s:,:)${x}}'         → a / b / c        (real name: fine)
+```
+
+Only the `(@)`-flagged outer over a nested `${…}` whose body holds a literal
+comma (a default word, `(Q)`, a positional) failed. The `(@)` compile route
+sends the whole expression through `BUILTIN_BRIDGE_BRACE_ARRAY`, so paramsubst
+received the nested `${:-a,b,c}` as raw ASCII (the non-`(@)` route hands it over
+still tokenized). The `multsub_operand` adapter then re-tokenized every balanced
+`{…}` in that text as a brace GROUP — the parameter's own `{` included — and
+turned the body's commas into `Comma` (`\u{e19a}`). The `(s:,:)` byte compare
+never matched, the value stayed one word, and every later operator (`#a`,
+`:1`, `//b/X`) worked on the comma-joined string.
+
+C: a `{` right after `$` records its depth in `in_brace_param`
+(c:Src/lex.c:1050-1057), and c:1168 `if (unset(IGNOREBRACES) && !sub && bct >
+in_brace_param) c = Comma;` tokenizes a comma only inside a brace group nested
+DEEPER than the parameter body; a nested substitution is re-lexed with `sub = 1`
+(c:1812), which keeps its commas literal at every depth. The adapter now records
+whether each open brace follows `$`/`Stringg`/`Qstring`: such a parameter brace
+is left as the source bytes and collects no commas, while a group inside the
+body (`${:-a,{b,c}}` → `a b a c`) still expands and IGNORE_BRACES still turns it
+off. Pinned by `subst_split_join_parity::nested_subexp_comma_stays_literal`.
+
+Not touched: `${(s:,:)${:-\${a,b}}}` (an escaped `$` before the group) prints
+`${a` `b}` where zsh prints `$a $b`, on both the `(@)` and the plain route.
+
+---
+
 ## #1196 — bash/ksh93/dash: a read-only `read` / `for` / `select` / `local` target ended the script — fixed
 
 **Status:** `fixed` 2026-10-18.

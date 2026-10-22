@@ -3853,8 +3853,22 @@ pub fn paramsubst(
         let in_dq = qt || NESTED_DQUOTED.with(|c| c.get());
         let tokenized: String = if !in_dq && !isset(IGNOREBRACES) && pf_flags & PREFORK_SINGLE == 0 && s.contains('{') {
             let mut chars: Vec<char> = s.chars().collect();
-            // Each open `{` keeps its `,` separator indices until it closes.
-            let mut open: Vec<(usize, Vec<usize>)> = Vec::new();
+            // Each open `{` keeps its `,` separator indices until it closes,
+            // plus whether it is a PARAMETER brace (`${`) rather than a group.
+            //
+            // c:Src/lex.c:1050-1057 — a `{` right after `$` opens a parameter
+            // body: the lexer records its depth in `in_brace_param`, and
+            // c:1168 `if (unset(IGNOREBRACES) && !sub && bct > in_brace_param)
+            // c = Comma;` only tokenizes a `,` that sits in a brace GROUP
+            // nested deeper than that. A `,` directly inside `${…}` stays the
+            // source byte (c:Src/lex.c:1812 re-lexes a nested substitution
+            // with `sub = 1`, which keeps it literal at every nesting depth).
+            // The `(@)` compile route hands this adapter the nested `${…}` as
+            // raw ASCII, so without the distinction `${(@s:,:)${:-a,b,c}}`
+            // turned the default word's commas into `Comma` tokens, the `(s:,:)`
+            // byte compare found nothing and zsh's `a b c` came out as one word.
+            // A group INSIDE the body (`${:-a,{b,c}}`) still expands.
+            let mut open: Vec<(usize, Vec<usize>, bool)> = Vec::new();
             let (mut inq, mut parens, mut i) = (false, 0_i32, 0_usize);
             while i < chars.len() {
                 match chars[i] {
@@ -3865,18 +3879,29 @@ pub fn paramsubst(
                     '\\' if !inq => i += 1,
                     '(' if !inq => parens += 1,
                     ')' if !inq => parens -= 1,
-                    '{' if !inq && parens == 0 => open.push((i, Vec::new())),
+                    '{' if !inq && parens == 0 => {
+                        // c:Src/lex.c:1049 `if (e == '{')` after the `$` arm —
+                        // the `$` may already be the Stringg/Qstring token.
+                        let is_param = i > 0
+                            && matches!(chars[i - 1], x if x == '$' || x == Stringg || x == Qstring)
+                            && !(i > 1 && chars[i - 2] == '\\');
+                        open.push((i, Vec::new(), is_param));
+                    }
                     ',' if !inq && parens == 0 => {
-                        if let Some((_, commas)) = open.last_mut() {
-                            commas.push(i);
+                        if let Some((_, commas, is_param)) = open.last_mut() {
+                            if !*is_param {
+                                commas.push(i); // c:1168 `bct > in_brace_param`
+                            }
                         }
                     }
                     '}' if !inq && parens == 0 => {
-                        if let Some((start, commas)) = open.pop() {
-                            chars[start] = Inbrace;
-                            chars[i] = Outbrace;
-                            for c in commas {
-                                chars[c] = Comma;
+                        if let Some((start, commas, is_param)) = open.pop() {
+                            if !is_param {
+                                chars[start] = Inbrace;
+                                chars[i] = Outbrace;
+                                for c in commas {
+                                    chars[c] = Comma;
+                                }
                             }
                         }
                     }
