@@ -13467,6 +13467,16 @@ pub fn bin_alias(
             zwarnnam(name, "bad option: -t");
             return 1;
         }
+        // mksh: `alias -t -r` (its `hash -r`) removes every tracked alias,
+        // and only without operands.
+        if OPT_ISSET(ops, b'r') && crate::dash_mode::pdksh_family() {
+            if !argv.is_empty() {
+                zwarnnam(name, "-r flag can only be used with -t and without arguments");
+                return 1;
+            }
+            emptycmdnamtable();
+            return 0;
+        }
         // With NAME operands `alias -t` tracks those commands, which is
         // exactly `hash NAME` — mksh's `hash` alias relies on both halves
         // (`hash ls` becomes `alias -t ls`, bare `hash` becomes
