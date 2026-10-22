@@ -686,12 +686,13 @@ pub fn apply_personality_param_deltas() {
         crate::ported::params::unsetparam("LINES");
     }
     // The Korn family starts a non-interactive shell with `PS2='> '`; mksh also
-    // has `PS1='$ '` (ksh93 and bash leave PS1 unset).
+    // has `PS1='$ '`, `'# '` for root (ksh93 and bash leave PS1 unset).
     if matches!(p, Personality::Ksh93 | Personality::Mksh | Personality::Pdksh) {
         crate::ported::params::setsparam("PS2", "> ");
     }
     if matches!(p, Personality::Mksh | Personality::Pdksh) {
-        crate::ported::params::setsparam("PS1", "$ ");
+        let root = unsafe { libc::geteuid() } == 0;
+        crate::ported::params::setsparam("PS1", if root { "# " } else { "$ " });
     }
     // ksh93 sets `$ENV` to `~/.kshrc` — unless the environment already carries one,
     // which is what decides the interactive startup file.
