@@ -1232,15 +1232,23 @@ fn tilde_expand(s: &str) -> String {
     crate::ported::subst::filesubstr(&tokenized, false).unwrap_or_else(|| s.to_string())
 }
 
-/// Does the word carry an UNESCAPED filename-generation metacharacter?
-/// Used only to decide whether to run the globber at all — an ordinary
-/// path must not be handed to `glob_path`, which would drop it when the
-/// file does not exist.
+/// Is the word eligible for filename generation at all? C decides this
+/// on the `${~exp}` path with `shtokenize` (c:Src/subst.c:822/829-830 —
+/// GLOB_SUBST tokenizes the substituted value) followed by `zglob`'s
+/// `haswilds(ostr)` gate (c:Src/glob.c:1229 → c:Src/pattern.c:4315). That
+/// gate counts `^` and `#` under EXTENDEDGLOB (c:4372-4380), `|` and `<`
+/// (c:4347, c:4362) as well as `* ? [ (`, and `_main_complete` runs every
+/// completer with extendedglob on (compinit sh:141 `_comp_options`).
+/// The previous hand-rolled `* ? [ (` scan never saw `^`, so `ls /usr/^l`
+/// left `_expand` with nothing and the chain fell through to
+/// `_approximate`, where zsh lists nine expansions.
+///
+/// An ordinary path must not be handed to `glob_path`, which would drop
+/// it when the file does not exist — hence the gate stays.
 fn has_glob_meta(s: &str) -> bool {
-    let ch: Vec<char> = s.chars().collect();
-    ch.iter()
-        .enumerate()
-        .any(|(i, c)| matches!(*c, '*' | '?' | '[' | '(') && (i == 0 || ch[i - 1] != '\\'))
+    let mut tokenized = s.to_string();
+    crate::ported::glob::shtokenize(&mut tokenized); // c:Src/subst.c:830
+    crate::ported::pattern::haswilds(&tokenized) // c:Src/glob.c:1229
 }
 
 // =====================================================================
