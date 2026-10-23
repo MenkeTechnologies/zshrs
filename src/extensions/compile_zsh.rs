@@ -17650,13 +17650,6 @@ pub(crate) enum ParamModifierKind {
     FilterRemoveMatching { pattern: String },
 }
 
-/// Strip the outer Stringg+Inbrace prefix and Outbrace suffix from the
-/// raw tokenized word `s`, then run the pattern-preserving untokenize
-/// over the inner body. Returns `None` if `s` doesn't have the
-/// expected `${…}` token shape (caller falls back to plain untokenized
-/// inner). Used by the `BUILTIN_BRIDGE_BRACE_ARRAY` path so quoted
-/// pattern bodies (e.g. `${(M)a:#"*"}`) reach paramsubst with
-/// backslash-escaped metachars instead of bare glob characters.
 /// The body of a double-quoted whole-word `"${…}"` for BUILTIN_BRIDGE_BRACE_ARRAY,
 /// untokenized like `untoked` except that every Qstring (`\u{e18c}`) survives.
 /// `s` is the lexer's word: an optional Dnull pair around `Qstring Inbrace …
@@ -17681,13 +17674,31 @@ fn dq_bridge_body_keeping_qstring(s: &str) -> Option<String> {
     Some(out)
 }
 
+/// Strip the outer Stringg+Inbrace prefix and Outbrace suffix from the
+/// raw tokenized word `s` and hand back the inner body with its lexer
+/// tokens intact, the way BUILTIN_EXPAND_TEXT hands a word to multsub.
+/// Returns `None` if `s` doesn't have the expected `${…}` token shape
+/// (caller falls back to the plain untokenized inner).
+///
+/// c:Src/lex.c:1390-1400 (`c = Dash`), c:1212 (Equals), c:1167-1170
+/// (Comma) — the lexer tokenizes the metacharacters of a nested `${…}`
+/// body once, and paramsubst reads the TOKENS: the `(s:-:)` compare at
+/// c:3913-3932 is a byte compare, so `${(@s:-:)${:-a-b-c}}` stays one
+/// word in zsh (its `-` is the Dash token) while `${(@s:-:)${v}}` splits a
+/// parameter VALUE, which carries no tokens. Untokenizing this body first
+/// (`untokenize_preserve_quoted_pat_literals`) turned every Dash / Equals /
+/// Pound / Hat back into the ASCII byte, so the `(@)` route split a default
+/// word, a `(Q)` word and a positional's default where the plain route and
+/// zsh do not (docs/BUGS.md #633). Quoted pattern metachars
+/// (`${(M)a:#"*"}`) keep their Snull/Dnull markers, which paramsubst's
+/// pattern operand reader already honours.
 fn strip_brace_wrap_for_bridge(s: &str) -> Option<String> {
     use crate::ported::zsh_h::{Inbrace, Outbrace, Stringg};
     let inner_raw = s
         .strip_prefix(Stringg)?
         .strip_prefix(Inbrace)?
         .strip_suffix(Outbrace)?;
-    Some(untokenize_preserve_quoted_pat_literals(inner_raw))
+    Some(inner_raw.to_string())
 }
 
 /// Extract the `:#PAT` pattern body from the raw tokenized `s` for the

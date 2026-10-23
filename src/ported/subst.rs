@@ -3851,7 +3851,7 @@ pub fn paramsubst(
         // `}` stays the ASCII byte.
         // Inside double quotes the lexer leaves all of it ASCII (`qt`).
         let in_dq = qt || NESTED_DQUOTED.with(|c| c.get());
-        let tokenized: String = if !in_dq && !isset(IGNOREBRACES) && pf_flags & PREFORK_SINGLE == 0 && s.contains('{') {
+        let tokenized: String = if !in_dq && !isset(IGNOREBRACES) && pf_flags & PREFORK_SINGLE == 0 && s.contains(['{', Inbrace]) {
             let mut chars: Vec<char> = s.chars().collect();
             // Each open `{` keeps its `,` separator indices until it closes,
             // plus whether it is a PARAMETER brace (`${`) rather than a group.
@@ -3876,15 +3876,27 @@ pub fn paramsubst(
                     Bnull | Bnullkeep => i += 1,
                     // A raw `\{` / `\}` / `\,` is the lexer's Bnull + literal (c:Src/lex.c
                     // gettokstr `case LX2_BKSLASH`, c:1261): never a brace token.
-                    '\\' if !inq => i += 1,
+                    // c:Src/lex.c:1303-1306 — a backslash-quoted character is
+                    // `Bnull` + the character once the lexer has run, and the
+                    // raw `\` before it when the operand arrives untokenized;
+                    // either way the quoted character opens nothing.
+                    x if !inq && (x == '\\' || x == Bnull) => i += 1,
                     '(' if !inq => parens += 1,
                     ')' if !inq => parens -= 1,
-                    '{' if !inq && parens == 0 => {
+                    // The operand may arrive with its braces already the
+                    // Inbrace/Outbrace tokens but its commas still ASCII (the
+                    // `(@)` route hands the nested body over as the lexer left
+                    // it); treat both spellings alike.
+                    x if (x == '{' || x == Inbrace) && !inq && parens == 0 => {
                         // c:Src/lex.c:1049 `if (e == '{')` after the `$` arm —
-                        // the `$` may already be the Stringg/Qstring token.
+                        // the `$` may already be the Stringg/Qstring token. A
+                        // quoted `\$` (`Bnull $`, or a raw `\$`) is not that arm:
+                        // its `{` opens a brace GROUP, so `${:-\${a,b}}` expands
+                        // to `$a` `$b` (c:1168 — the group's `bct` is above
+                        // `in_brace_param`).
                         let is_param = i > 0
                             && matches!(chars[i - 1], x if x == '$' || x == Stringg || x == Qstring)
-                            && !(i > 1 && chars[i - 2] == '\\');
+                            && !(i > 1 && (chars[i - 2] == '\\' || chars[i - 2] == Bnull));
                         open.push((i, Vec::new(), is_param));
                     }
                     ',' if !inq && parens == 0 => {
@@ -3894,7 +3906,7 @@ pub fn paramsubst(
                             }
                         }
                     }
-                    '}' if !inq && parens == 0 => {
+                    x if (x == '}' || x == Outbrace) && !inq && parens == 0 => {
                         if let Some((start, commas, is_param)) = open.pop() {
                             if !is_param {
                                 chars[start] = Inbrace;
@@ -16515,15 +16527,40 @@ pub fn paramsubst(
                 }
             }
         }
+        // The `#` `##` `%` `%%` `/` `//` `:#` `:/` family — c:3082-3086 route
+        // `:#` and `:/` into the same `case '#'` / `case '/'` arms. `rest`
+        // may still spell the `#` as the Pound token.
+        let pattern_op_ahead =
+            [":#", ":/", "/", "#", "%", "\u{e184}"].iter().any(|op| rest.starts_with(op));
         let eglob_restore = EglobRestore(
-            (sub_flags_bits & SUB_EGLOB != 0
-                && [":#", ":/", "/", "#", "%", "\u{e184}"].iter().any(|op| rest.starts_with(op)))
-            .then(|| {
+            (sub_flags_bits & SUB_EGLOB != 0 && pattern_op_ahead).then(|| {
                 let eglob = isset(crate::ported::zsh_h::EXTENDEDGLOB);
                 opt_state_set("extendedglob", true);
                 eglob
             }),
         );
+        // c:3428-3459 — "We need an untokenized value for matching":
+        // before `getmatcharr` every element gets `untokenize(*ap)` (c:3440)
+        // and before `getmatch` the scalar gets `untokenize(val)` (c:3458).
+        // A parameter's VALUE never carries tokens, but a nested `${…}`
+        // body does — c:2682 `multsub(&val, PREFORK_SUBEXP, …)` returns the
+        // default word of `${:-a-b-c}` with its Dash tokens still in place,
+        // which is what keeps `${(s:-:)${:-a-b-c}}` one word (the split
+        // compare is a byte compare). Once a pattern operator has run, zsh
+        // has restored the bytes: `${(s:-:)${:-a-b-c}#a}` strips `a` from
+        // `a-b-c` and the `(s:-:)` then splits `-b-c` into `b` `c`. The
+        // operator arms below read `raw_value` / `value` / `split_parts`, so
+        // the restore happens here, once, for all of them. `:1` and the other
+        // non-pattern operators leave the tokens alone, as C does.
+        let raw_value = if pattern_op_ahead { untokenize(&raw_value) } else { raw_value }; // c:3458
+        if pattern_op_ahead {
+            value = untokenize(&value); // c:3458
+            if let Some(parts) = split_parts.as_mut() {
+                for part in parts.iter_mut() {
+                    *part = untokenize(part); // c:3440
+                }
+            }
+        }
         if !rest.is_empty() {
             let r = rest.as_str();
             if let Some(pat) = r.strip_prefix(":#") {

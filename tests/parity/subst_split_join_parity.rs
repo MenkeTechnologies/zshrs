@@ -725,3 +725,88 @@ mod nested_subexp_comma_stays_literal {
         }
     }
 }
+
+// docs/BUGS.md #633 — the `(@)` route used to untokenize a nested `${…}` body
+// before paramsubst saw it, so the lexer's Dash / Equals / Pound / Hat tokens
+// in a default word came back as ASCII and the outer `(s:X:)` split on them.
+// zsh keeps them as tokens (c:Src/lex.c:1390-1400), so the byte compare at
+// c:Src/subst.c:3913-3932 finds no separator; a parameter VALUE has no tokens
+// and splits. A pattern operator untokenizes the value first (c:3440 / c:3458).
+mod nested_subexp_tokens_survive_at_route {
+    use super::*;
+
+    fn out(script: &str) -> String {
+        run_zshrs(script).stdout
+    }
+
+    /// A tokenized separator in a default word does not split, with or
+    /// without `(@)`; the same text from a parameter does.
+    #[test]
+    fn default_word_tokens_do_not_split() {
+        assert_eq!(out(r#"print -rl -- ${(@s:-:)${:-a-b-c}}"#), "a-b-c\n");
+        assert_eq!(out(r#"print -rl -- ${(s:-:)${:-a-b-c}}"#), "a-b-c\n");
+        assert_eq!(out(r#"print -rl -- ${(@s:=:)${:-a=b=c}}"#), "a=b=c\n");
+        assert_eq!(out(r#"print -rl -- ${(@s:-:)${(U):-a-b-c}}"#), "A-B-C\n");
+        assert_eq!(out(r#"f() { print -rl -- ${(@s:-:)${1:-d-e}}; }; f; f x-y"#), "d-e\nx\ny\n");
+        assert_eq!(out(r#"v=a-b-c; print -rl -- ${(@s:-:)${v}}"#), "a\nb\nc\n");
+        assert_eq!(out(r#"x=a-b-c; print -rl -- ${(@s:-:)${:-$x}}"#), "a\nb\nc\n");
+        assert_eq!(out(r#"print -rl -- ${(@s:-:)${:-"a-b-c"}}"#), "a\nb\nc\n");
+        assert_eq!(out(r#"a=(${(@s:-:)${:-a-b-c}}); print $#a"#), "1\n");
+        for s in [
+            r#"print -rl -- ${(@s:-:)${:-a-b-c}}"#,
+            r#"print -rl -- ${(@s:#:)${:-a#b#c}}"#,
+            r#"print -rl -- ${(@s:^:)${:-a^b^c}}"#,
+            r#"print -rl -- ${(@s:-:)${:-a\-b-c}}"#,
+            r#"print -rl -- "${(@s:-:)${:-a-b-c}}""#,
+            r#"print -r -- ${#${(@s:-:)${:-a-b-c}}}"#,
+        ] {
+            assert_parity(s);
+        }
+    }
+
+    /// A pattern operator matches the untokenized value, and the split then
+    /// sees plain bytes: `#a` leaves `-b-c`, which splits to `b` `c`.
+    /// `:1` is not a pattern operator and keeps the tokens.
+    #[test]
+    fn pattern_operator_untokenizes_before_split() {
+        assert_eq!(out(r#"print -rl -- ${(@s:-:)${:-a-b-c}#a}"#), "b\nc\n");
+        assert_eq!(out(r#"print -rl -- ${(s:-:)${:-a-b-c}%c}"#), "a\nb\n");
+        assert_eq!(out(r#"print -rl -- ${(@s:-:)${:-a-b-c}/b/X}"#), "a\nX\nc\n");
+        assert_eq!(out(r#"print -rl -- ${(s:-:)${:-a-b-c}:#x}"#), "a\nb\nc\n");
+        assert_eq!(out(r#"print -rl -- ${(s:-:)${:-a-b-c}:#a-b-c}"#), "\n");
+        assert_eq!(out(r#"print -rl -- ${(@s:-:)${:-a-b-c}:1}"#), "-b-c\n");
+        for s in [
+            r#"print -rl -- ${(s:-:)${:-a-b-c}#a}"#,
+            r#"print -rl -- ${(s:-:)${:-a-b-c}//-/+}"#,
+            r#"print -rl -- ${(@s:-:)${:-a-b-c}:/x/y}"#,
+            r#"print -rl -- ${(@s:-:)${:-a-b-c}%%c}"#,
+            r#"print -rl -- ${(@s:-:)${:-a-b}#a}x"#,
+        ] {
+            assert_parity(s);
+        }
+    }
+
+    /// A quoted `\$` before a brace is not a parameter: its `{a,b}` is a
+    /// brace group inside the default word and expands (c:Src/lex.c:1168).
+    #[test]
+    fn escaped_dollar_brace_group_expands() {
+        assert_eq!(out(r#"print -rl -- ${(@s:,:)${:-\${a,b}}}"#), "$a\n$b\n");
+        assert_eq!(out(r#"print -rl -- ${(s:,:)${:-\${a,b}}}"#), "$a $b\n");
+        assert_eq!(out(r#"print -rl -- ${:-\${a,b}}"#), "$a\n$b\n");
+        for s in [
+            r#"print -rl -- ${(@)${:-\${a,b}}}"#,
+            r#"print -rl -- ${:-x\{a,b\}}"#,
+            r#"print -rl -- ${(@)${:-\{a,b\}}}"#,
+        ] {
+            assert_parity(s);
+        }
+    }
+
+    /// Quoted pattern metachars on the `(@)` route still match literally.
+    #[test]
+    fn quoted_filter_pattern_stays_literal() {
+        assert_eq!(out(r#"a=(x '*' y); print -rl -- ${(@M)${a}:#'*'}"#), "*\n");
+        assert_eq!(out(r#"a=(foo bar); print -rl -- ${(@M)${a}:#b*}"#), "bar\n");
+        assert_parity(r#"a=(x "*" y); print -rl -- ${(@M)${a}:#"*"}"#);
+    }
+}

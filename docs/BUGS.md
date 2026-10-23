@@ -53,8 +53,9 @@ is left as the source bytes and collects no commas, while a group inside the
 body (`${:-a,{b,c}}` → `a b a c`) still expands and IGNORE_BRACES still turns it
 off. Pinned by `subst_split_join_parity::nested_subexp_comma_stays_literal`.
 
-Not touched: `${(s:,:)${:-\${a,b}}}` (an escaped `$` before the group) prints
-`${a` `b}` where zsh prints `$a $b`, on both the `(@)` and the plain route.
+The escaped-`$` group (`${(s:,:)${:-\${a,b}}}` → `$a $b`) was fixed
+alongside #633 (2026-10-22): the adapter now reads a `Bnull` before `$` as
+the quote it is and accepts braces already lexed as Inbrace/Outbrace.
 
 ---
 
@@ -7540,9 +7541,25 @@ zsh; only the direct-subscript-on-name form diverges.
 
 ---
 
-## #633 — `(s)`/`(f)` split flag on a default-word subexp `${(s:-:)${:-a-b-c}}` splits when zsh doesn't
+## #633 — `(s)`/`(f)` split flag on a default-word subexp `${(s:-:)${:-a-b-c}}` splits when zsh doesn't — fixed
 
-**Status:** `port-bug` (exotic; deferred — subtle subexp-type semantics)
+**Status:** `fixed` 2026-10-22.
+
+**Resolution:** the mechanism is lexer tokens, not subexp type. The `-` of a
+default word inside `${…}` is the Dash token (c:Src/lex.c:1390-1400), and
+multsub (c:Src/subst.c:2682) hands the inner value back still tokenized; the
+split at c:3913-3932 is a byte compare, so `(s:-:)` never matches. A parameter
+value carries no tokens and splits; a quoted default word (`"a-b-c"`) has its
+`-` ASCII and splits. The plain route already behaved; the `(@)` route
+(`${(@s:-:)${:-a-b-c}}`) split because `strip_brace_wrap_for_bridge` in
+`src/extensions/compile_zsh.rs` untokenized the body before BUILTIN_BRIDGE_BRACE_ARRAY
+handed it to paramsubst. It now passes the lexer tokens through. A pattern
+operator untokenizes the value before matching (c:3440 / c:3458), so
+`${(s:-:)${:-a-b-c}#a}` is `b c` and `${(s:-:)${:-a-b-c}:#x}` is `a b c`;
+paramsubst now does that once before the `#`/`%`/`/`/`:#`/`:/` arms. Pinned by
+`subst_split_join_parity::nested_subexp_tokens_survive_at_route`.
+
+Original report:
 
 The `(s)` split flag splits a nested *parameter-reference* subexp but
 NOT a nested *default-word* (`${:-word}`) subexp:
