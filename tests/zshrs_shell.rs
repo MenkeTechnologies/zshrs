@@ -17492,3 +17492,23 @@ fn emulate_may_follow_the_zsh_mode_flag() {
     assert_eq!(status, 1);
     assert!(err.contains("--emulate: must precede other options"), "got: {err}");
 }
+
+/// A `functions -M` function runs as a fresh command context even when the
+/// arithmetic that calls it sits inside double quotes or an assignment:
+/// `$arr` in its body is still an array. powerlevel10k's prompt calls
+/// `$((_p9k_on_expand()))` from prompt expansion, and the leaked quoting
+/// joined `$_p9k_show_on_command` into one word, so its
+/// `for pat idx var in …` loop passed an empty index on
+/// ("_p9k_display_segment:1: bad math expression: empty string").
+#[test]
+fn math_function_body_is_not_inside_the_callers_quotes() {
+    let code = r#"typeset -ga S; S=(a b)
+f() { local -a w; w=($S); local n=0 p; for p in $S; do (( n++ )); done; print -r -- "w=$#w n=$n"; }
+functions -M f
+x=${$((f()))}
+: "$((f()))"
+print -r -- "<${S}> $((f())) <${S[@]}>""#;
+    let (rc, out, err) = run_zshrs_with_args(&["-f", "-c", code]);
+    assert_eq!(rc, 0, "stderr: {err}");
+    assert_eq!(out, "w=2 n=2\nw=2 n=2\nw=2 n=2\n<a b> 1 <a b>\n", "stderr: {err}");
+}
