@@ -16677,11 +16677,13 @@ pub fn eval(argv: &[String]) -> i32 {
                 crate::ported::utils::zerr("job table full or recursion limit exceeded");
                 LASTVAL.store(1, Relaxed);
             } else {
-                // c:6209 — `execode(prog, 1, 0, "eval")`. The `"eval"`
-                // frame is pushed by the live BUILTIN_EVAL path
-                // (fusevm_bridge.rs, `EvalContextFrame::push("eval")`)
-                // that `execute_script_zsh_pipeline` routes through;
-                // pushing it here as well would double it.
+                // c:6209 — `execode(prog, 1, 0, "eval")`: execode appends
+                // "eval" to zsh_eval_context for the body (c:Src/exec.c:1319).
+                // `execute_script_zsh_pipeline` runs the text directly and
+                // pushes no frame, so this path (`builtin eval`, `$x` naming
+                // eval, and `autoload -X` via eval_autoload, c:3053) must push
+                // it; only the BUILTIN_EVAL opcode (fusevm_bridge.rs) has its own.
+                let _eval_ctx = crate::ported::exec::EvalContextFrame::push("eval");
                 let _ = crate::ported::exec::execute_script_zsh_pipeline(&joined);
             }
             crate::vm_helper::EVAL_RECURSION_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
