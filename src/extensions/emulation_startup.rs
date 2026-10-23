@@ -645,12 +645,16 @@ pub fn apply_personality_param_deltas() {
     if p == Personality::Bash {
         let mut gids = vec![0 as libc::gid_t; 256];
         let n = unsafe { libc::getgroups(gids.len() as libc::c_int, gids.as_mut_ptr()) };
-        if n > 0 {
+        // bash general.c:1295-1301 `initialize_group_array`: "If getgroups returns
+        // nothing ... make sure the groups array includes at least the current gid."
+        // A process with no supplementary groups (root in a Debian container) still
+        // gets `GROUPS=(0)`; a failed call leaves the array empty as before.
+        if n >= 0 {
             gids.truncate(n as usize);
             // bash puts the user's PRIMARY gid (`getgid(2)`, not the effective one: a
             // process started under `sg adm` has egid 4 and bash still lists 1001 first)
             // at the front by swapping it with element 0, or prepending it when
-            // getgroups(2) did not list it.
+            // getgroups(2) did not list it (general.c:1303-1330).
             let gid = unsafe { libc::getgid() };
             match gids.iter().position(|g| *g == gid) {
                 Some(i) => gids.swap(0, i),
