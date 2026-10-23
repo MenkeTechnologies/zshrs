@@ -2907,6 +2907,52 @@ fn bash_regex_rhs_may_start_with_a_double_paren() {
     assert_eq!((ec, out.as_str()), (0, "m\n"));
 }
 
+/// bash reads a parenthesised group inside a `[[ ]]` operand as one piece of
+/// the word, so `<`, `>` and an empty `()` in it are text, not a redirection
+/// or a function definition. Sourcing Debian's
+/// /usr/share/bash-completion/bash_completion died in `_comp_compgen_help__parse`
+/// on `[[ $option =~ ^([^=<{().[]|\.[A-Za-z0-9])+=? ]]` ("parse error near
+/// `<'", then "near `()'"). Every expected value was measured with bash 5.2.37.
+#[test]
+fn bash_cond_group_keeps_angle_brackets_and_empty_parens() {
+    if zshrs_bin().is_none() {
+        return;
+    }
+    for (script, want) in [
+        (
+            r"[[ x =~ ^([^=<{().[]|\.[A-Za-z0-9])+=? ]] && echo m",
+            "m\n",
+        ),
+        (
+            r"[[ '--foo=' =~ ^([^=<{().[]|\.[A-Za-z0-9])+=? ]] && echo $BASH_REMATCH",
+            "--foo=\n",
+        ),
+        ("[[ a =~ ^([^<]) ]] && echo m", "m\n"),
+        ("[[ a =~ ^([^>]) ]] && echo m", "m\n"),
+        ("[[ '<' =~ ^(a|<) ]] && echo m", "m\n"),
+        ("[[ a =~ (<) ]] || echo n", "n\n"),
+        ("[[ 'a()' =~ a() ]] && echo m", "m\n"),
+        ("[[ a =~ (a()) ]] && echo m", "m\n"),
+        ("[[ '(' =~ ^([()]) ]] && echo m", "m\n"),
+        ("[[ a =~ ^([()]) ]] || echo n", "n\n"),
+        ("shopt -s extglob; [[ a == @([^<]) ]] && echo m", "m\n"),
+        // Outside the right-hand side nothing changes: a function definition
+        // still splits off its `()`, and a redirect still redirects.
+        ("f() { echo f; }; f", "f\n"),
+        ("[[ a =~ a ]] >/dev/null && echo m", "m\n"),
+    ] {
+        let (ec, out) = run_mode("--bash", script);
+        assert_eq!((ec, out.as_str()), (0, want), "script: {script}");
+    }
+    // Outside a group bash rejects the bare `<` too (syntax error, status 2).
+    let (ec, _) = run_mode("--bash", "[[ a =~ ^[<] ]]");
+    assert_ne!(ec, 0);
+    // zsh ends the word at the `<` (`zsh -fc '[[ a =~ ^([^<]) ]]'` is a parse
+    // error); the native mode keeps doing so.
+    let (ec, _) = run_mode("--zsh", "[[ a =~ ^([^<]) ]]");
+    assert_ne!(ec, 0);
+}
+
 /// bash nests inside `${...}` only on `${`: a bare `{` is an ordinary
 /// character and the first `}` closes the expansion. zsh counted every brace,
 /// so `${o%%[<{().[]*}` (bash-completion's `_parse_help`) ended in "closing

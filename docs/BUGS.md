@@ -19,6 +19,66 @@ CI green pending the underlying fix.
 
 ---
 
+## #1199 — `--bash`: `complete` drops `-D` / `-E` specs and prints names unquoted — port-bug
+
+**Status:** `port-bug`, found 2026-10-22 while verifying #1198.
+
+```
+$ bash -c 'f(){ :; }; complete -D -F f; complete -E -F f; complete -F f ""; complete -F f "a b"; complete -p'
+complete -F f -D
+complete -F f 'a b'
+complete -F f -E
+complete -F f ''
+$ zshrs --bash -c '…same…'
+complete -F f                                                               ✗
+complete -F f a b                                                           ✗
+$ zshrs --bash -c 'f(){ :; }; complete -D -F f; complete -p -D'
+zshrs:complete:1: -D: no completion specification                           ✗
+```
+
+`builtin_complete` (`src/extensions/ext_builtins.rs`) is a small stand-in, not a
+port of bash's `builtins/complete.def`. It treats `-D` (default spec) and `-E`
+(empty-line spec) as unknown flags, prints names without quoting, and drops
+the `-o`, `-X`, `-G`, `-P` and `-S` values from `-p` output. bash-completion
+registers its on-demand loader with `complete -D -F _comp_complete_load`
+(bash_completion:3377), so in `zshrs --bash -i` the completions for commands
+not sourced at startup are never loaded. Fix: port `complete.def`'s option table
+and `print_one_completion`, including the `-D` / `-E` / `-I` pseudo-commands.
+
+---
+
+## #1198 — `--bash` on Debian: every interactive start printed a `bash_completion` parse error — fixed
+
+**Status:** `fixed` 2026-10-22.
+
+```
+$ zshrs --bash -i          (Debian 13, bash-completion 2.16 installed)
+/usr/share/bash-completion/bash_completion:1605: parse error near `<'       ✗
+$ bash -c '[[ x =~ ^([^=<{().[]|\.[A-Za-z0-9])+=? ]] && echo m'           → m
+$ zshrs --bash -c '…same…'                     → parse error near `<'       ✗
+$ zshrs --bash -c '[[ a() =~ a() ]]'           → parse error near `()'      ✗
+$ zsh -fc '[[ a =~ ^([^<]) ]]'                 → parse error near `<'       (zsh rejects it too)
+```
+
+`/etc/profile.d/bash_completion.sh` sources
+`/usr/share/bash-completion/bash_completion` in every interactive shell, and its
+`_comp_compgen_help__parse` has `[[ $option =~ ^([^=<{().[]|\.[A-Za-z0-9])+=? ]]`.
+bash reads a parenthesised group inside a `[[ ]]` operand with
+`parse_matched_pair`, so the `<` and the empty `()` in it are word text. zshrs
+followed zsh's lexer: it ended the word at the `<` (redirection), and once that
+was fixed it split the `()` off as a function-definition token. The parse error
+dropped the rest of the file, so only 16 completions loaded where bash loads 121.
+
+Both `gettokstr` arms that end a word on `<` / `>` now keep the character when
+the paren depth is above zero on the right of a `[[ ]]` operator in `--bash`.
+The `name()` split is skipped in the same position. Outside a group bash rejects
+a bare `<` too (`[[ a =~ ^[<] ]]`), and native mode still errors like zsh. After
+the fix, `zshrs --bash -i` on Debian starts silently and registers 120 of bash's
+121 completions (the missing one is the `complete -D` loader, #1199). Pinned by
+`bugs_md_regression::bash_cond_group_keeps_angle_brackets_and_empty_parens`.
+
+---
+
 ## #1197 — `${(@s:,:)${:-a,b,c}}` did not split: the nested body's commas became brace-expansion tokens — fixed
 
 **Status:** `fixed` 2026-10-22.

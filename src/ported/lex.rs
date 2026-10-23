@@ -2490,7 +2490,17 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                         }
                         LEX_LEXSTOP.set(false);
                         let is_inblank = matches!(e, Some(' ' | '\t'));
-                        if e == Some(')')
+                        // !!! BASH GATE (no C counterpart) !!! on the `()` leg: in
+                        // the right-hand side of a `[[ ]]` binary operator
+                        // (incond > 1) bash keeps `()` in the word -- there is no
+                        // function definition to split off. bash-completion's
+                        // `[[ $option =~ ^([^=<{().[]|\.[A-Za-z0-9])+=? ]]` has
+                        // one inside a bracket expression, and `bash -c '[[ "a()"
+                        // =~ a() ]]'` matches. Splitting it made `--bash` die with
+                        // "parse error near `()'" sourcing Debian's
+                        // /usr/share/bash-completion/bash_completion.
+                        let bash_cond_rhs = LEX_INCOND.get() > 1 && crate::dash_mode::bash_mode();
+                        if (e == Some(')') && !bash_cond_rhs)
                             || (isset(SHGLOB)
                                 && is_inblank
                                 && bct == 0
@@ -2667,7 +2677,13 @@ fn gettokstr(c: char, sub: bool) -> lextok {
 
             LX2_OUTANG => {
                 // In pattern context (incondpat), > is literal
-                if in_brace_param > 0 || sub || LEX_INCONDPAT.get() || LEX_INCASEPAT.get() > 0 {
+                if in_brace_param > 0
+                    || sub
+                    || LEX_INCONDPAT.get()
+                    || LEX_INCASEPAT.get() > 0
+                    // !!! BASH GATE (no C counterpart) !!! the LX2_INANG leg below.
+                    || (pct > 0 && LEX_INCOND.get() > 1 && crate::dash_mode::bash_mode())
+                {
                     add(c);
                 } else {
                     let e = hgetc();
@@ -2764,6 +2780,19 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                                                     // matching the literal `<no-data>`.
                             if in_brace_param > 0 || sub {
                                 // c:1209
+                                add(c);
+                            } else if pct > 0
+                                && LEX_INCOND.get() > 1
+                                && crate::dash_mode::bash_mode()
+                            {
+                                // !!! BASH GATE (no C counterpart) !!! bash reads a
+                                // parenthesised group inside a `[[ ]]` operand with
+                                // parse_matched_pair, so `<` / `>` there are word text:
+                                // bash-completion's `=~ ^([^=<{().[]|\.[A-Za-z0-9])+=?`
+                                // and extglob `== @([^<])` both parse. zsh ends the word
+                                // here (`zsh -fc '[[ a =~ ^([^<]) ]]'` is a parse error).
+                                // Outside a group bash rejects it too (`=~ ^[<]`), hence
+                                // pct > 0.
                                 add(c);
                             } else {
                                 // c:1211 — `goto brk;` outside brace_param/sub
