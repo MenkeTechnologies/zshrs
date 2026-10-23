@@ -675,7 +675,12 @@ mod tests {
         assert!(parse("-9223372036854775808", X87).fits_host_cast());
         let two63 = parse("9223372036854775808", X87);
         assert_eq!(two63.host_cast_i64(), cast_out_of_range(false, false));
-        assert!(two63.fits_host_cast() == cfg!(not(any(target_arch = "x86", target_arch = "x86_64"))));
+        // The host cast of 2^63 is INT64_MIN on x86 and INT64_MAX elsewhere; it
+        // round-trips only where INT64_MAX itself rounds to 2^63, a 53-bit long
+        // double (Apple arm64). On aarch64 Linux the 113-bit value stays 2^63 - 1,
+        // so ksh93 prints `$((2**63))` as a float there.
+        let saturates = cfg!(not(any(target_arch = "x86", target_arch = "x86_64")));
+        assert_eq!(two63.fits_host_cast(), saturates && LDBL_MANT_DIG == 53);
         // `fits_host_cast` rounds through the HOST precision, so test it there.
         assert!(parse("9223372036854775807", LDBL_MANT_DIG).fits_host_cast());
         assert!(!parse("0.5", LDBL_MANT_DIG).fits_host_cast());
