@@ -202,9 +202,11 @@ pub fn eltpcmp(a: &sortelt, b: &sortelt, sort_flags: u32) -> Ordering {
 pub fn zstrcmp<A: AsRef<[u8]>, B: AsRef<[u8]>>(a: A, bs: B, sortflags: u32) -> Ordering {
     // c:191
     let (a, bs) = (a.as_ref(), bs.as_ref());
-    // !!! DASH/ASH (no C counterpart) !!! dash compares names bytewise (`strcmp`), not by locale
-    // collation, so `b2_x` sorts before `b_x`.
-    if crate::dash_mode::dash_strict() {
+    // !!! DASH/ASH + PDKSH/MKSH (no C counterpart) !!! dash compares names bytewise (`strcmp`),
+    // not by locale collation, so `b2_x` sorts before `b_x`. The pdksh line does too: mksh sorts
+    // glob results with `strcmp`, so under en_US `echo *` lists `CREATORS.md Zed apple bench`
+    // where bash and ksh93 collate to `apple bench CREATORS.md Zed`.
+    if crate::dash_mode::dash_strict() || crate::dash_mode::pdksh_family() {
         return a.cmp(bs);
     }
     let sortnumeric = if sortflags & (SORTIT_NUMERICALLY_SIGNED as u32) != 0 {

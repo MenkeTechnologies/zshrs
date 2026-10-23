@@ -179,3 +179,35 @@ fn mksh_trap_usage_error_aborts_the_script() {
     assert_eq!(out, b"after\n");
     assert_eq!(code, 0);
 }
+
+/// mksh and pdksh sort glob results with `strcmp`, not by locale: under
+/// en_US `echo *` lists `CREATORS.md Zed apple bench`, where bash and ksh93
+/// collate to `apple bench CREATORS.md Zed`. Measured on mksh R59.
+#[test]
+fn pdksh_family_sorts_glob_results_bytewise() {
+    let dir = std::env::temp_dir().join(format!("zshrs-pdksh-glob-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for f in ["bench", "CREATORS.md", "apple", "Zed"] {
+        std::fs::write(dir.join(f), "").unwrap();
+    }
+    let run = |flag: &str| {
+        let out = Command::new(zshrs_bin())
+            .args([flag, "-c", "echo *"])
+            .current_dir(&dir)
+            .env("LC_ALL", "en_US.UTF-8")
+            .output()
+            .expect("zshrs failed to spawn");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    // Precondition: the host collates en_US differently from bytes, or the two
+    // orders coincide and there is nothing to tell apart.
+    if run("--bash") != "apple bench CREATORS.md Zed\n" {
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    }
+    for flag in ["--mksh", "--pdksh"] {
+        assert_eq!(run(flag), "CREATORS.md Zed apple bench\n", "{flag}");
+    }
+    assert_eq!(run("--ksh"), "apple bench CREATORS.md Zed\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}

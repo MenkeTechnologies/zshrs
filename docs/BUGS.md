@@ -19,6 +19,23 @@ CI green pending the underlying fix.
 
 ---
 
+## #1200 — `--mksh` / `--pdksh`: glob results came back in locale order — fixed
+
+**Status:** `fixed` 2026-10-23.
+
+```
+$ LC_ALL=en_US.UTF-8 mksh -c 'echo *'            → CREATORS.md Zed apple bench
+$ LC_ALL=en_US.UTF-8 zshrs --mksh -c 'echo *'    → apple bench CREATORS.md Zed     ✗
+$ LC_ALL=en_US.UTF-8 bash -c 'echo *'            → apple bench CREATORS.md Zed     (bash and ksh93 collate)
+```
+
+mksh sorts expanded pathnames with `strcmp`, as pdksh did, and dash does the
+same. `zstrcmp` already returned the byte comparison for dash; the pdksh family
+now takes that branch too. Found by `parity-fuzz --shell mksh --mode expand`
+(6 divergences, now 0). Pinned by `ksh_mode::pdksh_family_sorts_glob_results_bytewise`.
+
+---
+
 ## #1199 — `--bash`: `complete` drops `-D` / `-E` specs and prints names unquoted — port-bug
 
 **Status:** `port-bug`, found 2026-10-22 while verifying #1198.
