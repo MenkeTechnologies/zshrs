@@ -174,6 +174,7 @@ SENTINEL = "@CT@"
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from parity_corpus import (  # noqa: E402
     CASES,
+    bounded_token_opcodes,
     reference_zsh,
     DEFAULT_SEQUENCES,
     KEY_SEQUENCES,
@@ -627,9 +628,12 @@ def tokenize_stream(raw: bytes) -> list[str]:
 def stream_diff(ref: bytes, test: bytes, max_lines: int = 40) -> list[str]:
     """Token-level unified diff of the two raw streams."""
     a, b = tokenize_stream(ref), tokenize_stream(test)
-    sm = difflib.SequenceMatcher(None, a, b, autojunk=False)
+    ops, coarse = bounded_token_opcodes(a, b)
     lines: list[str] = []
-    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+    if coarse:
+        lines.append("  (streams too large to align token by token: %d vs %d tokens; "
+                     "showing the first divergent span)" % (len(a), len(b)))
+    for tag, i1, i2, j1, j2 in ops:
         if tag == "equal":
             continue
         if len(lines) >= max_lines:

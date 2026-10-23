@@ -71,6 +71,7 @@ Run this file directly to print the tables:
 from __future__ import annotations
 
 import argparse
+import difflib
 import hashlib
 import os
 import random
@@ -78,6 +79,47 @@ import re
 import shutil
 import subprocess
 from dataclasses import dataclass, field
+
+
+def bounded_token_opcodes(a: list, b: list, limit: int = 4000):
+    """`difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes()`,
+    with the work bounded. Returns `(opcodes, coarse)`.
+
+    The raw-stream diffs feed whole PTY captures to the matcher, and with
+    autojunk off it is quadratic in the token count. A completion that prints
+    a 46k-entry listing (`which <TAB>` under the `none` combo) makes each side
+    hundreds of thousands of tokens, and eight matrix shards sat in this one
+    call for ten hours (2026-10-22) while the cells they were printing had
+    already been scored. Inputs within `limit` tokens a side are matched whole,
+    exactly as before. Larger ones have the common prefix and suffix trimmed
+    first, which
+    is where nearly all of a large capture agrees; when what is left is still
+    larger than `limit` tokens a side, the middle is reported as ONE coarse
+    `replace` span (`coarse=True`) instead of being matched. The opcodes only
+    ever feed printed detail, never a verdict.
+    """
+    if len(a) <= limit and len(b) <= limit:
+        # Small enough to match whole: byte-identical to the unbounded call.
+        sm = difflib.SequenceMatcher(None, a, b, autojunk=False)
+        return sm.get_opcodes(), False
+    n = min(len(a), len(b))
+    p = 0
+    while p < n and a[p] == b[p]:
+        p += 1
+    s = 0
+    while s < n - p and a[len(a) - 1 - s] == b[len(b) - 1 - s]:
+        s += 1
+    ea, eb = len(a) - s, len(b) - s
+    ops = [("equal", 0, p, 0, p)] if p else []
+    coarse = ea - p > limit or eb - p > limit
+    if coarse:
+        ops.append(("replace", p, ea, p, eb))
+    else:
+        sm = difflib.SequenceMatcher(None, a[p:ea], b[p:eb], autojunk=False)
+        ops += [(t, i1 + p, i2 + p, j1 + p, j2 + p) for t, i1, i2, j1, j2 in sm.get_opcodes()]
+    if s:
+        ops.append(("equal", ea, len(a), eb, len(b)))
+    return ops, coarse
 
 
 def reference_zsh() -> str:
