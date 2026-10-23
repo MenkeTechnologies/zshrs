@@ -2214,6 +2214,26 @@ rsync
 # match suppression, and the -S '' variant shows it also moves nmatches.
 #
 # ══════════════════════════════════════════════════════════════════════════
+# 'read ' RE-MEASURED 2026-10-22 on c2f3a85762 — DELIBERATE-FEATURE, as
+# resolved below.  The extra matches are HELPDIR and INFOPATH, nothing else.
+# ══════════════════════════════════════════════════════════════════════════
+#
+#   env -u FPATH scripts/comptab_parity.py --zsh <oracle>/bin/zsh \
+#     --zshrs <tree>/debug/zshrs --dump <dump> --case 'read ' \
+#     --keys tab --jobs 1 --settle 1500
+#   zsh 152 possibilities (38 lines) / zshrs 154 (39 lines) — fp b29792c9a7
+#
+# Full lists (--keys tab,y --rows 200), split into names and diffed: 152 vs
+# 154, only zshrs: HELPDIR INFOPATH, none missing.  Both are set by
+# src/extensions/bundled_docs.rs — INFOPATH in published_dirs() (exported,
+# `info` reads it from its environment) and HELPDIR by seed_helpdir_param()
+# as a plain shell parameter for run-help.  HELPDIR is no longer EXPORTED
+# (that leak into `env <TAB>` was fixed), but `read ` completes every
+# parameter, exported or not, so it still appears here.  MANPATH is on BOTH
+# sides of this cell.  2026-09-06's 155/157 counted real (-2V) compadd
+# matches, not listed possibilities; the delta is +2 on either measure.
+#
+# ══════════════════════════════════════════════════════════════════════════
 # 'read ' RESOLVED 2026-09-06 — NOT a scratch-parameter leak.  The entry
 # below is superseded; its premise was measured and is WRONG.
 # ══════════════════════════════════════════════════════════════════════════
@@ -6487,6 +6507,24 @@ gstack
 # list_outgrows_the_screen` and `asklist_is_silent_when_the_list_fits_the_
 # screen` (src/ported/zle/compresult.rs). Not added to the corpus: the cell
 # passes, and a PTY cell for it would only re-measure the settle window.
+# ══════════════════════════════════════════════════════════════════════════
+# 'getconf ' RE-MEASURED 2026-10-22 on c2f3a85762 — UNCHANGED, still the
+# 2026-09-13 tie-permutation verdict below.  Not a new regression.
+# ══════════════════════════════════════════════════════════════════════════
+#
+#   env -u FPATH scripts/comptab_parity.py --zsh <oracle>/bin/zsh \
+#     --zshrs <tree>/debug/zshrs --dump <dump> --case 'getconf ' \
+#     --keys tab --jobs 1 --settle 1500
+#   zsh 293 possibilities (147 lines) / zshrs 294 (147 lines) — fp b29792c9a7
+#
+# Full lists (--keys tab,y --rows 200), split into names and diffed: zsh 293,
+# zshrs 294, and the ONLY extra name is PIPE_BUF.  zsh lists no bare PIPE_BUF,
+# zshrs lists it once; _POSIX_PIPE_BUF is on both sides.  That is exactly the
+# pathkeys1/pathkeys2 duplicate pair the block below attributes to macOS libc
+# qsort permuting the tied pair between two makearray passes, against the
+# port's stable `qsort_tolerant`, and the same name as on 2026-09-13.
+# Mechanism not re-traced; the name set alone was re-measured.
+#
 # ══════════════════════════════════════════════════════════════════════════
 # 'getconf ' ROOT-CAUSED 2026-09-13 — TWO makearray PASSES, not one, and the
 # second exclusion is libc qsort's TIE PERMUTATION.  Supersedes the
