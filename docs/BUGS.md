@@ -19,6 +19,123 @@ CI green pending the underlying fix.
 
 ---
 
+## #1202 — bare `wait` drained `waitpid(-1)` and `wait` stopped at a trapped signal — fixed
+
+**Symptom.** CI's ubuntu `Test` job once hung in `prompt_returns_after_command`
+after `for i in {1..300}; do /usr/bin/true & done; wait`: every `[N] done`
+notice printed and the prompt never came back. Not reproduced since, and not
+on macOS.
+
+**Cause.** `wait` with no arguments was ported as a `waitpid(-1)` drain ending
+on ECHILD. C waits per job (`for (job = 0; job <= maxjob; job++) … retval =
+zwaitjob(job, 1)`, c:Src/jobs.c:2538-2542), so it never blocks on a child that
+is not a job of the shell; the drain blocks on any such child until it exits.
+The jobspec form had a second deviation: a trapped signal that interrupted the
+wait ended the whole `wait %1 %2` with 128+signal, where C's loop goes on to
+the next jobspec and its status overwrites it (zsh 5.9.2: `wait %1 %2` is 0
+when USR1 interrupts %1 and %2 finishes; so is the bare `wait`).
+
+**Fix.** The per-job body is one function, `exec_jobs::wait_for_job` (the
+`BIN_WAIT` arm of bin_fg: proc-by-proc `waitpid`, the reaper's recorded
+status on ECHILD, the CHLD and pseudo-signal trap deliveries, the done-delete
+tail). The bare `wait` runs it over the table's live, printable jobs other
+than `thisjob`; both forms continue after an interrupted job. A 14-row
+differential against zsh (statuses, 300 jobs, `wait $!`, interrupted waits,
+`wait` in a function and in `$(…)`) matches.
+
+## #1201 — the Linux emulation matrix diverged on host-specific answers: x87 `%a`, ksh93 long-double digits and casts, Debian's dash `\e` and mksh build, an inherited `SIG_IGN` armed over, and `print` split across two writes — fixed
+
+**Symptom.** CI's ubuntu `Emulation parity` job failed 7 matrix cases and the
+ksh93 float probe after the reference shells were pinned to the same releases
+macOS uses (bash 5.3.20, ksh93u+m 1.0.10); every one passed on macOS with the
+same binaries. The `Test (ubuntu)` job also failed the inherited-`SIG_IGN`
+trap parity and two multios rows (`print x >&1 > f | cat` came out `xx\n\n`).
+
+**Causes, each verified against the reference source or the installed shell.**
+
+- bash formats `%a` with `%La` (printf.def:208-213), and glibc prints an x87
+  long double from its explicit 64-bit mantissa: leading nibble `8`..`f`,
+  exponent three lower (`sysdeps/ieee754/ldbl-96/printf_fphex.c`), so
+  `printf '%a' 1` is `0x8p-3` on x86 Linux. zshrs printed the double layout.
+- ksh93 prints floats with `%.*Lg` and `LDBL_DIG` (macro.c:2190): 18 digits
+  on x86_64, 15 on Apple arm64 (long double is double), 33 on aarch64 Linux.
+  zshrs hardcoded 15. Its `%a` precision is `2*(sizeof(Sfdouble_t)-2)`
+  (sfio/sfvprintf.c:1175-1178): 28 digits with a 16-byte long double, 12 with
+  an 8-byte one; zshrs hardcoded 12.
+- ksh93 decides integer-vs-float output by `(Sflong_t)num != num`
+  (macro.c:2188); that C cast is the host CPU's, which `zlong_cast` already
+  models for zsh. `ksh93_overflow!` used Rust's saturating `as`, so `2**63`
+  printed `9223372036854775807` where x86 ksh prints `9.22337203685477581e+18`.
+- ksh93's integer `/` and `%` have no `-1` guard (streval.c:346, :361); on x86
+  `INT64_MIN / -1` traps and ksh dies of SIGFPE with no output. zshrs wrapped.
+- Ubuntu's dash 0.5.12-6ubuntu5 carries
+  `0008-Support-e-in-echo-and-printf-builtins.diff` (`case 'e'` in the shared
+  `conv_escape`), and upstream dash has `\e` after 0.5.12; Apple's `/bin/dash`
+  prints `\e` as two characters. zshrs always printed two.
+- Ubuntu's `mksh 59c-37` is R59c plus an upstream snapshot to 2025/12
+  (`debian-changes` removes `{Tbcat, c_cat}`) built with
+  `-DMKSH_EARLY_LOCALE_TRACKING` (debian/meat:457), so `cat` is external
+  (`hash` lists it) and `utf8-mode` follows a UTF-8 locale in a `-c` shell
+  (`x=héllo; ${#x}` is 5). zshrs modelled Homebrew's R59c: `cat` builtin,
+  bytes.
+- `init_dropin_signals` armed ksh93's terminating-signal handler over an
+  inherited `SIG_IGN`; ksh93's `sh_sigtrap` keeps the ignore and marks the
+  signal `SH_SIGOFF` (fault.c:289-293). So `trap '' USR1; exec zshrs --ksh -c
+  'trap : USR1; kill -USR1 $$; echo alive'` ran the EXIT-trap exit (138 on
+  Linux, 158 on macOS) instead of printing `alive`.
+- `fwrite_stdout` issued one write(2) per piece, so `print x` was `x` then
+  `\n`; a multios tee that woke between them relayed `x` to every target
+  first. C's stdio buffer delivers `x\n` in one write.
+
+- bash's `$GROUPS` holds at least the primary gid when getgroups(2) returns
+  no groups (general.c:1295-1301); root in a Debian container got an empty
+  array from `--bash`.
+
+**Fix.** `dash_mode` gains the host constants `SIZEOF_LONG_DOUBLE`,
+`LDBL_DIG`, `LONG_DOUBLE_HEX_X87` and a `HexFloatStyle` for `hex_float`
+(glibc's half-to-even rounding and leading-digit carry included);
+`ksh93_overflow!` casts through `zlong_from_double`; `ksh93_int_divide_traps`
+raises SIGFPE on x86; `dash_decodes_esc`, `mksh_has_cat_builtin` and
+`mksh_utf8_mode` gate the Linux answers (the `set -o` listing computes
+`utf8-mode` from the same predicate); the drop-in signal arming skips a signal
+that is currently ignored; `fwrite_stdout` and `print -u` write one buffer.
+
+**Follow-up: the arithmetic itself.** ksh93 computes in the host's long
+double, so on x86_64 `print $((1.0/3))` is `0.333333333333333333` (an 80-bit
+quotient) where f64 arithmetic gives `0.333333333333333315` at 18 digits, and
+`INT64_MAX + 1000` is the exact `9.22337203685477681e+18`, not the double's
+`...786e+18`. `src/extensions/ksh_long_double.rs` now evaluates ksh93's
+`+ - * /`, unary minus, comparisons and constants in a software long double of
+`LDBL_MANT_DIG` bits (64 x87, 113 binary128, 53 where long double is double):
+exact `BigUint` arithmetic rounded once, half to even. The value rides in the
+`mnumber` through a per-evaluation arena — `l` is the C union's dead half when
+`type_` is `MN_FLOAT`, so it carries the arena handle while `d` keeps the f64
+rounding for every other reader — and `arithsubst` prints the result as
+macro.c:2188-2193 does: the integer when the host cast round-trips, `%Lg` for
+zero, else `%.*Lg` with `LDBL_DIG`. `pow` and the math functions stay in
+double, as ksh93's own calls do (`2**0.5` prints the double's digits on every
+host). Subnormals flush to zero on parse and on every result, as ksh93's do
+(`$((1e-310))` and `$((2.2e-308 / 4))` print `0`, `$((-1e-320))` prints `-0`).
+Variables still store a double: `float x=$((1.0/3)); print $x` prints through
+`typeset -F`'s precision, where ksh keeps the long double.
+
+Found on the way and fixed too: ksh93's `print` rejects a dash-digit word
+(`print -9 x` is "-9: unknown option", 2) where zsh's option parser passes it
+through as an operand; and ksh93 (every builtin) and bash 3.2's `/bin/sh`
+(`read`, `umask`, `hash`) report a bad option with status 2 where zsh uses 1.
+Followed up in the same session: `read` and `cd` carry each drop-in's measured
+option letters (`dropin_option_letters`; `read -q` and `cd -q` are usage errors
+in bash, /bin/sh, ksh93, mksh and dash, with the status each reports), `cd`
+no longer passes an unknown option through as a directory there, `cd -` prints
+the directory unabbreviated as every one of them does, and a zshrs builtin the
+reference shell cannot resolve at all (`print`, `setopt`, `float`, `integer` in
+bash; `declare`, `local` in ksh93; `float`, `disown` in mksh) is hidden at
+startup — builtin and typeset reserved word both — so it is "command not
+found" (127), as `--dash` already did (`hide_builtins_the_reference_lacks`,
+lists measured with `command -V`). Still open: bash 3.2 (`/bin/sh`) does not
+import `OLDPWD` from the environment, so its `cd -` fails where zshrs's
+succeeds, and its `typeset -p` quotes an array as one word.
+
 ## #1200 — `--mksh` / `--pdksh`: glob results came back in locale order — fixed
 
 **Status:** `fixed` 2026-10-23.
@@ -59798,7 +59915,6 @@ shells and
 `tests/bugs_md_regression.rs::bug1132_unset_argv_clears_the_positional_vector`
 covers it.
 
-
 ### Suite state for #1133 + the #1132 residual
 
 Both changes measured together on one pinned, `codesign -f -s -`'d copy of
@@ -61989,83 +62105,3 @@ zshrs   3
 `pm.u_val` instead of dispatching `pm->gsu.i->setfn` (c:Src/params.c:2874), so
 the limit never applies.
 
-## #1190 — the Linux emulation matrix diverged on host-specific answers: x87 `%a`, ksh93 long-double digits and casts, Debian's dash `\e` and mksh build, an inherited `SIG_IGN` armed over, and `print` split across two writes — fixed
-
-**Symptom.** CI's ubuntu `Emulation parity` job failed 7 matrix cases and the
-ksh93 float probe after the reference shells were pinned to the same releases
-macOS uses (bash 5.3.20, ksh93u+m 1.0.10); every one passed on macOS with the
-same binaries. The `Test (ubuntu)` job also failed the inherited-`SIG_IGN`
-trap parity and two multios rows (`print x >&1 > f | cat` came out `xx\n\n`).
-
-**Causes, each verified against the reference source or the installed shell.**
-
-- bash formats `%a` with `%La` (printf.def:208-213), and glibc prints an x87
-  long double from its explicit 64-bit mantissa: leading nibble `8`..`f`,
-  exponent three lower (`sysdeps/ieee754/ldbl-96/printf_fphex.c`), so
-  `printf '%a' 1` is `0x8p-3` on x86 Linux. zshrs printed the double layout.
-- ksh93 prints floats with `%.*Lg` and `LDBL_DIG` (macro.c:2190): 18 digits
-  on x86_64, 15 on Apple arm64 (long double is double), 33 on aarch64 Linux.
-  zshrs hardcoded 15. Its `%a` precision is `2*(sizeof(Sfdouble_t)-2)`
-  (sfio/sfvprintf.c:1175-1178): 28 digits with a 16-byte long double, 12 with
-  an 8-byte one; zshrs hardcoded 12.
-- ksh93 decides integer-vs-float output by `(Sflong_t)num != num`
-  (macro.c:2188); that C cast is the host CPU's, which `zlong_cast` already
-  models for zsh. `ksh93_overflow!` used Rust's saturating `as`, so `2**63`
-  printed `9223372036854775807` where x86 ksh prints `9.22337203685477581e+18`.
-- ksh93's integer `/` and `%` have no `-1` guard (streval.c:346, :361); on x86
-  `INT64_MIN / -1` traps and ksh dies of SIGFPE with no output. zshrs wrapped.
-- Ubuntu's dash 0.5.12-6ubuntu5 carries
-  `0008-Support-e-in-echo-and-printf-builtins.diff` (`case 'e'` in the shared
-  `conv_escape`), and upstream dash has `\e` after 0.5.12; Apple's `/bin/dash`
-  prints `\e` as two characters. zshrs always printed two.
-- Ubuntu's `mksh 59c-37` is R59c plus an upstream snapshot to 2025/12
-  (`debian-changes` removes `{Tbcat, c_cat}`) built with
-  `-DMKSH_EARLY_LOCALE_TRACKING` (debian/meat:457), so `cat` is external
-  (`hash` lists it) and `utf8-mode` follows a UTF-8 locale in a `-c` shell
-  (`x=héllo; ${#x}` is 5). zshrs modelled Homebrew's R59c: `cat` builtin,
-  bytes.
-- `init_dropin_signals` armed ksh93's terminating-signal handler over an
-  inherited `SIG_IGN`; ksh93's `sh_sigtrap` keeps the ignore and marks the
-  signal `SH_SIGOFF` (fault.c:289-293). So `trap '' USR1; exec zshrs --ksh -c
-  'trap : USR1; kill -USR1 $$; echo alive'` ran the EXIT-trap exit (138 on
-  Linux, 158 on macOS) instead of printing `alive`.
-- `fwrite_stdout` issued one write(2) per piece, so `print x` was `x` then
-  `\n`; a multios tee that woke between them relayed `x` to every target
-  first. C's stdio buffer delivers `x\n` in one write.
-
-**Fix.** `dash_mode` gains the host constants `SIZEOF_LONG_DOUBLE`,
-`LDBL_DIG`, `LONG_DOUBLE_HEX_X87` and a `HexFloatStyle` for `hex_float`
-(glibc's half-to-even rounding and leading-digit carry included);
-`ksh93_overflow!` casts through `zlong_from_double`; `ksh93_int_divide_traps`
-raises SIGFPE on x86; `dash_decodes_esc`, `mksh_has_cat_builtin` and
-`mksh_utf8_mode` gate the Linux answers (the `set -o` listing computes
-`utf8-mode` from the same predicate); the drop-in signal arming skips a signal
-that is currently ignored; `fwrite_stdout` and `print -u` write one buffer.
-
-**Follow-up: the arithmetic itself.** ksh93 computes in the host's long
-double, so on x86_64 `print $((1.0/3))` is `0.333333333333333333` (an 80-bit
-quotient) where f64 arithmetic gives `0.333333333333333315` at 18 digits, and
-`INT64_MAX + 1000` is the exact `9.22337203685477681e+18`, not the double's
-`...786e+18`. `src/extensions/ksh_long_double.rs` now evaluates ksh93's
-`+ - * /`, unary minus, comparisons and constants in a software long double of
-`LDBL_MANT_DIG` bits (64 x87, 113 binary128, 53 where long double is double):
-exact `BigUint` arithmetic rounded once, half to even. The value rides in the
-`mnumber` through a per-evaluation arena — `l` is the C union's dead half when
-`type_` is `MN_FLOAT`, so it carries the arena handle while `d` keeps the f64
-rounding for every other reader — and `arithsubst` prints the result as
-macro.c:2188-2193 does: the integer when the host cast round-trips, `%Lg` for
-zero, else `%.*Lg` with `LDBL_DIG`. `pow` and the math functions stay in
-double, as ksh93's own calls do (`2**0.5` prints the double's digits on every
-host). Subnormals flush to zero on parse and on every result, as ksh93's do
-(`$((1e-310))` and `$((2.2e-308 / 4))` print `0`, `$((-1e-320))` prints `-0`).
-Variables still store a double: `float x=$((1.0/3)); print $x` prints through
-`typeset -F`'s precision, where ksh keeps the long double.
-
-Found on the way and fixed too: ksh93's `print` rejects a dash-digit word
-(`print -9 x` is "-9: unknown option", 2) where zsh's option parser passes it
-through as an operand; and ksh93 (every builtin) and bash 3.2's `/bin/sh`
-(`read`, `umask`, `hash`) report a bad option with status 2 where zsh uses 1.
-Still open in the same family: zsh-only option letters the drop-ins accept
-(`read -q`, `cd -q` are usage errors in bash, ksh93, mksh and dash), which
-needs per-shell option sets like `dash_builtin_optstr` for the other shells;
-and `--sh` answering `print` where bash 3.2 has no such command (127).
