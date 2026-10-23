@@ -668,6 +668,8 @@ pub fn dash_builtin_optstr(name: &str) -> Option<&'static [u8]> {
         // dash's hash knows `-r` only; zsh's `-d` (named directories) and the
         // rest are "Illegal option" (2).
         "hash" => Some(b"r"),
+        // dash's cd knows `-L` and `-P`; zsh's `-q` / `-s` are "Illegal option" (2).
+        "cd" => Some(b"LP"),
         _ => None,
     }
 }
@@ -4684,6 +4686,175 @@ pub fn read_soft_readonly_armed() -> bool {
     READ_SOFT_READONLY.with(|c| c.get().is_some())
 }
 
+// ─── Names the other drop-ins' reference shells cannot resolve ─────────────
+//
+// Measured with `<shell> -c 'command -V -- NAME'` over every zshrs builtin
+// name (bash 5.3.20, bash 3.2.57 as /bin/sh, ksh93u+m 1.0.10, mksh R59c): a
+// name the reference reports "not found" is "command not found" (127) in that
+// drop-in too, exactly as `DASH_BUILTINS` makes it for `--dash`. A name the
+// reference resolves some other way — its own builtin, an alias of its
+// preset (ksh93's `float`, `integer`, `functions`), or an external command
+// (`cat`, `date`) — keeps zshrs's builtin. Regenerate the lists with that
+// probe when a builtin is added; a new zshrs-only builtin is otherwise still
+// visible to these drop-ins.
+
+/// `command -V NAME` fails in bash 5.3 for these zshrs builtins.
+const BASH_LACKS: &[&str] = &[
+    "", "ai", "async", "autoload", "await", "barrier", "bindkey", "bye", "cdreplay", "chdir",
+    "compadd", "comparguments", "compcall", "compctl", "compdef", "compdescribe", "compfiles",
+    "compgroups", "compinit", "compquote", "compset", "comptags", "comptry", "compvalues",
+    "dbview", "dircolors", "disable", "doctor", "echotc", "echoti", "emulate", "float",
+    "functions", "getln", "hashinfo", "integer", "intercept", "intercept_proceed", "limit",
+    "mem", "nameref", "noglob", "pany", "par_lines", "par_walk", "patdebug", "peach", "pfirst",
+    "pmap", "pmap_chunked", "prewarm-autoloads", "print", "private", "profile", "provenance",
+    "psort", "puniq", "pushln", "rehash", "run_tests", "sched", "setopt", "ttyctl",
+    "unfunction", "unhash", "unlimit", "unsetopt", "vared", "whence", "where", "zask",
+    "zassert_contains", "zassert_dies", "zassert_eq", "zassert_err", "zassert_false",
+    "zassert_ge", "zassert_gt", "zassert_le", "zassert_lt", "zassert_match", "zassert_ne",
+    "zassert_near", "zassert_ok", "zassert_true", "zbanner", "zbuild", "zcache", "zcmd-result",
+    "zcompile", "zcomplete", "zformat", "zhistory", "zid", "zjob", "zle", "zlock", "zlog",
+    "zls", "zmodload", "znative", "znotify", "zparseopts", "zping", "zpublish", "zregexparse",
+    "zsend", "zsleep", "zsource", "zstyle", "zsubscribe", "zsuggest", "zsync", "ztag",
+    "ztest_run", "ztest_skip", "zunsubscribe", "zuntag", "zwhere",
+];
+
+/// `command -V NAME` fails in bash 3.2 (`/bin/sh`) for these zshrs builtins.
+const SH_LACKS: &[&str] = &[
+    "", "ai", "async", "autoload", "await", "barrier", "bindkey", "bye", "cdreplay", "chdir",
+    "compadd", "comparguments", "compcall", "compctl", "compdef", "compdescribe", "compfiles",
+    "compgroups", "compinit", "compquote", "compset", "comptags", "comptry", "compvalues",
+    "dbview", "dircolors", "disable", "doctor", "echotc", "echoti", "emulate", "float",
+    "functions", "getln", "hashinfo", "integer", "intercept", "intercept_proceed", "limit",
+    "mem", "nameref", "noglob", "pany", "par_lines", "par_walk", "patdebug", "peach", "pfirst",
+    "pmap", "pmap_chunked", "prewarm-autoloads", "print", "private", "profile", "provenance",
+    "psort", "puniq", "pushln", "rehash", "run_tests", "sched", "setopt", "ttyctl",
+    "unfunction", "unhash", "unlimit", "unsetopt", "vared", "whence", "where", "zask",
+    "zassert_contains", "zassert_dies", "zassert_eq", "zassert_err", "zassert_false",
+    "zassert_ge", "zassert_gt", "zassert_le", "zassert_lt", "zassert_match", "zassert_ne",
+    "zassert_near", "zassert_ok", "zassert_true", "zbanner", "zbuild", "zcache", "zcmd-result",
+    "zcompile", "zcomplete", "zformat", "zhistory", "zid", "zjob", "zle", "zlock", "zlog",
+    "zls", "zmodload", "znative", "znotify", "zparseopts", "zping", "zpublish", "zregexparse",
+    "zsend", "zsleep", "zsource", "zstyle", "zsubscribe", "zsuggest", "zsync", "ztag",
+    "ztest_run", "ztest_skip", "zunsubscribe", "zuntag", "zwhere",
+];
+
+/// `command -V NAME` fails in ksh93u+m for these zshrs builtins.
+const KSH93_LACKS: &[&str] = &[
+    "", "ai", "async", "await", "barrier", "bindkey", "bye", "caller", "cdreplay", "chdir",
+    "compadd", "comparguments", "compcall", "compctl", "compdef", "compdescribe", "compfiles",
+    "compgen", "compgroups", "complete", "compquote", "compset", "comptags", "comptry",
+    "compvalues", "dbview", "declare", "dircolors", "dirs", "disable", "doctor", "echotc",
+    "echoti", "emulate", "enable", "getln", "hashinfo", "help", "history", "intercept",
+    "intercept_proceed", "limit", "local", "logout", "mem", "noglob", "pany", "par_lines",
+    "par_walk", "patdebug", "peach", "pfirst", "pmap", "pmap_chunked", "popd",
+    "prewarm-autoloads", "private", "profile", "provenance", "psort", "puniq", "pushln",
+    "rehash", "run_tests", "sched", "setopt", "ttyctl", "unfunction", "unhash", "unlimit",
+    "unsetopt", "vared", "where", "zask", "zassert_contains", "zassert_dies", "zassert_eq",
+    "zassert_err", "zassert_false", "zassert_ge", "zassert_gt", "zassert_le", "zassert_lt",
+    "zassert_match", "zassert_ne", "zassert_near", "zassert_ok", "zassert_true", "zbanner",
+    "zbuild", "zcache", "zcmd-result", "zcompile", "zcomplete", "zformat", "zhistory", "zid",
+    "zjob", "zle", "zlock", "zlog", "zmodload", "znative", "znotify", "zparseopts", "zping",
+    "zpublish", "zregexparse", "zsend", "zsleep", "zsource", "zstyle", "zsubscribe", "zsuggest",
+    "zsync", "ztag", "ztest_run", "ztest_skip", "zunsubscribe", "zuntag", "zwhere",
+];
+
+/// `command -V NAME` fails in mksh R59c for these zshrs builtins.
+const MKSH_LACKS: &[&str] = &[
+    "", "ai", "async", "await", "barrier", "bindkey", "bye", "caller", "cdreplay", "compadd",
+    "comparguments", "compcall", "compctl", "compdef", "compdescribe", "compfiles", "compgen",
+    "compgroups", "complete", "compquote", "compset", "comptags", "comptry", "compvalues",
+    "dbview", "declare", "dircolors", "dirs", "disable", "disown", "doctor", "echotc", "echoti",
+    "emulate", "enable", "float", "getln", "hashinfo", "help", "intercept", "intercept_proceed",
+    "limit", "logout", "mem", "noglob", "pany", "par_lines", "par_walk", "patdebug", "peach",
+    "pfirst", "pmap", "pmap_chunked", "popd", "prewarm-autoloads", "private", "profile",
+    "provenance", "psort", "puniq", "pushln", "rehash", "run_tests", "sched", "setopt",
+    "ttyctl", "unfunction", "unhash", "unlimit", "unsetopt", "vared", "where", "zask",
+    "zassert_contains", "zassert_dies", "zassert_eq", "zassert_err", "zassert_false",
+    "zassert_ge", "zassert_gt", "zassert_le", "zassert_lt", "zassert_match", "zassert_ne",
+    "zassert_near", "zassert_ok", "zassert_true", "zbanner", "zbuild", "zcache", "zcmd-result",
+    "zcompile", "zcomplete", "zformat", "zhistory", "zid", "zjob", "zle", "zlock", "zlog",
+    "zmodload", "znative", "znotify", "zparseopts", "zping", "zpublish", "zregexparse", "zsend",
+    "zsleep", "zsource", "zstyle", "zsubscribe", "zsuggest", "zsync", "ztag", "ztest_run",
+    "ztest_skip", "zunsubscribe", "zuntag", "zwhere",
+];
+
+/// Mark every zshrs builtin the emulated shell cannot resolve as DISABLED, so
+/// the name falls through to PATH lookup and `print x` under `--bash` is
+/// "command not found" (127) as in bash. The `--dash` drop-in has its own
+/// positive list (`dash_hide_foreign_builtins`).
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn hide_builtins_the_reference_lacks() {
+    let lacks: &[&str] = if bash_mode() {
+        BASH_LACKS
+    } else if sh_mode() {
+        SH_LACKS
+    } else if pdksh_family() {
+        MKSH_LACKS
+    } else if ksh93_mode() {
+        KSH93_LACKS
+    } else {
+        return;
+    };
+    // zsh also parses `float`, `integer`, `declare`, … as the typeset RESERVED
+    // word (c:Src/exec.c:3088-3096 runs the builtin regardless of DISABLED),
+    // so the reserved word goes too, before anything is parsed; the word is
+    // then an ordinary command whose builtin is disabled.
+    if let Ok(mut reswds) = crate::ported::hashtable::reswdtab_lock().write() {
+        for name in lacks {
+            reswds.disable(name);
+        }
+    }
+    let Ok(mut disabled) = crate::ported::builtin::BUILTINS_DISABLED.lock() else {
+        return;
+    };
+    for name in lacks {
+        disabled.insert((*name).to_string());
+    }
+}
+
+/// The option letters a drop-in's `read` and `cd` accept, where zsh's set is
+/// wider: zsh's `read -q` / `-k` / `-z` / `-c` / `-l` and `cd -q` / `-s` are
+/// usage errors in the real shells. Measured letter by letter against bash
+/// 5.3.20, bash 3.2.57 (`/bin/sh`), ksh93u+m 1.0.10 and mksh R59c; letters a
+/// reference accepts but the port does not implement (`read -i` in bash,
+/// `read -C` / `-S` / `-v` in ksh93) are left out, so they stay usage errors.
+/// dash's sets live in `dash_builtin_optstr`.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn dropin_option_letters(name: &str) -> Option<&'static str> {
+    match (name, bash_mode(), sh_mode(), korn_mode()) {
+        ("read", true, _, _) => Some("adenprstuEN"),
+        ("read", _, true, _) => Some("adenprstu"),
+        ("read", _, _, true) => Some("adnprstuAN"),
+        ("cd", _, true, _) => Some("LP"),
+        ("cd", true, _, _) | ("cd", _, _, true) => Some("eLP"),
+        _ => None,
+    }
+}
+
+/// `optstr` reduced to the options in `letters`, each keeping its `:` / `%`
+/// argument markers (`"acd:ek:%lnNpqrst:%zu:AE"` with `"adenprstuEN"` is
+/// `"ad:enNprst:%u:E"`).
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn keep_option_letters(optstr: &[u8], letters: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(optstr.len());
+    let mut i = 0;
+    while i < optstr.len() {
+        let letter = optstr[i];
+        let mut end = i + 1;
+        while end < optstr.len() && matches!(optstr[end], b':' | b'%') {
+            end += 1;
+        }
+        if letters.as_bytes().contains(&letter) {
+            out.extend_from_slice(&optstr[i..end]);
+        }
+        i = end;
+    }
+    out
+}
+
 #[cfg(test)]
 mod host_float_tests {
     use super::*;
@@ -4751,5 +4922,21 @@ mod host_float_tests {
         for no in ["C", "POSIX", "en_US.ISO8859-1", "en_US", "UTF-16", ""] {
             assert!(!locale_names_utf8(no), "{no}");
         }
+    }
+}
+
+#[cfg(test)]
+mod dropin_option_tests {
+    use super::keep_option_letters;
+
+    /// The filter keeps each kept letter's `:` / `%` argument markers and
+    /// drops the rest, on zsh's real `read` optstr.
+    #[test]
+    fn keep_option_letters_keeps_argument_markers() {
+        let zsh_read = b"acd:ek:%lnNpqrst:%zu:AE";
+        assert_eq!(keep_option_letters(zsh_read, "adenprstuEN"), b"ad:enNprst:%u:E".to_vec());
+        assert_eq!(keep_option_letters(zsh_read, "adnprstuAN"), b"ad:nNprst:%u:A".to_vec());
+        assert_eq!(keep_option_letters(b"qsPL", "eLP"), b"PL".to_vec());
+        assert_eq!(keep_option_letters(b"qsPL", ""), Vec::<u8>::new());
     }
 }
