@@ -810,6 +810,13 @@ against:
 | `--csh` | `csh` | `-csh` | tcsh (macOS `/bin/csh`) |
 | `--zsh` | `zsh` | `-zsh` | zsh 5.9 |
 
+Terminals that bootstrap their own shell integration pick the shell by the
+binary's file name too. Warp accepts only `zsh`, `bash`, `fish` and `pwsh`
+(`ShellType::from_name` in warpdotdev/warp) and starts any other login shell
+as its default zsh instead, so point Warp's startup shell (Settings → Features
+→ Session) at a `zsh`-named link such as `~/bin/zsh`. Warp launches it as
+`exec -a -zsh <path> -g --no-rcs` and then sources the rc files itself.
+
 The whole table below is re-checked against those binaries by the startup-file
 parity + fuzz harness on every run. `$ENV` is expanded (parameter, command,
 arithmetic and tilde substitution) before use in every shell that reads it.
