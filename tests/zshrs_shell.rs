@@ -17532,3 +17532,22 @@ zmodload -F zsh/files +b:mv
     assert_eq!(rc, 0, "stderr: {err}");
     assert_eq!(out, "rc=0 0\nrc=1 1\n", "stderr: {err}");
 }
+
+/// c:Src/exec.c:3275-3278 — `command NAME` without POSIX_BUILTINS never
+/// resolves a builtin, an autoload stub (`zmodload -ab`) included, so a
+/// `mv() { command mv -v "$@" }` wrapper reaches /bin/mv.
+#[test]
+fn command_skips_an_autoloaded_module_builtin() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let code = format!(
+        "cd {} || exit 9
+zmodload -ab zsh/files mv
+: > a; command mv -v a b >/dev/null; print -r -- rc=$?
+setopt posixbuiltins
+: > c; command mv -v c d 2>/dev/null; print -r -- rc=$?",
+        dir.path().display()
+    );
+    let (rc, out, err) = run_zshrs_with_args(&["-f", "-c", &code]);
+    assert_eq!(rc, 0, "stderr: {err}");
+    assert_eq!(out, "rc=0\nrc=1\n", "stderr: {err}");
+}

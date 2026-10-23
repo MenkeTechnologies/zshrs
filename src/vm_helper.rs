@@ -6718,7 +6718,14 @@ impl ShellExecutor {
         // this, `zmodload -ab zsh/bogus mybltn; mybltn` skipped the
         // C autoload-fire entirely (PATH miss → 127 instead of the
         // load_module diagnostic → 1).
-        if !cmd.contains('/') {
+        //
+        // c:Src/exec.c:3275-3278 — `command NAME` without POSIX_BUILTINS
+        // clears `hn` before the builtin is ever resolved, autoload stub or
+        // not, so `zmodload -ab zsh/files mv; command mv -v a b` runs
+        // /bin/mv. The `command` handler marks that dispatch forced-external.
+        let builtin_skipped = crate::native_cmds::is_forced_external()
+            && !crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXBUILTINS);
+        if !cmd.contains('/') && !builtin_skipped {
             if let Some(rc) = crate::ported::exec::resolvebuiltin(cmd) {
                 if rc != 0 {
                     return Ok(1);
