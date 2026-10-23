@@ -10439,15 +10439,27 @@ pub const AUTOLOAD_PARAMS: &[(&str, &str)] = &[
 /// Autoload stubs whose owning module is NOT loaded — the rows zsh's
 /// `typeset` listings print as `undefined NAME` (printparamnode's
 /// PM_AUTOLOAD pmtypes row, Src/params.c:6011 + the PM_AUTOLOAD
-/// NAMEONLY arm at Src/params.c:6146-6155). Once a module loads, its
-/// stubs drop out and the real params list instead.
+/// NAMEONLY arm at Src/params.c:6146-6155). A stub stays until its OWN
+/// feature is enabled, not until its module boots: `loadparamnode`
+/// (Src/params.c:563-567) calls `ensurefeature(mn, "p:", nam)`
+/// (Src/module.c:3419-3432), which hands `require_module` the single
+/// feature `p:NAME`, so `setparamdefs` (Src/module.c:1169-1196) replaces
+/// only that stub and every sibling `add_autoparam` planted
+/// (Src/module.c:1202-1223) keeps PM_AUTOLOAD. compinit's `: $funcstack`
+/// (Completion/compinit:179) therefore leaves `undefined jobdirs` etc.
+/// in zsh's `typeset +` although zsh/parameter has booted.
 pub fn autoload_param_stubs() -> Vec<(&'static str, &'static str)> {
     use crate::ported::zsh_h::{MOD_INIT_B, MOD_UNLOAD};
     let tab = crate::ported::module::MODULESTAB.lock().unwrap();
     AUTOLOAD_PARAMS
         .iter()
         .copied()
-        .filter(|(_, m)| {
+        .filter(|(p, m)| {
+            // c:Src/module.c:1169-1196 — booted, but this feature was never
+            // enabled: the add_autoparam stub is still the paramtab node.
+            if module_param_is_autoload_stub(p) {
+                return true;
+            }
             // "Boot ran" is MOD_INIT_B && !MOD_UNLOAD (the criterion
             // printmodulenode uses, src/ported/module.rs:246 — C's
             // `m->u.handle` union check at Src/module.c:218-241).

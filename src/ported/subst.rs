@@ -15891,6 +15891,12 @@ pub fn paramsubst(
             } else {
                 var_name.clone()
             };
+            // c:Src/subst.c:2800 fetchvalue → c:Src/params.c:589-594
+            // getparamnode → c:563-567 loadparamnode: reaching the node to
+            // type it runs `ensurefeature(mn, "p:", nam)`, so `${(t)saliases}`
+            // enables `p:saliases` and drops its `undefined` stub from
+            // `typeset +`.
+            crate::vm_helper::mark_module_param_used(&var_name);
             let partab_array_tag = crate::ported::modules::parameter::PARTAB_ARRAY
                 .iter()
                 .find(|e_| e_.name == var_name.as_str())
