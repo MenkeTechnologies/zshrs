@@ -13,8 +13,26 @@
 //! descriptor the shell owns is either absent or classified
 //! (c:Src/exec.c:3884-3897, c:Src/exec.c:3830-3835).
 
+use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
+
+/// Close every descriptor above stderr in the child before `exec`, so the
+/// shell starts with the descriptors it opens and none the test runner
+/// inherited. GitHub's macOS runner leaves an fd 10 open without CLOEXEC,
+/// which put every allocation one higher (`fd=12` for the script's first
+/// `{fd}`) and made "fd 10" a reachable, unowned descriptor — exactly what
+/// `exec 10>/dev/null; cargo test` reproduces on any machine.
+fn without_inherited_fds(cmd: &mut Command) -> &mut Command {
+    unsafe {
+        cmd.pre_exec(|| {
+            for fd in 3..256 {
+                libc::close(fd);
+            }
+            Ok(())
+        })
+    }
+}
 
 fn zshrs_bin() -> PathBuf {
     if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") {
@@ -28,12 +46,9 @@ fn zshrs_bin() -> PathBuf {
 
 /// Run `script` in a shell whose entire state lives in `home`.
 fn run(home: &std::path::Path, script: &str) -> (String, String) {
-    let out = Command::new(zshrs_bin())
-        .args(["-f", "-c", script])
-        .env("ZSHRS_HOME", home)
-        .env_remove("ZSHRS_CACHE")
-        .output()
-        .expect("spawn zshrs");
+    let mut cmd = Command::new(zshrs_bin());
+    cmd.args(["-f", "-c", script]).env("ZSHRS_HOME", home).env_remove("ZSHRS_CACHE");
+    let out = without_inherited_fds(&mut cmd).output().expect("spawn zshrs");
     (
         String::from_utf8_lossy(&out.stdout).into_owned(),
         String::from_utf8_lossy(&out.stderr).into_owned(),
@@ -149,13 +164,9 @@ fn script_file_input_holds_the_first_internal_descriptor() {
         "exec {fd}>/dev/null; print fd=$fd\nread -u 10 x; print rc=$?\n",
     )
     .unwrap();
-    let out = Command::new(zshrs_bin())
-        .arg("-f")
-        .arg(&script)
-        .env("ZSHRS_HOME", home.path())
-        .env_remove("ZSHRS_CACHE")
-        .output()
-        .expect("spawn zshrs");
+    let mut cmd = Command::new(zshrs_bin());
+    cmd.arg("-f").arg(&script).env("ZSHRS_HOME", home.path()).env_remove("ZSHRS_CACHE");
+    let out = without_inherited_fds(&mut cmd).output().expect("spawn zshrs");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert_eq!(stdout, "fd=11\nrc=1\n", "stderr={}", String::from_utf8_lossy(&out.stderr));
 }

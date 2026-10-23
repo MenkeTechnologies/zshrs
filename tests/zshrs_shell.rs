@@ -73,14 +73,27 @@ fn tempdir_for_test() -> String {
 fn run_zshrs_with_args(args: &[&str]) -> (i32, String, String) {
     // `%B` / `%U` / `%F{n}` only emit escapes when the terminal has the
     // capability; CI runs with TERM unset, so pin one that does.
-    let mut child = Command::new(zshrs_bin())
-        .args(args)
+    let mut cmd = Command::new(zshrs_bin());
+    cmd.args(args)
         .env("TERM", "xterm-256color")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("failed to spawn zshrs");
+        .stderr(Stdio::piped());
+    // Close every descriptor above stderr before `exec`: the shell then holds
+    // only the descriptors it opens, not ones the test runner inherited.
+    // GitHub's macOS runner leaves an fd 10 open without CLOEXEC, which moved
+    // `zle -F`'s descriptor from 11 to 12 in test_zle_fd_watch_does_not_leak_
+    // from_subshell (`exec 10>/dev/null; cargo test` reproduces it anywhere).
+    unsafe {
+        use std::os::unix::process::CommandExt;
+        cmd.pre_exec(|| {
+            for fd in 3..256 {
+                libc::close(fd);
+            }
+            Ok(())
+        });
+    }
+    let mut child = cmd.spawn().expect("failed to spawn zshrs");
     let timeout = Duration::from_secs(5);
     let start = std::time::Instant::now();
     loop {
