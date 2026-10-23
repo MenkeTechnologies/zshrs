@@ -1139,7 +1139,14 @@ pub fn histsubchar(c_in: i32) -> i32 {
                 _ => {
                     // c:947 default
                     herrflush(); // c:948
-                    zerr(&format!("invalid modifier: {}", c as u8 as char)); // c:949
+                    // c:949 — `%c` renders via zerrmsg c:343-346 `zputs(MB_NICECHAR(num))`,
+                    // MB_NICECHAR = wcs_nicechar(cp, NULL, NULL) (zsh.h:3288).
+                    let nice = crate::ported::utils::wcs_nicechar(
+                        char::from_u32(c as u32).unwrap_or(char::REPLACEMENT_CHARACTER),
+                        None,
+                        None,
+                    );
+                    zerr(&format!("invalid modifier: {}", nice)); // c:949
                     return -1; // c:950
                 }
             }

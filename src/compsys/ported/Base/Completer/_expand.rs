@@ -256,7 +256,13 @@ pub fn _expand_with(args: &[String]) -> i32 {
     // tilde expansion — so a leading `~` reaches the metacharacter test
     // untouched.
     if style_true_or_unset(&ctx, "suffix")
-        && looks_like_prefix(&word)
+        && {
+            // The `[[ … ]]` pipe opens on sh:37, so `lineno` is 37 for both of
+            // its tests (`Src/exec.c:2056-2057`); the `(e)` below is where a
+            // malformed subscript raises `_expand:37: invalid subscript`.
+            crate::compsys::ported::shared::set_sh_lineno(37);
+            looks_like_prefix(&word)
+        }
         && !has_unescaped_glob_meta(
             // A `(e)` zsh cannot parse leaves the word as typed. The only
             // way that happens here is an unclosed `[` subscript — and `[`
