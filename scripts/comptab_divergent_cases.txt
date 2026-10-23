@@ -249,6 +249,60 @@ caffeinate -
 # a `-S`-suffix theory and `fc-list`/`fc-match` under `match sets that differ
 # outright`, but the harness fingerprints all four identically.
 
+# ══════════════════════════════════════════════════════════════════════════
+# VERDICT 2026-10-22 — 'fc-list ' / 'fc-match ': NOT A zshrs DEFECT.  The
+# remaining delta is the ORACLE'S BUILD CONFIGURATION (--enable-unicode9),
+# not the listing code.  Supersedes the "+1 match count" and "forced
+# LC_ALL=C" explanations in the block below and at the top of this file:
+# the match counts are now equal (800 == 800) and only the line count moves.
+#
+# Measured at origin/main c2f3a85762, serial, --settle 1500, shared ora.dump:
+#   oracle A  <scratch>/oracle/bin/zsh            sha256 7a017e6fdcfe205b…
+#             nm: T _u9_iswprint, T _u9_wcwidth   (built --enable-unicode9)
+#   oracle B  ~/.cache/zshrs/zsh-oracle/bin/zsh   sha256 79132a0d21539db8…
+#             nm: U _wcwidth, no u9_*             (default configure)
+#   Both report `zsh 5.9.999.3-test [zsh-5.9.0.3-test-476-g8cc5ead]`.
+#
+#   vs A:  FAIL  'fc-list '   zsh   800 possibilities (823 lines)
+#                             zshrs 800 possibilities (1062 lines)
+#          FAIL  'fc-match '  same two rows
+#   vs B:  PASS  'fc-list '   (cursor col 60 on both = the "(1062 lines)?" row)
+#          PASS  'fc-match '
+#   (B run with FPATH=<scratch>/oracle/share/zsh/{site-functions,5.9.999.3-test/functions}
+#    exported, since B's install has no function library of its own.)
+#
+# MECHANISM.  Under LC_ALL=C on macOS, libc mbrtowc hands a byte >= 0x80
+# back as the wide character of the same value.  WC_ISPRINT is
+# `u9_iswprint` under ENABLE_UNICODE9 and libc `iswprint` otherwise
+# (c:Src/ztype.h:76-79).  u9_iswprint calls U+00CE printable, so
+# wcs_nicechar_sel (c:Src/utils.c:612) emits the raw byte at width 1;
+# libc iswprint in the C locale does not, so it falls to nicechar_sel
+# (\M-N, width 4) or, in a quoted match, `$'\316'`.  Every font name in
+# `fc-list -f '%{family},'` written in Greek/Cyrillic/CJK/Indic script is
+# therefore ~4x wider under B (and in zshrs) than under A, and calclist
+# (c:Src/Zle/compresult.c:1596/1611, ZMB_nicewidth) lays out fewer columns.
+#
+#   LC_ALL=C <zsh> -fc 'x=$(printf "\xce\x93"); print -r -- ${(V)x}'
+#     A: \316 \M-^S        B: \M-N\M-^S        zshrs: \M-N\M-^S
+#   LC_ALL=C <zsh> -fc 'ヌ() { :; }; which ヌ'
+#     A: $'\343\M-\C-C…    B: $'\M-c\M-\C-C…   zshrs: $'\M-c\M-\C-C…
+#   zsh's own Test/E02xtrace.ztst:175 expects `$'\M-c\M-\C-C\M-\C-L'` —
+#   oracle A fails its own test suite there; B and zshrs pass it.
+#
+# Small reproducer (fixture `compadd -- 'Γραμματοσειρά συστήματος'
+# 'Системный шрифт' abc def ghi 'Helvetica Neue'` via --init-extra):
+# PASS vs B, FAIL vs A with A rendering `�$'\223'�$'\201'αμμα…` where B and
+# zshrs render `$'\316'$'\223'$'\317'$'\201'…`.  zshrs's behaviour is the
+# deliberate one from 17f881479b (src/extensions/c_locale.rs: the ASCII
+# C locale rejects bytes above 0x7f on every platform, matching glibc and
+# E02xtrace), and the listing port reproduces the default-configured zsh
+# byte for byte.  --enable-unicode9 is opt-in (c:configure.ac:2393-2397).
+#
+# DO NOT "fix" zshrs toward oracle A: it would break E02xtrace:175 and the
+# Linux/glibc rendering.  These two cells go green when the comptab oracle
+# is a default (non-unicode9) build, or under a UTF-8 locale.
+# ══════════════════════════════════════════════════════════════════════════
+
 # ──────────────────────────────────────────────────────────────────────────
 # fingerprint b29792c9a7  ×4
 #   the `do you wish to see all N possibilities (M lines)?` ask-prompt
