@@ -163,10 +163,14 @@ fn kill_percent_resolves_coproc_job() {
 #[test]
 fn second_coproc_replaces_first() {
     // New coproc closes the old one's fds; -p consumers talk to the
-    // NEW coproc. `jobs` then lists the survivor as job 2.
+    // NEW coproc. `jobs` then lists the survivor as job 2. `wait %1` lets
+    // the first cat, already at EOF, finish, and the survivor is killed only
+    // after the listing: a `kill %2` before `jobs` made the expected
+    // `running` depend on the signal not having landed yet, which zsh won
+    // and a slower zshrs build lost (CI showed an empty listing).
     assert_parity(
         "coproc cat; print -p one; read -p a; coproc cat; print -p two; read -p b; \
-         print $a$b; kill %1 2>/dev/null; kill %2 2>/dev/null; jobs",
+         print $a$b; wait %1 2>/dev/null; jobs; kill %2",
     );
 }
 
