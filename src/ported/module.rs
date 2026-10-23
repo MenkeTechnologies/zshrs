@@ -8028,6 +8028,8 @@ pub fn setfeatureenables(modname: &str, features: &[String], e: Option<&[i32]>) 
                  // reentrant.
     let mut param_on: Vec<String> = Vec::new();
     let mut param_off: Vec<String> = Vec::new();
+    let mut builtin_on: Vec<String> = Vec::new();
+    let mut builtin_off: Vec<String> = Vec::new();
     {
         let mut tab = MODULE_FEATURE_ENABLES.lock().unwrap();
         let set = tab.entry(modname.to_string()).or_default();
@@ -8054,6 +8056,27 @@ pub fn setfeatureenables(modname: &str, features: &[String], e: Option<&[i32]>) 
                     param_off.push(pname.to_string());
                 }
             }
+            // c:3358-3361 — `setbuiltins(m->node.nam, f->bn_list, f->bn_size,
+            // e)` for the `b:` block: a builtin whose feature is off leaves
+            // `builtintab` (c:521 `deletebuiltin`), which zshrs records in
+            // DISABLED_MODULE_BUILTINS. Without it `zmodload -F zsh/files
+            // b:zf_ln` left `rm`, `mv`, … callable and listed in $builtins.
+            if let Some(bname) = f.strip_prefix("b:") {
+                if on {
+                    builtin_on.push(bname.to_string());
+                } else {
+                    builtin_off.push(bname.to_string());
+                }
+            }
+        }
+    }
+    {
+        let mut disabled = DISABLED_MODULE_BUILTINS.lock().unwrap();
+        for b in &builtin_on {
+            disabled.remove(b); // c:511 addbuiltin
+        }
+        for b in builtin_off {
+            disabled.insert(b); // c:521 deletebuiltin
         }
     }
     // c:3377 setparamdefs (c:1169-1196) for the zmodload-gated specials

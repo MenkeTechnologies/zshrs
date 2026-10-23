@@ -1731,14 +1731,30 @@ fn module_gated_files_builtin(name: &str) -> bool {
     )
 }
 
-/// A zsh/files name while the module is not loaded: C has no such entry in
-/// `builtintab` then, so the name runs from PATH like any external.
+/// A zsh/files name while the module is not loaded, or loaded with that
+/// builtin's feature off: C has no such entry in `builtintab` then, so the
+/// name runs from PATH like any external.
+///
+/// c:Src/module.c:524 — a disabled `b:` feature clears `BINF_ADDED` and
+/// `deletebuiltin` takes the node out of `builtintab`. `zmodload -F zsh/files
+/// b:zf_ln` (a common rc line) therefore leaves `mv` as `/bin/mv`; zshrs kept
+/// it a builtin, so a bare `mv -v a b` failed with "bad option: -v". The set
+/// is maintained by `module::setfeatureenables`.
 fn files_builtin_runs_from_path(name: &str) -> bool {
-    module_gated_files_builtin(name)
-        && !crate::ported::module::MODULESTAB
-            .lock()
-            .map(|t| t.is_loaded("zsh/files"))
-            .unwrap_or(false)
+    if !module_gated_files_builtin(name) {
+        return false;
+    }
+    let loaded = crate::ported::module::MODULESTAB
+        .lock()
+        .map(|t| t.is_loaded("zsh/files"))
+        .unwrap_or(false);
+    if !loaded {
+        return true;
+    }
+    crate::ported::module::DISABLED_MODULE_BUILTINS
+        .lock()
+        .map(|s| s.contains(name))
+        .unwrap_or(false)
 }
 
 /// Whether NAME is a module-provided builtin whose module is not loaded, so

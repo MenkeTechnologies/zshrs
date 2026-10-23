@@ -17512,3 +17512,23 @@ print -r -- "<${S}> $((f())) <${S[@]}>""#;
     assert_eq!(rc, 0, "stderr: {err}");
     assert_eq!(out, "w=2 n=2\nw=2 n=2\nw=2 n=2\n<a b> 1 <a b>\n", "stderr: {err}");
 }
+
+/// c:Src/module.c:524 — a `b:` feature left off by `zmodload -F` is not in
+/// `builtintab`, so the name is the PATH command. `zmodload -F zsh/files
+/// b:zf_ln` used to leave every other zsh/files builtin callable: a bare
+/// `mv -v a b` ran the builtin ("bad option: -v") where zsh runs /bin/mv.
+#[test]
+fn zmodload_feature_subset_leaves_the_other_files_builtins_external() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let code = format!(
+        "cd {} || exit 9
+zmodload -F zsh/files b:zf_ln
+: > a; mv -v a b >/dev/null; print -r -- rc=$? ${{+builtins[mv]}}
+zmodload -F zsh/files +b:mv
+: > c; mv -v c d 2>/dev/null; print -r -- rc=$? ${{+builtins[mv]}}",
+        dir.path().display()
+    );
+    let (rc, out, err) = run_zshrs_with_args(&["-f", "-c", &code]);
+    assert_eq!(rc, 0, "stderr: {err}");
+    assert_eq!(out, "rc=0 0\nrc=1 1\n", "stderr: {err}");
+}
