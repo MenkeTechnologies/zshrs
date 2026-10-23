@@ -17551,3 +17551,68 @@ setopt posixbuiltins
     assert_eq!(rc, 0, "stderr: {err}");
     assert_eq!(out, "rc=0\nrc=1\n", "stderr: {err}");
 }
+
+/// c:Src/module.c:521 — `zmodload -F MOD -b:NAME` deletes NAME from
+/// `builtintab` while MOD stays loaded, so a bare NAME is a PATH miss (127),
+/// `builtin NAME` is "no such builtin" (1) and `$builtins` drops it; `+b:`
+/// brings it back. zshrs ran bin_strftime through all three.
+#[test]
+fn disabled_module_builtin_feature_leaves_builtintab() {
+    let code = "zmodload zsh/datetime
+zmodload -F zsh/datetime -b:strftime
+strftime %Y 0 2>/dev/null; print -r -- rc=$? ${+builtins[strftime]}
+builtin strftime %Y 0 2>/dev/null; print -r -- rc=$?
+zmodload -F zsh/datetime +b:strftime
+strftime -s y %Y 86400; print -r -- rc=$? $y";
+    let (rc, out, err) = run_zshrs_with_args(&["-f", "-c", code]);
+    assert_eq!(rc, 0, "stderr: {err}");
+    assert_eq!(out, "rc=127 0\nrc=1\nrc=0 1970\n", "stderr: {err}");
+    assert!(err.contains("no such builtin: strftime"), "stderr: {err}");
+}
+
+/// A module first loaded WITH the feature off (`zmodload -F zsh/datetime
+/// -b:strftime`) never adds the builtin: C's setbuiltins skips a node that
+/// was never BINF_ADDED (c:Src/module.c:518-519), but it is just as absent
+/// from builtintab.
+#[test]
+fn module_loaded_with_builtin_feature_off_never_adds_it() {
+    let (rc, out, err) = run_zshrs_with_args(&[
+        "-f",
+        "-c",
+        "zmodload -F zsh/datetime -b:strftime; strftime %Y 0 2>/dev/null; print -r -- rc=$?; whence -w strftime; print -r -- w=$?",
+    ]);
+    assert_eq!(rc, 0, "stderr: {err}");
+    assert_eq!(out, "rc=127\nstrftime: none\nw=1\n", "stderr: {err}");
+}
+
+/// An autoload builtin (zsh/zutil's `zformat`, Src/init.c:1708) switched off
+/// with `-b:` must not demand-load itself back on the next call: the delete
+/// removed the stub node, so there is nothing for resolvebuiltin
+/// (c:Src/exec.c:2700) to fire. zshrs's ledger kept the stub and the second
+/// call re-enabled the feature.
+#[test]
+fn disabled_autoload_builtin_does_not_reload_itself() {
+    let code = "zmodload zsh/zutil
+zmodload -F zsh/zutil -b:zformat
+zformat -f x %a a:1 2>/dev/null; print -r -- rc=$?
+zformat -f x %a a:1 2>/dev/null; print -r -- rc=$?
+zmodload -F zsh/zutil +b:zformat
+zformat -f x %a a:1; print -r -- rc=$? $x";
+    let (rc, out, err) = run_zshrs_with_args(&["-f", "-c", code]);
+    assert_eq!(rc, 0, "stderr: {err}");
+    assert_eq!(out, "rc=127\nrc=127\nrc=0 1\n", "stderr: {err}");
+}
+
+/// c:Src/module.c:1169-1190 setparamdefs — a `p:` feature turned off on a
+/// loaded zsh/datetime removes that special only; the sibling stays bound.
+#[test]
+fn disabled_datetime_param_feature_unsets_only_that_special() {
+    let code = "zmodload zsh/datetime
+zmodload -F zsh/datetime -p:EPOCHSECONDS -p:epochtime
+print -r -- ${+EPOCHSECONDS} ${+epochtime} ${+EPOCHREALTIME} ${EPOCHSECONDS:-unset}
+zmodload -F zsh/datetime +p:EPOCHSECONDS +p:epochtime
+print -r -- ${+EPOCHSECONDS} ${#epochtime}";
+    let (rc, out, err) = run_zshrs_with_args(&["-f", "-c", code]);
+    assert_eq!(rc, 0, "stderr: {err}");
+    assert_eq!(out, "0 0 1 unset\n1 2\n", "stderr: {err}");
+}

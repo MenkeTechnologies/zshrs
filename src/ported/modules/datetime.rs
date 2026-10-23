@@ -465,7 +465,7 @@ static BINTAB: Lazy<Mutex<Vec<crate::ported::zsh_h::builtin>>> = Lazy::new(|| {
 // `SPECIALPMDEF` (Src/zsh.h) folds PM_SPECIAL|PM_HIDE|PM_HIDEVAL into the
 // declared flags. `pm != NULL` is C's per-parameter enable bit
 // (`setparamdefs`, c:Src/module.c:1169-1190 / `getfeatureenables`, c:3337).
-static PATAB: Lazy<Mutex<Vec<crate::ported::zsh_h::paramdef>>> = Lazy::new(|| {
+pub(crate) static PATAB: Lazy<Mutex<Vec<crate::ported::zsh_h::paramdef>>> = Lazy::new(|| {
     use crate::ported::zsh_h::{
         PM_ARRAY, PM_FFLOAT, PM_HIDE, PM_HIDEVAL, PM_INTEGER, PM_READONLY, PM_SPECIAL,
     };

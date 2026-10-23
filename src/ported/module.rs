@@ -530,23 +530,29 @@ pub(crate) fn setbuiltins(nam: &str, binl: &mut [crate::ported::zsh_h::builtin],
         let on = e
             .map(|a| a.get(n).copied().unwrap_or(0) != 0)
             .unwrap_or(false); // c:507
+        // The registry answers "is NAME absent from builtintab", which in C
+        // is also true of a builtin that was never added: a module loaded
+        // with `zmodload -F zsh/datetime -b:strftime` boots with strftime
+        // off, so its BINF_ADDED is clear and c:518-519 skips it, yet the
+        // name is not in builtintab. Record the off state before the
+        // BINF_ADDED skips so a never-added builtin is gated too.
         if on {
-            if (b.node.flags & BINF_ADDED as i32) != 0 {
-                continue; // c:508-509
-            }
             DISABLED_MODULE_BUILTINS
                 .lock()
                 .unwrap()
                 .remove(&b.node.nam); // c:511 addbuiltin(b)
+            if (b.node.flags & BINF_ADDED as i32) != 0 {
+                continue; // c:508-509
+            }
             b.node.flags |= BINF_ADDED as i32; // c:516
         } else {
-            if (b.node.flags & BINF_ADDED as i32) == 0 {
-                continue; // c:518-519
-            }
             DISABLED_MODULE_BUILTINS
                 .lock()
                 .unwrap()
                 .insert(b.node.nam.clone()); // c:521 deletebuiltin(b->node.nam)
+            if (b.node.flags & BINF_ADDED as i32) == 0 {
+                continue; // c:518-519
+            }
             b.node.flags &= !(BINF_ADDED as i32); // c:526
         }
     }

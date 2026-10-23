@@ -19,6 +19,64 @@ CI green pending the underlying fix.
 
 ---
 
+## #1204 — bare `$epochtime` expands to one empty word — port-bug
+
+**Status:** `port-bug`, found 2026-10-23 while fixing #1203.
+
+```
+$ zsh   -fc 'zmodload zsh/datetime; a=($epochtime); print $#a "[$epochtime]"'   → 2 [1792762300 692555000]
+$ zshrs -fc 'zmodload zsh/datetime; a=($epochtime); print $#a "[$epochtime]"'   → 0 []                      ✗
+```
+
+`${epochtime[@]}`, `${#epochtime}` and `$epochtime[1]` are right; only the
+bare and double-quoted forms come back empty, so the manual's own idiom
+`for secs nsecs in $epochtime` (Doc/Zsh/mod_datetime.yo) runs zero times.
+c:Src/Modules/datetime.c:256 makes `epochtime` a PM_ARRAY special whose
+`getcurrenttime` getfn serves every read; the bare-name splice path does not
+reach `arrays_get`'s `epochtime` arm. Present before #1203.
+
+---
+
+## #1203 — a module feature turned off with `zmodload -F MOD -b:NAME` / `-p:NAME` stayed callable — fixed
+
+**Status:** `fixed` 2026-10-23.
+
+```
+$ zsh   -fc 'zmodload zsh/datetime; zmodload -F zsh/datetime -b:strftime; strftime %Y 0; print $?'   → command not found: strftime / 127
+$ zshrs -fc 'zmodload zsh/datetime; zmodload -F zsh/datetime -b:strftime; strftime %Y 0; print $?'   → 1969 / 0     ✗
+$ zsh   -fc 'zmodload zsh/datetime; zmodload -F zsh/datetime -p:EPOCHSECONDS; print ${EPOCHSECONDS:-unset}'   → unset
+$ zshrs -fc 'zmodload zsh/datetime; zmodload -F zsh/datetime -p:EPOCHSECONDS; print ${EPOCHSECONDS:-unset}'   → 1792761433     ✗
+```
+
+`setbuiltins` (c:Src/module.c:501-530) deletes a disabled builtin's node from
+`builtintab` while the module stays loaded, and `setparamdefs` (c:1169-1190)
+deletes a disabled special. zshrs recorded the builtin half in
+`DISABLED_MODULE_BUILTINS`, but only `whence` / `$builtins` read it:
+
+- dispatch only consulted it for zsh/files names, so `strftime`, `zstat`,
+  `zformat`, … still ran after `-b:`;
+- the extension-builtin check (the default-mode posture that exposes every
+  statically linked module builtin) answered `builtin` for the name anyway;
+- `builtin NAME` found it in the static table;
+- an autoload builtin (`zformat`, `zstyle`, Src/init.c:1708) kept its ledger
+  stub, so the next call ran `resolvebuiltin` (c:Src/exec.c:2700) and turned
+  the feature back on;
+- a module first loaded with the feature off (`zmodload -F zsh/datetime
+  -b:strftime`) never entered the set, because c:518-519 skips a node that was
+  never BINF_ADDED;
+- the datetime specials only checked that the module was loaded, never the
+  patab row's `pm`, and bare `${+epochtime}` was answered without any gate.
+
+**Fix.** `setbuiltins` records the off state before its BINF_ADDED skips; one
+predicate (`module_builtin_runs_from_path`) sends a disabled module builtin to
+the PATH search on every dispatch route; `is_extension_builtin`,
+`builtin_prefix_finds`, the `builtin NAME` arm and `resolvebuiltin` treat a
+disabled name as absent; `EPOCHSECONDS` / `EPOCHREALTIME` / `epochtime` are
+bound only while their own `p:` feature is on. V04features.ztst "Enabling and
+disabling of builtins as features" now passes.
+
+---
+
 ## #1202 — bare `wait` drained `waitpid(-1)` and `wait` stopped at a trapped signal — fixed
 
 **Symptom.** CI's ubuntu `Test` job once hung in `prompt_returns_after_command`

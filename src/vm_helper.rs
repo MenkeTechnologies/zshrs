@@ -9660,6 +9660,27 @@ thread_local! {
 static MATERIALIZED_MODULE_PARAMS: std::sync::OnceLock<Mutex<HashSet<String>>> =
     std::sync::OnceLock::new();
 
+/// Whether a zsh/datetime special (`EPOCHSECONDS`, `EPOCHREALTIME`,
+/// `epochtime`) is bound right now: the module is loaded AND that name's
+/// `p:` feature is on.
+///
+/// !!! RUST-ONLY !!! C answers this with the paramtab node itself:
+/// `setparamdefs` (c:Src/module.c:1169-1190) adds the special when the
+/// feature is enabled and deletes it when disabled, recording the state in
+/// the patab row's `pm`. zshrs's datetime getters are hard-wired, so they
+/// consult that `pm` here; `zmodload -F zsh/datetime -p:EPOCHSECONDS`
+/// leaves the name unset as in zsh.
+pub fn datetime_param_bound(name: &str) -> bool {
+    crate::ported::module::MODULESTAB
+        .lock()
+        .map(|t| t.is_loaded("zsh/datetime"))
+        .unwrap_or(false)
+        && crate::ported::modules::datetime::PATAB
+            .lock()
+            .map(|t| t.iter().any(|d| d.name == name && d.pm.is_some()))
+            .unwrap_or(false)
+}
+
 /// Record that `name` was read/written, so `$parameters` stops reporting it
 /// as an unmaterialized autoload stub. See [`MATERIALIZED_MODULE_PARAMS`].
 pub fn mark_module_param_used(name: &str) {

@@ -1159,6 +1159,18 @@ pub fn getfpfunc(
 /// ledger grows flags.
 pub fn resolvebuiltin(name: &str) -> Option<i32> {
     // c:2700
+    // c:Src/module.c:521 — a `zmodload -F MOD -b:NAME` deletes the node
+    // from builtintab, stub or not, so execcmd finds no `hn` to resolve and
+    // NAME goes to the PATH search. zshrs's ledger keeps the autoload entry
+    // across that delete; without this, a disabled `zformat` re-enabled
+    // itself on the next call.
+    if crate::ported::module::DISABLED_MODULE_BUILTINS
+        .lock()
+        .map(|s| s.contains(name))
+        .unwrap_or(false)
+    {
+        return None;
+    }
     let mut tab = crate::ported::module::MODULESTAB.lock().ok()?;
     // c:2705 — `if (!((Builtin) hn)->handlerfunc)`: ledger hit IS the
     // "no handlerfunc" stub in zshrs.

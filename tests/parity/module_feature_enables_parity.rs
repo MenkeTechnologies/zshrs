@@ -473,3 +473,29 @@ fn math_functions_resolve_through_the_mathfuncs_table() {
          print -r -- \"rc=$?\"",
     );
 }
+
+/// The enable bit has to reach dispatch, not only the `-lF` listing:
+/// `setbuiltins` / `setparamdefs` (c:Src/module.c:501-530, :1169-1190) delete
+/// the node, so a disabled builtin is a PATH miss, `builtin NAME` cannot find
+/// it, an autoload stub does not fire again, and a disabled special is unset.
+/// V04features.ztst "Enabling and disabling of builtins as features".
+#[test]
+fn disabled_feature_is_gone_from_dispatch_and_lookup() {
+    assert_feature_parity(
+        "print ${builtins[strftime]:-undefined}; zmodload -F zsh/datetime b:strftime; \
+         print ${builtins[strftime]:-undefined}; zmodload -F zsh/datetime -b:strftime; \
+         print ${builtins[strftime]:-undefined}; strftime %Y 0 2>/dev/null; print rc=$?",
+    );
+    assert_feature_parity(
+        "zmodload zsh/datetime; zmodload -F zsh/datetime -b:strftime; \
+         builtin strftime %Y 0 2>&1; print rc=$?; whence -w strftime",
+    );
+    assert_feature_parity(
+        "zmodload zsh/zutil; zmodload -F zsh/zutil -b:zformat; \
+         zformat -f x %a a:1 2>/dev/null; print rc=$?; zformat -f x %a a:1 2>/dev/null; print rc=$?",
+    );
+    assert_feature_parity(
+        "zmodload zsh/datetime; zmodload -F zsh/datetime -p:EPOCHSECONDS -p:epochtime; \
+         print ${+EPOCHSECONDS} ${+epochtime} ${+EPOCHREALTIME}",
+    );
+}

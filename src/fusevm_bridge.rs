@@ -1288,10 +1288,16 @@ pub(crate) fn builtin_prefix_finds(name: &str) -> bool {
     if crate::daemon::builtins::is_zshrs_builtin(name) {
         return true;
     }
+    // c:Src/module.c:521 — a builtin whose module feature is off was
+    // deleted from builtintab, so `builtin NAME` cannot find it either.
     let disabled = crate::ported::builtin::BUILTINS_DISABLED
         .lock()
         .map(|s| s.contains(name))
-        .unwrap_or(false);
+        .unwrap_or(false)
+        || crate::ported::module::DISABLED_MODULE_BUILTINS
+            .lock()
+            .map(|s| s.contains(name))
+            .unwrap_or(false);
     (crate::ported::builtin::createbuiltintable().contains_key(name) && !disabled)
         || is_registered_builtin(name)
 }
@@ -1647,7 +1653,7 @@ pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
     // ("invalid mode `+x'"), and `rm -s` / `mv -s` from the module's argument
     // parser instead of the system tool's. `dispatch_builtin` at :1087 already
     // gates unconditionally; this low-level `CallBuiltin` path did not.
-    if files_builtin_runs_from_path(name) {
+    if module_builtin_runs_from_path(name) {
         // PATH lookup uses the LITERAL name: bare `mkdir` finds
         // /bin/mkdir; a `zf_*` alias finds nothing and exits 127 —
         // matching zsh -fc `zf_mkdir d` → "command not found:
@@ -1731,16 +1737,28 @@ fn module_gated_files_builtin(name: &str) -> bool {
     )
 }
 
-/// A zsh/files name while the module is not loaded, or loaded with that
-/// builtin's feature off: C has no such entry in `builtintab` then, so the
-/// name runs from PATH like any external.
+/// A module builtin whose `b:` feature is off (any module), or a zsh/files
+/// name while that module is not loaded: C has no such entry in
+/// `builtintab` then, so the name runs from PATH like any external.
+///
+/// c:Src/module.c:521 — `zmodload -F zsh/datetime -b:strftime` deletes the
+/// node while the module stays loaded, so a bare `strftime` is
+/// `command not found` (V04features.ztst "Enabling and disabling of
+/// builtins as features"); zshrs still ran bin_strftime.
 ///
 /// c:Src/module.c:524 — a disabled `b:` feature clears `BINF_ADDED` and
 /// `deletebuiltin` takes the node out of `builtintab`. `zmodload -F zsh/files
 /// b:zf_ln` (a common rc line) therefore leaves `mv` as `/bin/mv`; zshrs kept
 /// it a builtin, so a bare `mv -v a b` failed with "bad option: -v". The set
 /// is maintained by `module::setfeatureenables`.
-fn files_builtin_runs_from_path(name: &str) -> bool {
+fn module_builtin_runs_from_path(name: &str) -> bool {
+    if crate::ported::module::DISABLED_MODULE_BUILTINS
+        .lock()
+        .map(|s| s.contains(name))
+        .unwrap_or(false)
+    {
+        return true;
+    }
     if !module_gated_files_builtin(name) {
         return false;
     }
@@ -1765,7 +1783,7 @@ fn files_builtin_runs_from_path(name: &str) -> bool {
 /// !!! RUST-ONLY !!! The static `BUILTINS` table lists every module's bintab up
 /// front; C's `builtintab` only holds the loaded ones.
 pub(crate) fn builtin_awaits_module_load(name: &str) -> bool {
-    files_builtin_runs_from_path(name)
+    module_builtin_runs_from_path(name)
         || module_bound_builtin_module(name).is_some_and(|m| {
             !crate::ported::module::MODULESTAB
                 .lock()
@@ -2137,7 +2155,7 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
     //
     // A zsh/files name that runs from PATH (the arm below) is an external:
     // its glob failure ends the forked child, not the shell.
-    if files_builtin_runs_from_path(name) {
+    if module_builtin_runs_from_path(name) {
         if let Some(status) = external_glob_failure_status() {
             return status;
         }
@@ -2282,7 +2300,7 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
     // etc.) in zsh; `type rm` reports `rm is /bin/rm`. The `zf_*`
     // aliases (`zf_rm`, `zf_chmod`, …) are bound by the same module
     // and gated the same way. Bug #28 in docs/BUGS.md.
-    if files_builtin_runs_from_path(name) {
+    if module_builtin_runs_from_path(name) {
         // PATH lookup uses the literal name. In --zsh parity mode
         // `zf_rm` must 127 like zsh -fc (no /bin/zf_rm); default
         // zshrs mode keeps the convenience zf_-strip so the alias
@@ -3440,10 +3458,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // c:Src/exec.c:3489-3499 — `builtintab->getnode` skips DISABLED
         // entries, so `disable typeset; builtin typeset x=1` is "no such
         // builtin: typeset" with status 1, like a name that was never a builtin.
+        // c:Src/module.c:521 — likewise a module builtin whose feature is
+        // off (`zmodload -F MOD -b:NAME`) has left builtintab.
         let disabled = crate::ported::builtin::BUILTINS_DISABLED
             .lock()
             .map(|s| s.contains(name.as_str()))
-            .unwrap_or(false);
+            .unwrap_or(false)
+            || crate::ported::module::DISABLED_MODULE_BUILTINS
+                .lock()
+                .map(|s| s.contains(name.as_str()))
+                .unwrap_or(false);
         if !tab.contains_key(name.as_str()) || disabled {
             // zshrs-original opcode builtins (async, doctor, peach, …) aren't
             // in builtintab; `builtin NAME` must still reach them.
@@ -8734,7 +8758,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // c:Src/Modules/datetime.c:256 — `epochtime` PM_ARRAY|
                 // PM_READONLY backed by getcurrenttime(). Same parallel
                 // arrangement as the FUNCSTACK-backed specials below.
-                if name == "epochtime" {
+                if name == "epochtime" && crate::vm_helper::datetime_param_bound(&name) {
                     // c:Src/params.c:589-594 getparamnode → c:563-585 loadparamnode —
                     // the `[@]` splat resolves the NAME, clearing PM_AUTOLOAD so
                     // paramtypestr (c:Src/Modules/parameter.c:48-50) reports the real
@@ -14246,7 +14270,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // *nomatch; print after` prints `after`).
             if let Some(name) = args.first() {
                 let is_external = !with_executor(|exec| exec.function_exists(name))
-                    && (files_builtin_runs_from_path(name)
+                    && (module_builtin_runs_from_path(name)
                         || !crate::ported::builtin::createbuiltintable().contains_key(name.as_str()));
                 if is_external {
                     if let Some(status) = external_glob_failure_status() {

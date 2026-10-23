@@ -11796,7 +11796,16 @@ pub fn extension_builtin_defs() -> impl Iterator<Item = &'static crate::ported::
 ///  * commands a cdylib registered through `znative load` / `zmodload -R`
 ///    (`extensions/plugin_host.rs`), which dispatch in-process by name.
 pub fn is_extension_builtin(name: &str) -> bool {
-    !is_undefined_contrib_function(name)
+    // c:Src/module.c:521 — a module builtin whose `b:` feature was turned
+    // off (`zmodload -F zsh/datetime -b:strftime`) has left builtintab, so
+    // the default-mode posture of exposing every statically linked module
+    // builtin must not bring it back.
+    let feature_off = crate::ported::module::DISABLED_MODULE_BUILTINS
+        .lock()
+        .map(|s| s.contains(name))
+        .unwrap_or(false);
+    !feature_off
+        && !is_undefined_contrib_function(name)
         && (fusevm::shell_builtins::is_builtin(name)
             || LOCAL_ONLY_BUILTINS.contains(&name)
             || crate::native_cmds::is_registered(name)

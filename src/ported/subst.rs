@@ -30135,10 +30135,9 @@ pub(crate) fn arrays_get(name: &str) -> Option<Vec<String>> {
     // backed by getcurrenttime() returning [tv_sec, tv_nsec] as
     // decimal strings. Without registration here `${epochtime[1]}`
     // / `${epochtime[@]}` returned empty. Bug #317 in
-    // docs/BUGS.md. Module-load gate is implicit: getcurrenttime
-    // is always linkable since the module is statically compiled
-    // in.
-    if !magic_shadowed && name == "epochtime" {
+    // docs/BUGS.md. Bound only while zsh/datetime is loaded with its
+    // `p:epochtime` feature on (c:Src/module.c:1169-1190 setparamdefs).
+    if !magic_shadowed && name == "epochtime" && crate::vm_helper::datetime_param_bound(name) {
         // c:Src/params.c:589-594 — resolving the name materializes the stub.
         crate::vm_helper::mark_module_param_used(name);
         return Some(crate::ported::modules::datetime::getcurrenttime());
@@ -30271,9 +30270,12 @@ fn arrays_contains(name: &str) -> bool {
     if !magic_shadowed
         && matches!(
             name,
-            "funcstack" | "funcfiletrace" | "funcsourcetrace" | "functrace" | "epochtime"
+            "funcstack" | "funcfiletrace" | "funcsourcetrace" | "functrace"
         )
     {
+        return true;
+    }
+    if !magic_shadowed && name == "epochtime" && crate::vm_helper::datetime_param_bound(name) {
         return true;
     }
     // c:Src/Modules/parameter.c:2239-2291 — every PM_ARRAY magic param
