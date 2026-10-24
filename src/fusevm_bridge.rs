@@ -11115,10 +11115,26 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         //
         // The name arrives as a compile-time constant (empty when the
         // command word is an expansion, which takes the save arm).
+        //
+        // A second constant `builtin` says the command word was the `builtin`
+        // precommand modifier and `name` is the word it resolves to: C's walk
+        // (c:Src/exec.c:3104-3187) makes `hn` that builtin, so `x=1 builtin :`
+        // persists `x` like `x=1 :` does.
+        let via_builtin = argc >= 2 && vm.pop().to_str() == "builtin";
         let name = if argc >= 1 {
             vm.pop().to_str()
         } else {
             String::new()
+        };
+        // !!! DROP-IN GATE (no C counterpart) !!! ksh93's `builtin NAME` only
+        // declares NAME, /bin/sh (bash 3.2) restores the assignment anyway, and
+        // dash has no `builtin`: all three keep `x` unset after `x=1 builtin :`.
+        let name = if via_builtin
+            && (crate::dash_mode::sh_mode() || crate::dash_mode::ksh93_mode() || crate::dash_mode::dash_faithful())
+        {
+            "builtin".to_string()
+        } else {
+            name
         };
         let mut frame = crate::vm_helper::InlineEnvFrame::new();
         // !!! bash EXCEPTION — bash(1), "POSIX Mode": "Assignment
@@ -11145,6 +11161,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // reference) leave it at 4. Only the builtin legs are shared.
             let is_shfunc = !crate::dash_mode::dash_strict()
                 && !crate::dash_mode::pdksh_family()
+                && !via_builtin // `builtin` never runs a function
                 && crate::ported::hashtable::shfunctab_lock()
                     .read()
                     .map(|t| t.get(&name).is_some())
@@ -11186,7 +11203,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // `do_save` decision above (compile_zsh.rs:2133-2137) — C resolves
         // `hn` at runtime from the expanded word and the bridge is handed a
         // constant.
-        frame.export = crate::ported::hashtable::shfunctab_lock()
+        frame.export = !via_builtin
+            && crate::ported::hashtable::shfunctab_lock()
             .read()
             .map(|t| t.get(&name).is_some())
             .unwrap_or(false); // c:4142-4143
