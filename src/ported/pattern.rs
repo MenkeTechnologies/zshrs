@@ -1498,6 +1498,91 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
                                        // patcomppiece sets `*flagp = P_HSTART` on every such arm, mirroring C
                                        // (c:1626/1629/1636/1640/1643). Used below to reject a stacked count.
     let mut last_piece_flags: i32 = 0;
+    // A ksh93 `{m,n}` prefix waiting for the group it counts.
+    let mut pending_count: Option<(i64, i64)> = None;
+    let ksh_count_active = crate::dash_mode::ksh93_mode() && isset(KSHGLOB);
+    // !!! WARNING: RUST-ONLY HELPER !!!
+    // Wraps the piece compiled at `last_piece_off` (the last thing in
+    // `patout`) in a P_COUNT node carrying `[min, max]` and relinks the
+    // branch chain; returns the P_COUNT node, the new chain tail. zshrs
+    // encodes P_COUNT with its operand inline rather than C's
+    // `patinsert(P_COUNTSTART, ...)` + P_BACK loop (c:1686), so the piece is
+    // cut out, the count node emitted, and the piece re-appended with its
+    // internal next-links shifted. Shared by zsh's postfix `(#cN,M)` and the
+    // ksh93 prefix `{N,M}(...)`.
+    let wrap_piece_in_count = |min: i64,
+                               max: i64,
+                               last_piece_off: i64,
+                               prev_chain_tail: i64,
+                               chain_start: &mut i64|
+     -> usize {
+        let piece_start = last_piece_off as usize;
+        // Snapshot preceding piece (everything emitted
+        // by the prior patcomppiece call).
+        let piece_bytes: Vec<u8> = {
+            let buf = patout.lock().unwrap();
+            buf[piece_start..].to_vec()
+        };
+        // Truncate to remove the piece.
+        {
+            let mut buf = patout.lock().unwrap();
+            buf.truncate(piece_start);
+        }
+        // Cut chain at prev_chain_tail (was pointing
+        // into the piece via set_next or as
+        // chain_start).
+        if prev_chain_tail >= 0 {
+            set_next(prev_chain_tail as usize, 0);
+        } else {
+            *chain_start = -1;
+        }
+        // Emit P_COUNT at current end.
+        let count_off = patnode(P_COUNT);
+        let operand_new_start: usize;
+        {
+            let mut buf = patout.lock().unwrap();
+            buf.extend_from_slice(&min.to_le_bytes());
+            buf.extend_from_slice(&max.to_le_bytes());
+            operand_new_start = buf.len();
+        }
+        // Relocate piece bytes: rewrite internal next
+        // links (absolute offsets >= piece_start) by
+        // delta = operand_new_start - piece_start.
+        let delta: i64 = operand_new_start as i64 - piece_start as i64;
+        let mut relocated = piece_bytes.clone();
+        let mut i = 0;
+        while i + I_BODY <= relocated.len() {
+            let op = relocated[i + I_OP];
+            if op == 0 {
+                i += 1;
+                continue;
+            }
+            let nxt = u32::from_le_bytes(
+                relocated[i + I_NEXT..i + I_NEXT + 4].try_into().unwrap(),
+            );
+            if nxt != 0 {
+                let new_nxt = (nxt as i64 + delta) as u32;
+                relocated[i + I_NEXT..i + I_NEXT + 4]
+                    .copy_from_slice(&new_nxt.to_le_bytes());
+            }
+            let next_i = advance_past_instr(&relocated, i);
+            if next_i == 0 || next_i <= i {
+                break;
+            }
+            i = next_i;
+        }
+        {
+            let mut buf = patout.lock().unwrap();
+            buf.extend_from_slice(&relocated);
+        }
+        // Hook P_COUNT into chain.
+        if *chain_start < 0 {
+            *chain_start = count_off as i64;
+        } else {
+            set_next(prev_chain_tail as usize, count_off);
+        }
+        count_off
+    };
     *flagp = P_PURESTR;
 
     // c:951-952 — snapshot the segment-special set so we can do
@@ -1570,6 +1655,19 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
             }
         }
         let bytes = snapshot.as_slice();
+        // !!! EMULATION-ONLY (no C counterpart) !!! ksh93's counted group
+        // `{n}(pat)` / `{m,n}(pat)` / `{m,}(pat)` / `{,n}(pat)` is a PREFIX
+        // count on the group that follows it (ksh93(1) "File Name
+        // Generation"). zsh has the same closure only as the postfix
+        // `(pat)(#cm,n)`, so the bounds are read here and the group the next
+        // patcomppiece compiles is wrapped in the same P_COUNT node.
+        if pending_count.is_none() && ksh_count_active {
+            if let Some((min, max, len)) = crate::ksh_pattern::ksh93_count_prefix(&bytes[off..], sp_inpar) {
+                patparse_off.store(off + len, Ordering::Relaxed);
+                pending_count = Some((min, max));
+                continue;
+            }
+        }
         // Mid-pattern `(#cN,M)` counted-repetition specifier — emit
         // P_COUNT with bounds + inline operand following. Detected
         // BEFORE the generic patgetglobflags path because `c` is not
@@ -1663,72 +1761,8 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
                         }
                     }
                     if last_piece_off >= 0 {
-                        let piece_start = last_piece_off as usize;
-                        // Snapshot preceding piece (everything emitted
-                        // by the prior patcomppiece call).
-                        let piece_bytes: Vec<u8> = {
-                            let buf = patout.lock().unwrap();
-                            buf[piece_start..].to_vec()
-                        };
-                        // Truncate to remove the piece.
-                        {
-                            let mut buf = patout.lock().unwrap();
-                            buf.truncate(piece_start);
-                        }
-                        // Cut chain at prev_chain_tail (was pointing
-                        // into the piece via set_next or as
-                        // chain_start).
-                        if prev_chain_tail >= 0 {
-                            set_next(prev_chain_tail as usize, 0);
-                        } else {
-                            chain_start = -1;
-                        }
-                        // Emit P_COUNT at current end.
-                        let count_off = patnode(P_COUNT);
-                        let operand_new_start: usize;
-                        {
-                            let mut buf = patout.lock().unwrap();
-                            buf.extend_from_slice(&min.to_le_bytes());
-                            buf.extend_from_slice(&max.to_le_bytes());
-                            operand_new_start = buf.len();
-                        }
-                        // Relocate piece bytes: rewrite internal next
-                        // links (absolute offsets >= piece_start) by
-                        // delta = operand_new_start - piece_start.
-                        let delta: i64 = operand_new_start as i64 - piece_start as i64;
-                        let mut relocated = piece_bytes.clone();
-                        let mut i = 0;
-                        while i + I_BODY <= relocated.len() {
-                            let op = relocated[i + I_OP];
-                            if op == 0 {
-                                i += 1;
-                                continue;
-                            }
-                            let nxt = u32::from_le_bytes(
-                                relocated[i + I_NEXT..i + I_NEXT + 4].try_into().unwrap(),
-                            );
-                            if nxt != 0 {
-                                let new_nxt = (nxt as i64 + delta) as u32;
-                                relocated[i + I_NEXT..i + I_NEXT + 4]
-                                    .copy_from_slice(&new_nxt.to_le_bytes());
-                            }
-                            let next_i = advance_past_instr(&relocated, i);
-                            if next_i == 0 || next_i <= i {
-                                break;
-                            }
-                            i = next_i;
-                        }
-                        {
-                            let mut buf = patout.lock().unwrap();
-                            buf.extend_from_slice(&relocated);
-                        }
-                        // Hook P_COUNT into chain.
-                        if chain_start < 0 {
-                            chain_start = count_off as i64;
-                        } else {
-                            set_next(prev_chain_tail as usize, count_off);
-                        }
-                        last_tail = count_off;
+                        last_tail =
+                            wrap_piece_in_count(min, max, last_piece_off, prev_chain_tail, &mut chain_start);
                         // Consumed — clear tracking. The resulting piece IS a
                         // closure (C: `*flagp = P_HSTART`, c:1636), so a second
                         // count stacked on it must be rejected.
@@ -1927,6 +1961,13 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
         prev_chain_tail = prev_tail_before_piece;
         last_piece_flags = piece_flags;
         *flagp &= piece_flags;
+        if let Some((min, max)) = pending_count.take() {
+            last_tail = wrap_piece_in_count(min, max, piece, prev_tail_before_piece, &mut chain_start);
+            last_piece_off = -1;
+            prev_chain_tail = -1;
+            last_piece_flags = P_HSTART;
+            *flagp &= !P_PURESTR;
+        }
     }
 
     if chain_start < 0 {

@@ -342,6 +342,9 @@ pub mod dash_mode;
 /// `ksh_long_double` submodule — ksh93's host long double in software (Rust-only).
 #[path = "extensions/ksh_long_double.rs"]
 pub mod ksh_long_double;
+/// `ksh_pattern` submodule — ksh93 pattern syntax without a zsh spelling (Rust-only).
+#[path = "extensions/ksh_pattern.rs"]
+pub mod ksh_pattern;
 /// `ksh_mathfunc` submodule — ksh93 math functions zsh/mathfunc lacks (Rust-only).
 #[path = "extensions/ksh_mathfunc.rs"]
 pub mod ksh_mathfunc;
