@@ -4026,6 +4026,89 @@ pub fn bash_leading_semicolon_error() -> bool {
     true
 }
 
+thread_local! {
+    /// Set by the parser's list loop (`parse_program_until`) on return: true
+    /// when the list it parsed opened with a `;` (not a newline) before its
+    /// first command. ksh93 parses that `;` as a command of its own (the
+    /// `showme` empty command, ksh93u+m parse.c `item()` `case ';'` under
+    /// `SH_SEMI`), so `{ ; }` is a non-empty group there. Read by
+    /// [`empty_list_rejected`].
+    ///
+    /// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+    pub static LIST_LED_BY_SEMI: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Which compound-list slot [`empty_list_rejected`] is checking.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum EmptyListSlot {
+    /// An `if` / `elif` / `while` / `until` condition.
+    Cond,
+    /// A `then` or `else` body.
+    IfBody,
+    /// A `do … done`, `{ … }` or `( … )` body (loops, groups, subshells,
+    /// function bodies).
+    Body,
+}
+
+/// zsh's `par_save_list` takes an empty list anywhere (`if then fi`, `{ }`,
+/// `while false; do done` all parse, c:Src/parse.c:1438/1450/1528), but in
+/// the POSIX grammar every compound_list holds at least one command, and the
+/// real shells reject the empty one as a syntax error before running anything
+/// on that line:
+///
+/// ```text
+///                              bash dash sh ksh93 mksh
+/// if then fi / if :; then fi     2    2   2   3     1
+/// if :; then :; else fi          2    2   2   3     1
+/// if then :; fi (empty cond)     2    2   2   3     0
+/// while false; do done / { }     2    2   2   3     0
+/// ( ) / f() { } / for … do done  2    2   2   3     0
+/// { ; } / if :; then ; fi        2    2   2   0     1
+/// ```
+///
+/// mksh's `thenpart()`/`elsepart()` are the only places it insists on a
+/// command (`if (t->left == NULL) syntaxerr(NULL)`); its loops, groups and
+/// conditions may be empty. ksh93's `sh_cmd(…, SH_NL|SH_SEMI)` bodies take a
+/// leading `;` as a command of its own (see [`LIST_LED_BY_SEMI`]); its
+/// conditions are parsed without `SH_SEMI`, so `if ; then` is still an error
+/// there. bash and mksh reject a leading `;` themselves
+/// ([`bash_leading_semicolon_error`]), dash in the parser's separator loop.
+///
+/// A condition that opens with a `;` (`if ; then`, `while ; false; do`) is
+/// an error in every one of them, mksh included (bash 2, dash 2, ksh93 3,
+/// mksh 1); zsh skips the separator. That reads [`LIST_LED_BY_SEMI`] for the
+/// list just parsed; `par_if`, which skips the separators after `if` itself,
+/// raises it for a `;` it skipped.
+///
+/// Returns true, with `tok` set to LEXERR (the YYERRORV shape the parser's
+/// construct arms use), when the emulated shell rejects the list in `slot`.
+/// `--zsh` and native zshrs never reject.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn empty_list_rejected(is_empty: bool, slot: EmptyListSlot) -> bool {
+    if !(bash_mode() || posix_faithful()) {
+        return false;
+    }
+    let led_by_semi = LIST_LED_BY_SEMI.with(|c| c.get());
+    let rejected = if slot == EmptyListSlot::Cond && led_by_semi {
+        true
+    } else if !is_empty {
+        false
+    } else if pdksh_family() {
+        slot == EmptyListSlot::IfBody
+    } else if ksh93_mode() {
+        slot == EmptyListSlot::Cond || !led_by_semi
+    } else {
+        true
+    };
+    if rejected {
+        crate::ported::lex::set_tok(crate::ported::zsh_h::LEXERR);
+    }
+    rejected
+}
+
 // ---------------------------------------------------------------------------
 // dash `test` / `[` — a port of dash's src/bltin/test.c (`testcmd`, `oexpr`,
 // `aexpr`, `nexpr`, `primary`, `binop`, `filstat`, `t_lex`, `isoperand`).

@@ -2384,6 +2384,10 @@ fn par_if() -> Option<ZshCommand> {
             xtok_at_exit = ELSE;
             break;
         }
+        // A `;` straight after `if` / `elif`, which skip_separators drops; see
+        // dash_mode::empty_list_rejected.
+        let cond_led_by_semi =
+            tok() == SEPER && crate::ported::lex::LEX_ISNEWLIN.with(|c| c.get()) == 0;
         skip_separators(); // c:1430
                            // c:1432-1435 — only IF / ELIF may open an arm.
         if xtok != IF && xtok != ELIF {
@@ -2400,6 +2404,14 @@ fn par_if() -> Option<ZshCommand> {
         COND_LIST_DEPTH.with(|d| d.set(d.get() + 1));
         let cond = parse_program_until(Some(&[THEN]), false);
         COND_LIST_DEPTH.with(|d| d.set(d.get() - 1));
+        if cond_led_by_semi {
+            crate::dash_mode::LIST_LED_BY_SEMI.with(|c| c.set(true));
+        }
+        // !!! DROP-IN GATE (no C counterpart) !!! empty compound list: dash_mode::empty_list_rejected.
+        if tok() == THEN
+            && crate::dash_mode::empty_list_rejected(cond.lists.is_empty(), crate::dash_mode::EmptyListSlot::Cond) {
+            return None;
+        }
         set_incmdpos(true); // c:1438
                             // c:1440-1443 — `if (tok == ENDINPUT) { cmdpop();
                             // YYERRORV(oecused); }`. YYERRORV only sets LEXERR; the message
@@ -2418,6 +2430,10 @@ fn par_if() -> Option<ZshCommand> {
             // c:1448-1456 — classic `then … (fi|elif|else)`.
             zshlex(); // consume then
             let b = parse_program_until(Some(&[ELSE, ELIF, FI]), false);
+            // !!! DROP-IN GATE (no C counterpart) !!! empty compound list: dash_mode::empty_list_rejected.
+            if crate::dash_mode::empty_list_rejected(b.lists.is_empty(), crate::dash_mode::EmptyListSlot::IfBody) {
+                return None;
+            }
             set_incmdpos(true);
             b
         } else if tok() == INBRACE_TOK {
@@ -2510,6 +2526,10 @@ fn par_if() -> Option<ZshCommand> {
         } else {
             // c:1498-1502 — then-form else, stops at and consumes `fi`.
             let b = parse_program_until(Some(&[FI]), false);
+            // !!! DROP-IN GATE (no C counterpart) !!! empty compound list: dash_mode::empty_list_rejected.
+            if crate::dash_mode::empty_list_rejected(b.lists.is_empty(), crate::dash_mode::EmptyListSlot::IfBody) {
+                return None;
+            }
             if tok() != FI {
                 set_tok(LEXERR); // c:1503 YYERRORV(oecused)
                 return None;
@@ -2564,6 +2584,10 @@ fn par_while(until: bool) -> Option<ZshCommand> {
     COND_LIST_DEPTH.with(|d| d.set(d.get() + 1));
     let cond = Box::new(parse_program_until(Some(&[DOLOOP]), false));
     COND_LIST_DEPTH.with(|d| d.set(d.get() - 1));
+    // !!! DROP-IN GATE (no C counterpart) !!! empty compound list: dash_mode::empty_list_rejected.
+    if tok() == DOLOOP && crate::dash_mode::empty_list_rejected(cond.lists.is_empty(), crate::dash_mode::EmptyListSlot::Cond) {
+        return None;
+    }
 
     skip_separators();
     let body = parse_loop_body(false, false)?;
@@ -2649,6 +2673,10 @@ fn par_subsh(zsh_construct: bool) -> Option<ZshCommand> {
               // the construct ends. Pass OUTPAR_TOK so parse_program_until
               // stops cleanly at the closing paren.
     let prog = parse_program_until(Some(&[OUTPAR_TOK]), false);
+    // !!! DROP-IN GATE (no C counterpart) !!! empty compound list: dash_mode::empty_list_rejected.
+    if crate::dash_mode::empty_list_rejected(prog.lists.is_empty(), crate::dash_mode::EmptyListSlot::Body) {
+        return None;
+    }
     // c:1630-1631 — `if (tok != ((otok == INPAR) ? OUTPAR : OUTBRACE))
     // YYERRORV(oecused);`. This arm is only reached from par_cmd's
     // INPAR_TOK case (c:1010-1014), so the expected closer is OUTPAR.
@@ -2874,6 +2902,10 @@ fn par_funcdef() -> Option<ZshCommand> {
         // Explicit end-token keeps the inner parse from hitting the
         // top-level stray-`}` arm (#168). Bug #167 family.
         let body = parse_program_until(Some(&[OUTBRACE_TOK]), false);
+        // !!! DROP-IN GATE (no C counterpart) !!! empty compound list: dash_mode::empty_list_rejected.
+        if crate::dash_mode::empty_list_rejected(body.lists.is_empty(), crate::dash_mode::EmptyListSlot::Body) {
+            return None;
+        }
         // c:Src/parse.c:1733-1737 — `if (tok != OUTBRACE) { cmdpop();
         // ... YYERRORV(oecused); }`. Hard-error on missing close brace
         // so `function f { echo hi` doesn't silently register a half-
@@ -9253,6 +9285,8 @@ fn parse_program() -> ZshProgram {
 /// nested-body parses pass false (multi-list to EOF / end token).
 fn parse_program_until(end_tokens: Option<&[lextok]>, single_event: bool) -> ZshProgram {
     let mut lists = Vec::new();
+    // See dash_mode::LIST_LED_BY_SEMI: a `;` before the first command of this list.
+    let mut led_by_semi = false;
     // c:670-682 — par_event's `if (!r)` arm, shared by every way the event
     // can fail below: `tok = LEXERR;` then, unless an error is already
     // flagged (`yyerror(0)` only), `yyerror(1); herrflush(); errflag |=
@@ -9282,6 +9316,12 @@ fn parse_program_until(end_tokens: Option<&[lextok]>, single_event: bool) -> Zsh
     loop {
         // Skip separators
         while tok() == SEPER || tok() == NEWLIN {
+            if lists.is_empty()
+                && tok() == SEPER
+                && crate::ported::lex::LEX_ISNEWLIN.with(|c| c.get()) == 0
+            {
+                led_by_semi = true;
+            }
             // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash's grammar
             // takes one `;` after a command and none before it: a leading or
             // doubled `;` is `Syntax error: ";" unexpected`. Newlines may repeat.
@@ -9465,6 +9505,11 @@ fn parse_program_until(end_tokens: Option<&[lextok]>, single_event: bool) -> Zsh
                         // at OUTBRACE_TOK. Explicit end-token avoids
                         // the top-level stray-`}` arm. Bug #167/#168.
                         let body = parse_program_until(Some(&[OUTBRACE_TOK]), false);
+                        // !!! DROP-IN GATE (no C counterpart) !!! empty compound list: dash_mode::empty_list_rejected.
+                        if crate::dash_mode::empty_list_rejected(body.lists.is_empty(), crate::dash_mode::EmptyListSlot::Body) {
+                            event_error();
+                            break;
+                        }
                         // Bug #642 family: slice THROUGH pos() so the funcdef
                         // `}` is always inside the slice, then strip that
                         // single trailing brace (+ the `;`/`\n` separator
@@ -9636,6 +9681,7 @@ fn parse_program_until(end_tokens: Option<&[lextok]>, single_event: bool) -> Zsh
         }
     }
 
+    crate::dash_mode::LIST_LED_BY_SEMI.with(|c| c.set(led_by_semi));
     ZshProgram { lists }
 }
 
@@ -10123,6 +10169,10 @@ fn parse_loop_body(foreach_style: bool, is_repeat: bool) -> Option<ZshProgram> {
         // parse_program_until top-level orphan-DONE guard doesn't
         // mis-fire on the legitimate loop terminator.
         let body = parse_program_until(Some(&[DONE]), false);
+        // !!! DROP-IN GATE (no C counterpart) !!! empty compound list: dash_mode::empty_list_rejected.
+        if crate::dash_mode::empty_list_rejected(body.lists.is_empty(), crate::dash_mode::EmptyListSlot::Body) {
+            return None;
+        }
         // c:Src/parse.c:1182-1183 / :1535-1536 / :1597-1598 —
         // `if (tok != DONE) YYERRORV(oecused);`. zshrs previously
         // silently accepted EOF as a substitute for `done`, so
@@ -10143,6 +10193,10 @@ fn parse_loop_body(foreach_style: bool, is_repeat: bool) -> Option<ZshProgram> {
     } else if tok() == INBRACE_TOK {
         zshlex();
         let body = parse_program_until(Some(&[OUTBRACE_TOK]), false);
+        // !!! DROP-IN GATE (no C counterpart) !!! empty compound list: dash_mode::empty_list_rejected.
+        if crate::dash_mode::empty_list_rejected(body.lists.is_empty(), crate::dash_mode::EmptyListSlot::Body) {
+            return None;
+        }
         // c:Src/parse.c:1186 / :1539 — `if (tok != OUTBRACE) YYERRORV`.
         if tok() != OUTBRACE_TOK {
             set_tok(LEXERR); // c:87 YYERRORV(oecused) — no own message
@@ -10388,6 +10442,10 @@ fn parse_cursh(zsh_construct: bool) -> Option<ZshCommand> {
               // end_tokens.is_none()` arm (which errors on stray `}` per bug
               // #168). Bug #167 in docs/BUGS.md.
     let prog = parse_program_until(Some(&[OUTBRACE_TOK]), false);
+    // !!! DROP-IN GATE (no C counterpart) !!! empty compound list: dash_mode::empty_list_rejected.
+    if crate::dash_mode::empty_list_rejected(prog.lists.is_empty(), crate::dash_mode::EmptyListSlot::Body) {
+        return None;
+    }
 
     // c:Src/parse.c:par_subsh — `{ … }` requires a matching `}`.
     // C errors via YYERRORV when the body parse returns without
@@ -10504,6 +10562,10 @@ fn parse_inline_funcdef(names: Vec<String>) -> Option<ZshCommand> {
         // Explicit end-token keeps the inner parse from hitting the
         // top-level stray-`}` arm (#168). Bug #167 family.
         let body = parse_program_until(Some(&[OUTBRACE_TOK]), false);
+        // !!! DROP-IN GATE (no C counterpart) !!! empty compound list: dash_mode::empty_list_rejected.
+        if crate::dash_mode::empty_list_rejected(body.lists.is_empty(), crate::dash_mode::EmptyListSlot::Body) {
+            return None;
+        }
         // c:Src/parse.c:1733-1737 — `if (tok != OUTBRACE) { cmdpop();
         // lineno += oldlineno; ecnpats = onp; ecssub = oecssub;
         // YYERRORV(oecused); }`. Without this gate, `f() { echo hi`
