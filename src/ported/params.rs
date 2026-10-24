@@ -16495,7 +16495,7 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
         }
     }
     // !!! POSIX-FAITHFUL GATE (no C counterpart) !!! the plain `set` listing of a scalar:
-    // dash quotes every value (`X='1'`, a quote inside as `'"'"'`), bash prints an empty
+    // dash quotes every value (`X='1'`, a quote run inside as `'"''"'`), bash prints an empty
     // value bare (`X=`), ksh93 writes a value holding a quote as `$'it\'s'`.
     if (printflags & (PRINT_TYPESET | PRINT_POSIX_EXPORT | PRINT_POSIX_READONLY | crate::ported::zsh_h::PRINT_LINE)) == 0
         && PM_TYPE(hn.node.flags as u32) == PM_SCALAR
@@ -16503,7 +16503,11 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
     {
         let val = hn.u_str.clone().unwrap_or_default();
         if crate::dash_mode::dash_faithful() {
-            println!("{}='{}'", hn.node.nam, val.replace('\'', "'\"'\"'"));
+            println!(
+                "{}={}",
+                hn.node.nam,
+                crate::extensions::emulation_output::dash_single_quote(&val)
+            );
             return;
         }
         if crate::dash_mode::bash_mode() && val.is_empty() {
@@ -16531,13 +16535,18 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
         }
         // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash lists a declared
         // but unset name bare (`export NAME`) and escapes a quote inside the
-        // value as `'"'"'` (var.c `single_quote`), not the alias form `'\''`.
+        // value the way var.c `single_quote` does (a quote run in one `"…"`, no
+        // trailing `''`), not the alias form `'\''`.
         if crate::dash_mode::dash_faithful() {
             if (f & PM_UNSET) != 0 {
                 println!("{kw} {}", hn.node.nam);
             } else {
                 let val = hn.u_str.clone().unwrap_or_default();
-                println!("{kw} {}='{}'", hn.node.nam, val.replace('\'', "'\"'\"'"));
+                println!(
+                    "{kw} {}={}",
+                    hn.node.nam,
+                    crate::extensions::emulation_output::dash_single_quote(&val)
+                );
             }
             return;
         }
