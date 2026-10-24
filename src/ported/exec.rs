@@ -7609,7 +7609,7 @@ pub fn doshfunc(
     // put back as the frame is popped — before a function-scoped EXIT trap
     // runs, which ksh93 runs with the caller's `$0`.
     let ksh_keyword_argzero = (!isset(FUNCTIONARGZERO)
-        && crate::dash_mode::in_ksh93_keyword_function())
+        && crate::dash_mode::in_korn_keyword_function())
     .then(|| {
         let prev = crate::ported::utils::argzero();
         crate::ported::utils::set_argzero(Some(name.clone()));
@@ -7620,7 +7620,7 @@ pub fn doshfunc(
     // (`function f { echo $OPTIND; OPTIND=5; }; OPTIND=3; f; echo $OPTIND` →
     // `1`, `3`); a POSIX `name()` body shares the caller's. The POSIX_BUILTINS
     // the Korn drop-in sets skips zsh's own save/reset above.
-    let korn_keyword_optind = crate::dash_mode::in_ksh93_keyword_function().then(|| {
+    let korn_keyword_optind = crate::dash_mode::in_korn_keyword_function().then(|| {
         let saved = (
             crate::ported::params::getsparam("OPTIND"),
             crate::ported::builtin::ZOPTIND.load(Ordering::Relaxed),

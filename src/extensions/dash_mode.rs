@@ -3325,6 +3325,16 @@ pub fn in_ksh93_keyword_function() -> bool {
     ksh93_mode() && innermost_function_is_keyword_spelled() == Some(true)
 }
 
+/// True while the innermost running shell function is a Korn-family (ksh93 or
+/// mksh / pdksh) `function name { … }` definition. Both give that spelling its
+/// own OPTIND (reset to 1, dropped on return) and set `$0` to the function's
+/// name: `mksh -c 'function f { echo $0; }; f'` prints `f`.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn in_korn_keyword_function() -> bool {
+    korn_mode() && innermost_function_is_keyword_spelled() == Some(true)
+}
+
 /// True while the innermost running shell function is a POSIX-spelled
 /// `name() { … }` definition under `--ksh`. ksh93 gives that spelling no
 /// local scope: `f() { typeset x=1; }; f; print $x` prints `1`, so `typeset`
