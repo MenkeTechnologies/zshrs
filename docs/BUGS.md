@@ -19,6 +19,27 @@ CI green pending the underlying fix.
 
 ---
 
+## #1207 — `bindkey` vanished after any `zle` call — fixed
+
+**Status:** `fixed` 2026-10-24.
+
+```
+$ zsh   -fc 'zle -l >/dev/null; bindkey x'   → "x" self-insert
+$ zshrs -fc 'zle -l >/dev/null; bindkey x'   → command not found: bindkey  ✗
+```
+
+Autoloading `zle` loads zsh/zle with only `b:zle` on. C's `setbuiltins`
+skips a feature that was never added (c:Src/module.c:519-520), so the other
+zsh/zle builtins keep their autoload stubs. zshrs marked every off `b:`
+feature as deleted (from 847960812a), which broke autopair's init.
+`setfeatureenables` now deletes only on an added-to-off transition, and
+`enables_module` deletes a never-added builtin only when no autoload stub holds
+its name, so `zmodload -F zsh/files b:zf_ln` still leaves `mv` external.
+Pinned by `bugs_md_regression::zle_autoload_keeps_bindkey_stub` and
+`bug636_autopair_pair_lookup_and_binding`.
+
+---
+
 ## #1206 — `[ -o \> -a ]` is "unknown condition: -o" — port-bug
 
 **Status:** `port-bug`, found 2026-10-24 running Test/C02cond.ztst under

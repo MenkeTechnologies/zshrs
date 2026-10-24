@@ -4426,7 +4426,8 @@ pub fn features_module(_table: &mut modulestab, name: &str, features: &mut Vec<S
 /// WARNING: param names don't match C — Rust=(_table, name, enables) vs C=(m, enables)
 pub fn enables_module(table: &mut modulestab, name: &str, enables: &mut Option<Vec<i32>>) -> i32 {
     // c:1901
-    match name {
+    let setting = enables.is_some();
+    let ret = match name {
         "zsh/attr" => crate::ported::modules::attr::enables_(std::ptr::null(), enables),
         "zsh/cap" => crate::ported::modules::cap::enables_(std::ptr::null(), enables),
         "zsh/clone" => crate::ported::modules::clone::enables_(std::ptr::null(), enables),
@@ -4492,7 +4493,30 @@ pub fn enables_module(table: &mut modulestab, name: &str, enables: &mut Option<V
             handlefeatures(name, &feats, enables) // c:3396
         }
         _ => 0,
+    };
+    // c:519-520 — setbuiltins skips a `b:` feature that was never added, so
+    // its name has a `builtintab` node only if an autoload stub put one there
+    // (`bindkey` after `zle` loaded zsh/zle). Without a stub the name is not a
+    // builtin at all: `zmodload -F zsh/files b:zf_ln` leaves `mv` external.
+    // setfeatureenables records only the added→off transition (c:521), so the
+    // never-added, stub-less names are recorded here, where the table is.
+    if setting && ret == 0 {
+        let mut feats: Vec<String> = Vec::new();
+        // The live bits, read back the way `zmodload -L` does (c:3163-3167).
+        let mut cur: Option<Vec<i32>> = None;
+        if features_module(table, name, &mut feats) == 0 && enables_module(table, name, &mut cur) == 0 {
+            let cur = cur.unwrap_or_default();
+            let mut disabled = DISABLED_MODULE_BUILTINS.lock().unwrap();
+            for (i, f) in feats.iter().enumerate() {
+                if let Some(b) = f.strip_prefix("b:") {
+                    if cur.get(i).copied().unwrap_or(0) == 0 && !table.autoload_builtins.contains_key(b) {
+                        disabled.insert(b.to_string());
+                    }
+                }
+            }
+        }
     }
+    ret
 }
 
 /// Port of `boot_module()` from `Src/module.c:1910`. — C decl `boot_module(Module m)`.
@@ -8057,11 +8081,16 @@ pub fn setfeatureenables(modname: &str, features: &[String], e: Option<&[i32]>) 
             let on = e
                 .map(|a| a.get(n).copied().unwrap_or(0) != 0)
                 .unwrap_or(false);
-            if on {
+            // c:519-520 — `if (!(b->node.flags & BINF_ADDED)) continue;`: only a
+            // feature that WAS on is deleted. One that was never added keeps
+            // whatever `builtintab` already holds for its name — an autoload
+            // stub, so loading zsh/zle for `zle` leaves `bindkey` autoloadable.
+            let was_on = if on {
                 set.insert(f.clone()); // c:515 `b->node.flags |= BINF_ADDED`
+                false
             } else {
-                set.remove(f); // c:524 `b->node.flags &= ~BINF_ADDED`
-            }
+                set.remove(f) // c:524 `b->node.flags &= ~BINF_ADDED`
+            };
             // c:3377 `setparamdefs` -> c:1060 `addparamdef` / c:1128
             // `deleteparamdef`: the `p:` block installs the real special Param
             // over the PM_AUTOLOAD stub, or removes it again. zshrs seeds every
@@ -8083,7 +8112,7 @@ pub fn setfeatureenables(modname: &str, features: &[String], e: Option<&[i32]>) 
             if let Some(bname) = f.strip_prefix("b:") {
                 if on {
                     builtin_on.push(bname.to_string());
-                } else {
+                } else if was_on {
                     builtin_off.push(bname.to_string());
                 }
             }

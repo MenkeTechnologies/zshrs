@@ -3037,3 +3037,16 @@ epochtime=(1 2)"#;
         )
     );
 }
+
+/// BUGS.md #1207 — autoloading one zsh/zle builtin left its siblings'
+/// autoload stubs in place in C (setbuiltins skips a never-added builtin,
+/// c:Src/module.c:519-520); zshrs dropped them, so `bindkey` after `zle`
+/// was "command not found" (autopair's init broke).
+#[test]
+fn zle_autoload_keeps_bindkey_stub() {
+    if zshrs_bin().is_none() {
+        return;
+    }
+    let (ec, out, err) = run_zshrs("f() { :; }; zle -N f; bindkey x f; bindkey x; whence -w vared");
+    assert_eq!((ec, out.as_str(), err.as_str()), (0, "\"x\" f\nvared: builtin\n", ""));
+}
