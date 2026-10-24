@@ -42,7 +42,10 @@ measurement section of `README.md` carries the current figures):
   its real reference shell, comparing stdout and exit status. Corpora: shared
   portable scripts, per-dialect hand-written corpora, generated operator grids,
   a cross-dialect data file (`tests/data/emulation_extra_cases.txt`) and a
-  dialect data file tagged per way (`tests/data/emulation_dialect_cases.txt`).
+  dialect data file tagged per way (`tests/data/emulation_dialect_cases.txt`),
+  plus `tests/data/emulation_mined_cases.txt` in the same format: rows found by
+  differential probing per way (POSIX builtins, redirections, quoting, here-docs,
+  bash/ksh/mksh builtins, the options each `emulate` mode flips).
   Ways run in parallel, scripts run in an empty scratch directory with a 30 s
   limit, and the run prints a per-way table naming the reference binary and
   release. The newest installed reference is preferred (bash 5.3, ksh93u+m).

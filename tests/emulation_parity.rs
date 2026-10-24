@@ -4345,10 +4345,16 @@ fn extra_corpus() -> &'static [String] {
 /// arrays, `${v//p/r}` / `${v:o:l}` / `${v^^}`, `[[ ]]`, `(( ))` / `let`, brace expansion,
 /// here-strings, process substitution, `printf -v`, `$'..'`, `typeset` / `declare`, `+=`.
 /// A script a shell does not have is left out of that shell's list, never edited.
+/// `tests/data/emulation_mined_cases.txt` has the same format: rows found by differential
+/// probing per way (POSIX builtins, redirections, quoting, bash/ksh/mksh builtins, the
+/// options each `emulate` mode flips), each measured identical on the ways it lists.
 fn dialect_corpus() -> &'static [(Vec<String>, String)] {
     static DIALECT: std::sync::OnceLock<Vec<(Vec<String>, String)>> = std::sync::OnceLock::new();
     DIALECT.get_or_init(|| {
-        include_str!("data/emulation_dialect_cases.txt")
+        concat!(
+            include_str!("data/emulation_dialect_cases.txt"),
+            include_str!("data/emulation_mined_cases.txt"),
+        )
             .lines()
             .filter_map(|l| {
                 let (ways, script) = l.split_once('\t')?;

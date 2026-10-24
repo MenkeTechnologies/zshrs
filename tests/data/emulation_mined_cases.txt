@@ -1,0 +1,1776 @@
+bash	declare -l x=AbC; declare -p x
+bash	declare -u x=abc; declare -p x
+bash	declare -i x=3; declare -p x
+bash	declare -r x=3; declare -p x
+bash	declare -x x=3; declare -p x
+bash	declare -a x=(1 2); declare -p x
+bash	declare -A x=([k]=v); declare -p x
+bash	declare -ilx x=3; declare -p x
+bash	x=1; declare -p x
+bash	declare x; declare -p x
+bash	declare -a x; declare -p x
+bash	declare -A x; declare -p x
+bash	declare -i x; declare -p x
+bash	declare -p nosuch; echo rc=$?
+bash	f() { declare -g G=1; }; f; echo $G
+bash	f() { declare L=1; }; f; echo "[${L-u}]"
+bash	f() { declare -g -i G=2+3; }; f; declare -p G
+bash	declare -n r=x; declare -p r
+bash	a=(x y); declare -n r=a; echo ${r[1]} ${#r[@]}
+bash	declare -n r=x; r=v; declare -p x
+bash	f() { declare -n ref=$1; ref=set; }; f out; echo $out
+bash	declare -u x; x=abc; x+=def; echo $x
+bash	declare -l x=ABC; declare +l x; x=DEF; echo $x
+bash	declare -i x=5; declare +i x; x=1+1; echo $x
+bash	declare -a a=(c b a); declare -p a
+bash	declare -ai a=(1+1 2*3); echo ${a[@]}
+bash	declare -Ai m=([a]=1+1); echo ${m[a]}
+bash	declare -i x=0x1f; echo $x
+bash	declare -x -r XR=1; declare -p XR
+bash	x=1; export x; declare -p x
+bash	readonly r=1; declare -p r
+bash	declare -i n=1; n=abc; echo $n
+bash	abc=7; declare -i n; n=abc; echo $n
+bash	a=([2]=x [5]=y); declare -p a
+bash	a=(x); a[3]=y; declare -p a
+bash	declare -A m=([b]=2 [a]=1); echo ${#m[@]}
+bash	a=(1 2 3); declare -p a | cat
+bash	declare -a a=('a b' "c'd" 'e"f'); declare -p a
+bash	x='a b'; declare -p x
+bash	x="it's"; declare -p x
+bash	x='$y`z\'; declare -p x
+bash	x='a"b'; declare -p x
+bash	declare -rx Q=1; export -p | grep ' Q='
+bash	printf '%(%Y-%m-%d)T\n' 0
+bash	TZ=UTC printf '%(%Y-%m-%d %H:%M:%S)T\n' 86400
+bash	TZ=UTC printf '%(%s|%j|%a %b)T\n' 1000000000
+bash	TZ=UTC printf '[%20(%F)T]\n' 0
+bash	TZ=UTC printf '[%-12(%F)T]\n' 0
+bash	declare -A m; printf -v 'm[k]' %d 42; declare -p m
+bash	printf -v x '%s,' a b c; echo "$x"
+bash	printf '%s %s\n' a b c
+bash	printf '%d\n' "'A" '"B'
+bash	printf '%5.2s|\n' abc
+bash	printf '%-5d|%+d|% d|%05d\n' 3 3 3 -3
+bash	printf '%x %X %o %#x %#o\n' 255 255 8 255 8
+bash	printf '%e %E %g %G\n' 12345.678 12345.678 0.0001 1e20
+bash	printf '%c%c\n' abc d
+bash	printf '%i\n' 010 0x10
+bash	printf '%d\n' abc; echo rc=$?
+bash	printf '%b\n' 'a\cb' ; echo x
+bash	printf '%*d|%-*d|\n' 4 1 4 2
+bash	printf '%.*f\n' 2 3.14159
+bash	printf 'é\n'
+bash	printf '%s\0%s' a b | od -An -c
+bash	printf -- '--%s\n' x
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%u\n' -1
+bash	printf '%5%|\n'
+bash	read -a a <<< '  a  b  c  '; declare -p a
+bash	IFS=: read -a a <<< 'a::b:'; declare -p a
+bash	IFS=: read x y <<< 'a:b:c:'; echo "[$x][$y]"
+bash	IFS=: read x y <<< 'a:b:'; echo "[$x][$y]"
+bash	IFS=' :' read x y z <<< 'a : b c'; echo "[$x][$y][$z]"
+bash	read -d , x <<< 'ab,cd'; echo "[$x] $?"
+bash	read -d '' x <<< 'ab'; echo "[$x] $?"
+bash	read -n 3 x <<< 'abcdef'; echo "[$x]"
+bash	read -N 3 x <<< $'a\nbcdef'; echo "[$x]"
+bash	read -n 3 x <<< $'a\nbcdef'; echo "[$x]"
+bash	read -r x <<< 'a\b'; echo "[$x]"
+bash	read x <<< 'a\b'; echo "[$x]"
+bash	printf 'a\\\nb\n' | { read x; echo "[$x]"; }
+bash	printf 'a\\\nb\n' | { read -r x; echo "[$x]"; }
+bash	IFS= read x <<< '  hi  '; echo "[$x]"
+bash	read x <<< '  hi  '; echo "[$x]"
+bash	read x y <<< 'a'; echo "[$x][${y-u}]"
+bash	printf 'abc' | { read x; echo "[$x] $?"; }
+bash	IFS=, read -r -a a <<< 'a,b,,c'; echo ${#a[@]}
+bash	IFS=$'\n' read -d '' -a a <<< $'l1\nl2\nl3'; declare -p a
+bash	printf 'a\nb\nc\nd\n' | { mapfile -t -n 2 a; declare -p a; }
+bash	printf 'a\nb\nc\nd\n' | { mapfile -t -s 1 -n 2 a; declare -p a; }
+bash	printf 'a\nb\n' | { mapfile a; declare -p a; }
+bash	printf 'a,b,c' | { mapfile -t -d , a; declare -p a; }
+bash	printf 'a,b,c,' | { mapfile -d , a; declare -p a; }
+bash	printf 'a\nb\n' | { readarray -t; declare -p MAPFILE; }
+bash	printf '' | { mapfile -t a; declare -p a; }
+bash	a=(x y z); printf 'q\n' | { mapfile -t a; declare -p a; }
+bash	printf 'a\nb\nc\n' | { mapfile -t -C 'echo cb' -c 1 a; declare -p a; }
+bash	printf 'a\n\nb\n' | { mapfile -t a; echo ${#a[@]}; }
+bash	mapfile -t a <<< $'x\ny'; declare -p a
+bash	x=$'a\tb'; echo "${x@Q}"
+bash	x="a'b"; echo "${x@Q}"
+bash	x='a\nb'; echo "${x@E}"
+bash	x='\t'; printf '[%s]' "${x@E}" | od -An -c
+bash	PS1x='\u'; x='a\$b'; echo "${x@P}"
+bash	x=1; echo "${x@A}"
+bash	declare -i x=1; echo "${x@A}"
+bash	a=(1 2); echo "${a[@]@A}"
+bash	a=(1 2); echo "${a@A}"
+bash	declare -r x=1; echo "${x@a}"
+bash	a=(1); echo "${a@a}"; declare -A m; m[x]=1; echo "${m@a}"
+bash	x=1; declare -n r=x; echo "${r@a}"
+bash	a=(ab cd); echo "${a[@]@U}"
+bash	a=(Ab Cd); echo "${a[@]@L}" "${a[@]@u}"
+bash	declare -A m=([a]=1 [b]=2); echo "${m[@]@K}"
+bash	declare -A m=([a]='x y'); echo "${m[@]@k}"
+bash	a=(x 'y z'); echo "${a[@]@K}"
+bash	a=(x 'y z'); echo "${a[@]@k}"
+bash	set -- a 'b c'; echo "${@@Q}"
+bash	unset x; echo "[${x@A}]"
+bash	ab1=1 ab2=2 abc=3; echo ${!ab*}
+bash	ab1=1; a=(1); for v in "${!ab@}"; do echo "<$v>"; done
+bash	echo "${!nosuch_prefix_zz*}|"
+bash	x=y; y=z; z=end; echo ${!x}; n=x; echo ${!n}
+bash	set -- p q r; n=2; echo ${!n}
+bash	f() { local n=1; echo ${!n}; }; f arg
+bash	[[ abc123 =~ ([a-z]+)([0-9]+) ]]; echo "${BASH_REMATCH[@]}" ${#BASH_REMATCH[@]}
+bash	[[ abc =~ x ]]; echo ${#BASH_REMATCH[@]}
+bash	[[ abc =~ (b)(x)? ]]; declare -p BASH_REMATCH
+bash	re='^(a|b)+$'; [[ abab =~ $re ]] && echo m ${BASH_REMATCH[1]}
+bash	[[ 'a b' =~ a\ b ]] && echo m
+bash	[[ aXb =~ a.b ]]; echo ${BASH_REMATCH}
+bash	shopt -s nocasematch; [[ ABC =~ ^abc$ ]] && echo ci
+bash	[[ abc =~ ^(a)(b)(c)$ ]]; echo ${BASH_REMATCH[3]}${BASH_REMATCH[2]}${BASH_REMATCH[1]}
+bash	shopt -s extglob; x=aaab; echo ${x##*(a)} ${x%%?(b)}
+bash	shopt -s extglob; case foo.c in *.@(c|h)) echo src;; esac
+bash	shopt -s extglob; [[ abab == *(ab) ]] && echo y
+bash	shopt -s extglob; x='  lead'; echo "[${x##+([[:space:]])}]"
+bash	shopt -s extglob; [[ '' == *(x) ]] && echo empty
+bash	shopt -s extglob; [[ foo == !(foo) ]] || echo no
+bash	shopt -s extglob; [[ foobar == !(foo)bar ]] && echo y || echo n
+bash	shopt -s extglob; x=a1b2; echo ${x//@([0-9])/#}
+bash	shopt -u extglob; shopt extglob
+bash	shopt -p extglob nullglob
+bash	shopt -q extglob nullglob; echo $?
+bash	shopt -s nocaseglob nullglob; shopt -p nocaseglob
+bash	set -o pipefail; false | true; echo $?
+bash	set -o pipefail; (exit 3) | (exit 4) | true; echo $?
+bash	set -o pipefail; true | (exit 2) | true; echo $?
+bash	set -o pipefail; ! false | true; echo $?
+bash	case ab in a*) echo 1;& b*) echo 2;; *) echo 3;; esac
+bash	case ab in a*) echo 1;;& *b) echo 2;;& x) echo 3;; *) echo 4;; esac
+bash	case x in x) echo 1;& y) echo 2;& z) echo 3;; esac
+bash	case x in y) echo 1;;& x) echo 2;& esac; echo end
+bash	f() { echo $FUNCNAME ${#FUNCNAME[@]}; g; }; g() { echo ${FUNCNAME[*]}; }; f
+bash	f() { g; }; g() { echo ${BASH_LINENO[@]}; }<NL>f
+bash	f() { caller 0 | cut -d' ' -f2; }; f
+bash	type -t nosuch_zz; echo rc=$?
+bash	f() { :; }; type f
+bash	command -v cd; command -v nosuch_zz; echo rc=$?
+bash	f() { :; }; command -v f; command -V f
+bash	command -V echo; command -V if
+bash	trap 'echo hi' EXIT; trap -p EXIT
+bash	trap 'echo a' INT; trap - INT; trap -p INT; echo end
+bash	trap '' TERM; trap -p TERM
+bash	trap "echo 'q'" USR1; trap -p USR1
+bash	f() { local -; set -o pipefail; false | true; echo $?; }; f; false | true; echo $?
+bash	f() { local -; set -u; }; f; echo "[$nosuch]"
+bash	f() { local x=1; local -p; }; f
+bash	f() { local -a a=(1 2); local -p a; }; f
+bash	f() { local -n r=$1; r=7; }; v=0; f v; echo $v
+bash	f() { local x; unset x; x=2; }; x=1; f; echo $x
+bash	f() { local x=in; unset x; echo "[${x-unset}]"; }; x=out; f
+bash	f() { local -x E=1; sh -c 'echo $E'; }; f; echo "[${E-u}]"
+bash	f() { declare -g x=g; local x=l; echo $x; }; f; echo $x
+bash	x=1; f() { local x=$x; echo $x; }; f
+bash	f() { local i; for i in 1 2; do :; done; echo $i; }; i=0; f; echo $i
+bash	printf '%s\n' $'\101\x42C\U00000044'
+bash	printf '%s\n' $'a\'b' $'a"b' $'\\'
+bash	printf '%s' $'\a\b\f\v\r' | od -An -tx1
+bash	printf '%s' $'\0abc' | od -An -c
+bash	printf '%s' $'\x4' | od -An -tx1
+bash	printf '%s\n' $'\1234'
+bash	printf '%s\n' "$'x'" '$y'
+bash	x=$'\n'; [[ $x == $'\n' ]] && echo nl
+bash	echo $'a\
+bash	b'
+bash	echo $"hello"
+bash	v=1; echo $"v=$v"
+bash	x=5; echo $(( x > 3 ? x : 0 ))
+bash	a=(3 1 2); IFS=$'\n' sorted=($(printf '%s\n' "${a[@]}" | sort)); echo ${sorted[@]}
+bash	{ echo a; echo b >&2; } 2>&1 | wc -l | tr -d ' '
+bash	echo hi |& cat
+bash	f() { echo out; echo err >&2; }; f |& wc -l | tr -d ' '
+bash	x=(a b c); echo ${x[@]: -1:1} ${x[-1]} ${x[*]:1}
+bash	a=(1 2 3); unset a[-1]; echo ${a[@]}
+bash	a=(1 2 3); a[-1]=9; echo ${a[@]}
+bash	declare -A m=([a]=1); m+=([b]=2); echo ${#m[@]}
+bash	a=(x); a[1]+=y; a[0]+=z; declare -p a
+bash	s=abc; echo ${s:1:-1} ${s: -2:-1}
+bash	s=abcdef; echo ${s:(-3)} ${s:2:100}
+bash	f(){ printf "<%s>" "$@"; echo; }; printf 'a\nb\nc\n' | { mapfile -C f -c 2 x; declare -p x; }
+bash	f(){ printf "<%s>" "$@" "${#x[@]}"; echo; }; printf 'a\nb\nc\nd\n' | { mapfile -t -s 1 -C f -c 2 x; declare -p x; }
+bash	f(){ printf "<%s>" "$@"; echo; }; printf "a b\n" | { mapfile -t -C f -c 1 -O 3 y; declare -p y; }
+bash	f(){ printf "<%s>" "$@"; echo; }; printf "it's\n" | { mapfile -t -C f -c 1 y; }
+bash	printf "x\n" | { mapfile -C echo -c 0 z; echo rc=$?; }
+bash	printf "a\nb\n" | { mapfile -C 'echo' z; echo rc=$?; }
+bash	shopt -s globstar; shopt -p globstar
+bash	shopt -s nocaseglob; shopt -p nocaseglob
+bash	shopt -s lastpipe; x=0; printf '1\n2\n' | while read l; do x=$l; done; echo $x
+bash	shopt -s xpg_echo; echo 'a\tb'
+bash	shopt -s expand_aliases; alias ll='echo LL'<NL>ll
+bash	shopt -s extglob<NL>f() { [[ $1 == +([0-9]) ]] && echo num || echo not; }<NL>f 123; f 12a
+bash	shopt -s extglob<NL>x=abc123; echo ${x%%+([0-9])}
+bash	shopt -s nocasematch; x=Hello; case $x in hello) echo m;; esac; [[ $x == h* ]] && echo g
+bash	shopt -s nocasematch; [[ ABC =~ b ]] && echo re
+bash	set -u; f() { echo "${1-d}"; }; f
+bash	set -u; a=(); echo "${a[@]}" end
+bash	set -e; f() { false; echo in; }; f || echo caught
+bash	set -e; false && true; echo survived
+bash	set -e; if false; then :; fi; echo ok
+bash	[[ -o pipefail ]]; echo $?; set -o pipefail; [[ -o pipefail ]]; echo $?
+bash	test -o errexit; echo $?
+bash	x=; [[ -v x ]]; echo $?; [[ -v nosuch ]]; echo $?
+bash	a=(1 2); [[ -v a[1] ]]; echo $?; [[ -v a[5] ]]; echo $?
+bash	declare -A m=([k]=v); [[ -v m[k] ]]; echo $?; [[ -v m ]]; echo $?
+bash	[[ 2 -gt 1+0 ]]; echo $?
+bash	x=3; [[ x -eq 3 ]]; echo $?
+bash	[[ abc < abd && b > a ]]; echo $?
+bash	[[ -n $(echo) ]]; echo $?
+bash	[[ a == "a" && $((1)) -eq 1 ]]; echo $?
+bash	f() { echo x; }; type -f echo
+bash	command -v [ test true
+bash	command echo -n hi; echo
+bash	command -- echo hi
+bash	f() { echo f; }; command f
+bash	getopts ab: o -a; echo $o $OPTIND
+bash	set -- -a -b x c; while getopts ab: o; do echo "$o ${OPTARG-u}"; done; echo $OPTIND
+bash	set -- -x; getopts :ab o; echo "$o $OPTARG"
+bash	set -- -b; getopts :b: o; echo "$o $OPTARG"
+bash,mksh	set -- -ab; getopts ab o; echo $o $OPTIND; getopts ab o; echo $o $OPTIND
+bash	getopts a o -- -a; echo $o $?
+bash	OPTIND=1; getopts "a" o x; echo $? $o
+bash	echo $(( 1 << 62 )) $(( -1 >> 1 ))
+bash	echo $(( 5 / -2 )) $(( -5 % 3 ))
+bash	x=5; (( x *= 2, x -= 1 )); echo $x
+bash	echo $(( 0 ? 1/0 : 2 ))
+bash	echo $(( 1 || 1/0 )) $(( 0 && 1/0 ))
+bash	a=(1 2 3); echo $(( a[1] + a[2] )) $(( ${#a[@]} * 2 ))
+bash	declare -A m=([x]=4); echo $(( m[x] * 2 ))
+bash	k=x; declare -A m=([x]=4); echo $(( m[$k] ))
+bash	echo $(( 10#09 ))
+bash	x='1 + 2'; echo $(( x * 3 ))
+bash	x=y; y=3; echo $(( x + 1 ))
+bash	echo $(( - - 1 )) $(( !!5 )) $(( ~5 ))
+bash	echo $(( 3 ** 0 )) $(( 0 ** 0 ))
+bash	echo $(( 7 & 3 | 8 ^ 1 ))
+bash	i=0; while (( i++ < 3 )); do printf $i; done; echo
+bash	for ((i=0, j=5; i<j; i+=2, j--)); do printf "$i$j "; done; echo
+bash	for ((;;)); do break; done; echo out
+bash	for ((i=0;i<2;i++)) { echo $i; }
+bash	x=1; echo $[x+1]
+bash	echo $(( $(echo 3) + 1 ))
+bash	a=(c b a); unset a; echo ${#a[@]}; a[3]=x; declare -p a
+bash	a=(1 2 3); a=("${a[@]:1}"); declare -p a
+bash	a=(x y z); echo ${a[@]/#/p} ${a[@]/%/s}
+bash	a=(ab cb); echo ${a[@]#?} ${a[@]%b}
+bash	a=(abc); echo ${#a} ${#a[0]}
+bash	a=(a b c); echo "${a[*]: -2:1}"
+bash	a=(a b); b=("${a[@]}" c); echo ${#b[@]}
+bash	a=([1]=one [0]=zero); echo ${a[@]}
+bash	a=(one two); a=(); declare -p a
+bash	declare -a a=([0]=x [2]=z); a+=(w); declare -p a
+bash	a=(1 2 3); echo ${a[@]: 1:1} "${a[@]:5}"x
+bash	a=(1 2); a[0]=; echo ${#a[@]} "[${a[0]}]"
+bash	a=('' ''); echo ${#a[@]}
+bash	s='a b  c'; a=($s); echo ${#a[@]}
+bash	IFS=:; s='a::b'; a=($s); echo ${#a[@]}
+bash	IFS=': '; s='a : b'; a=($s); echo ${#a[@]}
+bash	s=' x '; IFS=; a=($s); echo "${#a[@]}[${a[0]}]"
+bash	set -- a b c; IFS=-; echo "$*"; IFS=; echo "$*"; unset IFS; echo "$*"
+bash	set -- 'a b' c; for x in $@; do echo "<$x>"; done
+bash	set -- 'a b' c; for x in "$@"; do echo "<$x>"; done
+bash	set -- 'a b' c; for x in "$*"; do echo "<$x>"; done
+bash	x='*'; echo "$x" $x | head -c 1; echo
+bash	x=$'a\nb'; for w in $x; do echo "<$w>"; done
+bash	v=abcabc; echo ${v/b} ${v//b} ${v/#a} ${v/%c}
+bash	v=abc; echo ${v/*/x} ${v/?/x} ${v/[ab]/x}
+bash	v='a.b.c'; echo ${v%.*} ${v%%.*} ${v#*.} ${v##*.}
+bash	v=/a/b/c.txt; f=${v##*/}; echo ${f%.*} ${v%/*}
+bash	v=abc; echo ${v:${#v}-1}
+bash	v=x; echo ${v:-$(echo d)} ${u:-$(echo d)}
+bash	echo ${u:=def}; echo $u
+bash	v=''; echo "[${v:-a}][${v-a}][${v:+b}][${v+b}]"
+bash	f() { echo $#; }; f "" ""; f "$@"
+bash	v=héllo; echo ${#v} ${v:1:1}
+bash	v=ÀB; echo ${v,,} ${v^^}
+bash	echo ${#} ${#*} ${#@}
+bash	set -- a b; echo ${#1} ${@: -1}
+bash	cat <<'E'<NL>$x `y`<NL>E
+bash	x=1; cat <<E<NL>v=$x $((1+1)) \$x<NL>E
+bash	cat <<-E<NL>	tab<NL>	E
+bash	cat <<E | wc -l<NL>a<NL>b<NL>E
+bash	f() { cat; }; f <<< "x y"
+bash	read a b <<E<NL>1 2<NL>E<NL>echo $b$a
+bash	f() { caller 0 | cut -d' ' -f1,2; caller 1 | cut -d' ' -f1,2; echo rc=$?; }<NL>g() {<NL>f<NL>}<NL>g
+bash	caller 0; echo rc=$?
+bash	compgen -W 'apple banana apricot' ap
+bash	compgen -W 'a b' -P '<' -S '>'
+bash	x='p q'; compgen -W '$x r'
+bash	compgen -W 'a\ b c'
+bash	compgen -b -- shop
+bash	compgen -v -- BASH_REMATC; echo rc=$?
+bash	compgen -A disabled; echo rc=$?
+bash	compgen -a; alias zz=1; compgen -a
+bash	compgen -W 'b a c' -X 'a' 
+bash	compgen -W 'x1 x2 y' -X '!x*'
+bash	compgen -W 'one two' -- ''
+bash	compgen -W 'one two' -- o t
+bash	complete -F f -o nospace cmd; complete -p cmd
+bash	complete -W 'a b' -A file x; complete -p x
+bash	complete -F f a b; complete -r a; complete -p
+bash	complete -E -W x; complete -p -E
+bash	complete -o default -o bashdefault -C 'echo c' y; complete -p y
+bash	complete -X '!*.c' -G '*.c' -P p -S s z; complete -p z
+bash	complete -o plusdirs -o filenames -o nosort -o noquote -o dirnames -A stopped -A signal -A shopt -A setopt -A running -A hostname -A helptopic -A function -A enabled -A disabled -A binding -A arrayvar -v -u -s -k -j -g -f -e -d -c -b -a -F fn -C cmd -X x -S s -P p -W w -G g z; complete -p z
+bash	complete -W "it's" q; complete -p q
+bash	complete -I -W i; complete -p -I
+bash	complete -o default; echo rc=$?
+bash	complete -F f a; complete -p a b; echo rc=$?
+bash	complete -F f a; complete -r; complete -p; echo rc=$?
+bash	complete -F f -o bogus z; echo rc=$?
+bash	complete -Z; echo rc=$?
+bash	complete -W x; echo rc=$?
+bash	complete -A bogus x; echo rc=$?
+bash	complete -p -D; echo rc=$?
+bash	complete -fd x; complete -p x
+bash	complete -o; echo rc=$?
+bash	complete -fd x; complete -r x y; echo rc=$?
+bash	complete -W a -W b x; complete -p x
+bash	complete -A file -f x; complete -p x
+bash	complete -D -r; echo rc=$?
+bash	complete -F g -D -E; complete -p -D -E; complete -p -E; echo rc=$?
+bash	complete -ofilenames -Wq x; complete -p x; complete -p -- x
+bash	complete -W x -D a; complete -p a -D; echo rc=$?; complete -p -D
+bash	complete -W x 'a b'; complete -p 'a b'
+bash	complete -W x -- -n; complete -p -- -n
+bash	complete -r nosuch; echo rc=$?; complete -W x a; complete -r nosuch; echo rc=$?
+bash	complete -W x a; complete; complete -r a; complete; echo rc=$?
+bash	complete -F f -E; complete -r -E; complete -p -E; echo rc=$?
+bash	complete -C 'echo c' -F f x; complete -p x
+bash	compgen -W "f* {a,b} \$((1+2)) \$(echo s t) \"q r\" 'u v'"
+bash	IFS=:; compgen -W 'a:b c'
+bash	x="1  2"; compgen -W "\"\$x\""
+bash	compgen -W '"a b" c' -- a
+bash	compgen -W '' ; echo rc=$?
+bash	compgen -W '   '; echo rc=$?
+bash	compgen; echo rc=$?
+bash	compgen -- x; echo rc=$?
+bash	enable -n echo; compgen -A disabled
+bash	compgen -W 'a b' -P '[' -S ']' -- a
+bash	compgen -W 'a$x' ; x=1; compgen -W 'a$x'
+bash	f() { caller x; echo rc=$?; caller -1; echo rc=$?; }; f
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	! (exit 3); printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	! case x in y) ;; esac; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	! false; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	! for i in; do :; done; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	! if false; then :; fi; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	! true | false; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	! true; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	! while false; do :; done; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	! { false; }; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	( exit 4 ) || printf 'or %s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	(exit 2); . /dev/null; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	(exit 2); :; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	(exit 2); eval ''; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	(exit 3) | (exit 4); printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	(exit 3) | true; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	(exit 3); for i in $empty; do :; done; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	(exit 3); for i in; do :; done; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	(exit 3); until true; do :; done; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	(exit 3); while false; do :; done; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	(exit 5); case $? in 5) printf 'five %s\n' "$?";; esac
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	(exit 6); if [ $? -eq 6 ]; then printf 'six %s\n' "$?"; fi
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	(exit 7); case x in x) printf '%s\n' "$?";; esac
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	(exit 7); case x in y) ;; esac; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	(exit 8); if (exit 9); then :; else printf 'e%s\n' "$?"; fi
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	(exit 8); if false; then :; fi; printf '%s\n' "$?"
+zsh,sh/zsh-style,ksh/zsh-style,mksh	(printf 'x\n' >&-) 2>/dev/null; printf 'r=%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	(trap 'printf sub' EXIT; printf in); printf ' out\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	: </nonexistent/x; printf 'after %s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	: >&7; printf 'after %s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	>/nonexistent/f; printf 'after %s\n' "$?"
+zsh,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,ash	HOME=/h/; printf '%s\n' ~/x
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	HOME=/h; a="~/q"; printf '%s\n' "$a"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	HOME=/h; a=x~/y; printf '%s\n' "$a"
+zsh,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	HOME=/h; a=~/x:~/y; printf '%s\n' "$a"
+zsh,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	HOME=/h; a=~; printf '%s\n' "$a"
+zsh,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	HOME=/h; export b=~/e:~/f; printf '%s\n' "$b"
+zsh,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	HOME=/h; f() { printf '%s\n' ~; }; f
+zsh,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	HOME=/h; printf '%s\n' ~ ~/a "~" x=~/b
+zsh,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	HOME=/h; printf '%s\n' ~/"a b"
+zsh,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	HOME=/h; v=~/a; printf '%s\n' "${v}" ${w:-~/d}
+zsh,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	HOME=; printf '[%s]\n' ~/x
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	IFS= read a <<E<NL>  lead  trail  <NL>E<NL>printf '[%s]\n' "$a"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	IFS=' :' read -r a b c <<E<NL> x : y<NL>E<NL>printf '[%s][%s][%s]\n' "$a" "$b" "$c"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	IFS=' :' read -r a b c <<E<NL>x :: y<NL>E<NL>printf '[%s][%s][%s]\n' "$a" "$b" "$c"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	IFS='x '; v='a  xx  b'; printf '[%s]' $v; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	IFS='x '; v='a x b'; printf '[%s]' $v; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	IFS=, read -r a b <<E<NL>a,b,,<NL>E<NL>printf '[%s][%s]\n' "$a" "$b"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	IFS=, read -r a b <<E<NL>a,b,c,<NL>E<NL>printf '[%s][%s]\n' "$a" "$b"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	IFS=: read -r a <<E<NL>:x:<NL>E<NL>printf '[%s]\n' "$a"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	IFS=: read -r a b <<E<NL>:x<NL>E<NL>printf '[%s][%s]\n' "$a" "$b"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	IFS=: read -r a b <<E<NL>a\:b:c<NL>E<NL>printf '[%s][%s]\n' "$a" "$b"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	IFS=: read -r a b <<E<NL>x:y:<NL>E<NL>printf '[%s][%s]\n' "$a" "$b"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	IFS=: read -r a b <<E<NL>x:y:z<NL>E<NL>printf '[%s][%s]\n' "$a" "$b"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	IFS=: read -r a b c <<E<NL>x::z<NL>E<NL>printf '[%s][%s][%s]\n' "$a" "$b" "$c"
+zsh,sh/zsh-style,ksh/zsh-style	IFS=: read a <<E<NL>  lead :<NL>E<NL>printf '[%s]\n' "$a"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	IFS=: read a b <<E<NL>a\:b:c<NL>E<NL>printf '[%s][%s]\n' "$a" "$b"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	IFS=:; v=::; set -- $v; printf '%s\n' "$#"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	IFS=:; v=:; printf '[%s]' $v; printf '%s\n' "x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	IFS=:; v=a:; printf '[%s]' $v; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	IFS=x; v=axbxxc; printf '[%s]' $v; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	a=1; cat <<E<NL>${a:+set} ${b:-def} ${a+x}<NL>E
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	alias a1='printf A'<NL>alias a2='a1; printf B'<NL>a2; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	alias e='printf "%s\n" '<NL>alias w=word<NL>e w
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,ash	alias p='printf "<%s>\n"'; p hi
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	alias p='printf "<%s>\n"'<NL>p hi
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	alias x='printf X'<NL>unalias x<NL>x 2>/dev/null; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	alias zqa='printf A'<NL>alias zqb='zqa; printf B'<NL>zqb; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	alias zqe='printf "%s\n" '<NL>alias zqw=word<NL>zqe zqw
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	alias zqe='printf "%s\n"'<NL>alias zqw=word<NL>zqe zqw
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	alias zqf='zqg() { printf G; }'<NL>zqf; zqg; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	alias zqi='if true; then printf in; fi'<NL>zqi; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	alias zqn='printf N'<NL>"zqn" 2>/dev/null; printf ' %s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	alias zqn='printf N'<NL>\zqn 2>/dev/null; printf ' %s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh	alias zqo='printf O'<NL>alias zqo; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	alias zqo='printf O'<NL>for i in 1 2; do zqo; done; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	alias zqo='printf O'<NL>x=$(zqo); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	alias zqp='printf "<%s>\n"'; zqp hi 2>/dev/null; printf 'r=%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	alias zqp='printf "<%s>\n"'<NL>zqp hi
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	alias zqr='zqr2'<NL>alias zqr2='printf R'<NL>zqr; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	alias zqs='printf "%s"'<NL>zqs a; zqs b; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	alias zqv='v=1'<NL>zqv; printf '%s\n' "$v"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	alias zqx='printf X'<NL>f() { zqx; }<NL>unalias zqx<NL>f; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	alias zqx='printf X'<NL>unalias zqx<NL>zqx 2>/dev/null; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	case x in # c<NL>x) printf m;; # c2<NL>esac; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	cat <<"E"<NL>dq $x<NL>E
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	cat <<'E'<NL>line\<NL>cont<NL>E
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	cat <<A; cat <<B<NL>one<NL>A<NL>two<NL>B
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	cat <<E >/dev/null; printf 'r=%s\n' $?<NL>x<NL>E
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	cat <<E | tr a-z A-Z<NL>pipe $((6*7))<NL>E
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	cat <<E<NL>line\<NL>cont<NL>E
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; (exec >f; printf in); printf out; cat f; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; (printf 'sub\n') >f; cat f
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; : >f; printf 'a\n' >>f; printf 'b\n' 1>>f; cat f
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; >f; ls; [ -s f ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; case a in a) printf 'c\n';; esac >f; cat f
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; exec 3>&1 >f; printf 'tofile\n'; exec 1>&3 3>&-; printf 'back\n'; cat f
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; exec 3>&1; x=$(printf 'a\n' >&3; printf 'b\n'); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; exec 3>f; printf 'x\n' >&3; printf 'y\n' >&3; exec 3>&-; cat f
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; exec 4>f; printf a >&4; exec 4>>f; printf b >&4; exec 4>&-; cat f; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; exec 5>f; f() { printf 'via5\n' >&5; }; f; exec 5>&-; cat f
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; f() { exec >g; }; (f; printf x); cat g; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; f() { printf 'in %s\n' "$1"; } >>g; f 1; f 2; cat g
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; f() { printf 'in\n'; } >g; f; f; cat g
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; f() { printf 'in\n'; }; f >g; cat g
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; f() { printf 'o\n'; printf 'e\n' >&2; } 2>&1; x=$(f 2>/dev/null); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; for i in 1 2 3; do printf '%s\n' "$i"; done >f; cat f
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; for i in 1 2; do printf '%s' "$i" >>f; done; cat f; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; i=0; while [ $i -lt 2 ]; do i=$((i+1)); printf '%s\n' "$i"; done >f; cat f
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; if true; then printf 'y\n'; fi >f; cat f
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; mkdir sd sd2; : >b >a >C >.h >a1 >a2 >a10 >sd/i; : >'-x'; printf '<%s>' -*; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; mkdir sd sd2; : >b >a >C >.h >a1 >a2 >a10 >sd/i; : >'s p'; printf '<%s>' s*; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; mkdir sd sd2; : >b >a >C >.h >a1 >a2 >a10 >sd/i; case a1 in a[0-9]) printf y;; esac; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; mkdir sd sd2; : >b >a >C >.h >a1 >a2 >a10 >sd/i; for f in *; do printf '<%s>' "$f"; done; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; mkdir sd sd2; : >b >a >C >.h >a1 >a2 >a10 >sd/i; printf '<%s>' "a"*; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; mkdir sd sd2; : >b >a >C >.h >a1 >a2 >a10 >sd/i; printf '<%s>' 'a'?; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; mkdir sd sd2; : >b >a >C >.h >a1 >a2 >a10 >sd/i; printf '<%s>' */*; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; mkdir sd sd2; : >b >a >C >.h >a1 >a2 >a10 >sd/i; printf '<%s>' */; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; mkdir sd sd2; : >b >a >C >.h >a1 >a2 >a10 >sd/i; printf '<%s>' *1*; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; mkdir sd sd2; : >b >a >C >.h >a1 >a2 >a10 >sd/i; printf '<%s>' *; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; mkdir sd sd2; : >b >a >C >.h >a1 >a2 >a10 >sd/i; printf '<%s>' *[0-9]; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; mkdir sd sd2; : >b >a >C >.h >a1 >a2 >a10 >sd/i; printf '<%s>' .*; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; mkdir sd sd2; : >b >a >C >.h >a1 >a2 >a10 >sd/i; printf '<%s>' ./a*; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; mkdir sd sd2; : >b >a >C >.h >a1 >a2 >a10 >sd/i; printf '<%s>' .[!.]*; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; mkdir sd sd2; : >b >a >C >.h >a1 >a2 >a10 >sd/i; printf '<%s>' ?; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; mkdir sd sd2; : >b >a >C >.h >a1 >a2 >a10 >sd/i; printf '<%s>' [!a]*; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; mkdir sd sd2; : >b >a >C >.h >a1 >a2 >a10 >sd/i; printf '<%s>' [[:digit:]]*; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; mkdir sd sd2; : >b >a >C >.h >a1 >a2 >a10 >sd/i; printf '<%s>' [[:upper:]]*; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh	d=$(mktemp -d); cd "$d"; mkdir sd sd2; : >b >a >C >.h >a1 >a2 >a10 >sd/i; printf '<%s>' [^a]*; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; mkdir sd sd2; : >b >a >C >.h >a1 >a2 >a10 >sd/i; printf '<%s>' [a-c]; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; mkdir sd sd2; : >b >a >C >.h >a1 >a2 >a10 >sd/i; printf '<%s>' [ab]; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; mkdir sd sd2; : >b >a >C >.h >a1 >a2 >a10 >sd/i; printf '<%s>' a?; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; mkdir sd sd2; : >b >a >C >.h >a1 >a2 >a10 >sd/i; printf '<%s>' a[!1]*; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; mkdir sd sd2; : >b >a >C >.h >a1 >a2 >a10 >sd/i; printf '<%s>' a[0-9]*; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; mkdir sd sd2; : >b >a >C >.h >a1 >a2 >a10 >sd/i; printf '<%s>' a[]; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; mkdir sd sd2; : >b >a >C >.h >a1 >a2 >a10 >sd/i; printf '<%s>' a\*; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; mkdir sd sd2; : >b >a >C >.h >a1 >a2 >a10 >sd/i; printf '<%s>' nomatch*; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; mkdir sd sd2; : >b >a >C >.h >a1 >a2 >a10 >sd/i; printf '<%s>' sd*/*; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; mkdir sd sd2; : >b >a >C >.h >a1 >a2 >a10 >sd/i; printf '<%s>' sd/../a?; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; mkdir sd sd2; : >b >a >C >.h >a1 >a2 >a10 >sd/i; printf '<%s>' sd2/*; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; mkdir sd sd2; : >b >a >C >.h >a1 >a2 >a10 >sd/i; set -- *; printf '%s\n' "$#"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; mkdir sd sd2; : >b >a >C >.h >a1 >a2 >a10 >sd/i; set -f; printf '<%s>' a*; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; mkdir sd sd2; : >b >a >C >.h >a1 >a2 >a10 >sd/i; v='a*'; printf '<%s>' "$v"; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; mkdir sd sd2; : >b >a >C >.h >a1 >a2 >a10 >sd/i; v='a*'; printf '<%s>' $v; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; mkdir sd sd2; : >b >a >C >.h >a1 >a2 >a10 >sd/i; x=*; printf '<%s>\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; printf '%s\n' a >f 3>&1 1>&2 2>&3; printf '[%s]\n' "$(cat f)"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; printf 'ab\n' >f; <>f read -r v; printf '%s\n' "$v"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; printf 'abc\n' >f; exec 4<>f; read -r l <&4; printf '[%s]\n' "$l"; exec 4>&-
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; printf 'abcdef\n' >f; printf 'XY' 1<>f; cat f
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; printf 'l1\nl2\n' >f; exec 3<f; read -r a <&3; read -r b <&3; printf '%s %s\n' "$a" "$b"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; printf 'l1\nl2\n' >f; while read -r l; do printf '<%s>' "$l"; done <f; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; printf 'l1\nl2\n' >f; { read -r a; read -r b; } <f; printf '%s %s\n' "$b" "$a"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; printf 'one\n' >f; read -r a <f; read -r b <f; printf '%s %s\n' "$a" "$b"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; printf 'printf "%%s" "$#"' >s; set -- a b; . ./s; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; printf 'q\n' 2>e >o; cat o; [ -f e ] && printf 'e\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; printf 'return 4; printf no' >s; . ./s; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; printf 'v=sourced' >s; . ./s; printf '%s\n' "$v"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; printf 'x' > f 2>&1 >g; ls
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; printf 'x\n' >f; exec 3<f; cat <&3; read -r q <&3; printf 'r=%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; printf 'z\n' >f; exec 0<f; read -r v; printf '%s\n' "$v"
+zsh,bash,ksh,sh,sh/zsh-style,ksh/zsh-style,mksh	d=$(mktemp -d); cd "$d"; set -C; ( : >f ) && ( : >f ) 2>/dev/null; printf 'r=%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; set -C; : >/dev/null; : >>f; : >>f; printf 'r=%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; set -C; : >f; : >|f; printf 'r=%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; set -C; printf a >/dev/null; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; set -C; printf a >f; (printf b >f) 2>/dev/null; printf '%s\n' "$?"; cat f; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; set -C; printf a >f; printf b >f; printf c >|f; cat f; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; set -C; set +C; : >f; : >f; printf 'r=%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; set -o noclobber; case $- in *C*) printf C;; esac; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; set -o noclobber; printf a >f; printf b >>f; cat f; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; while read -r l; do printf '<%s>' "$l"; done <<E 3>g<NL>a<NL>E<NL>printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; x=$( { printf 'o\n'; printf 'e\n' >&2; } 2>&1 >f ); printf '[%s][%s]\n' "$x" "$(cat f)"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; { printf 'o\n'; printf 'e\n' >&2; } 2>&1 >f; printf '[%s]' "$(cat f)"; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	d=$(mktemp -d); cd "$d"; { printf 'o\n'; printf 'e\n' >&2; } >f 2>&1; printf '[%s]' "$(cat f)"; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	eval ''; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	eval '(exit 6)'; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	exec 3<&-; exec 3>&-; printf 'ok %s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	exec 7>&-; printf 'closed %s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	export V=1 </nonexistent/x; printf 'after %s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() ( printf sub ); f; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() case $1 in a) printf A;; esac; f a; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() for i in 1 2; do printf "$i"; done; f; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() if true; then printf ifb; fi; f; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { ( local v=1; printf '%s\n' "$v" ); }; f
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { (exit 2) && printf no || printf "e$?"; }; f; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { (exit 9); return; }; f; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { (return 3); printf '%s\n' "$?"; }; f
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { :; }; (exit 3); f; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { break; }; for i in 1 2 3; do printf '%s' "$i"; f; done; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { cat <<-E<NL>	tab $1<NL>	E<NL>}; f t
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { cat <<E<NL>a=$1 b=$(( $2 * 3 )) c=$(printf %s "$1$1")<NL>E<NL>}; f x 4
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { cat; }; f <<E<NL>to func<NL>E
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { continue; }; for i in 1 2 3; do f; printf '%s' "$i"; done; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { false; return; }; f; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { g() { printf inner; }; }; f; g; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { local x=$(exit 5); printf '%s\n' "$?"; }; f
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { printf "$#"; }; f "" ""; f; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { printf '%s' "$1"; }; set -- out; f in; printf '%s\n' "$1"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { printf '%s\n' "$?"; }; (exit 3); f
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { printf F; }; f=v; unset -v f; f; printf '[%s]\n' "$f"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { printf F; }; f=v; unset f; f; printf '[%s]\n' "${f-unset}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { printf F; }; unset f; f 2>/dev/null; printf '[%s]\n' "$?"
+zsh,bash,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { printf f; }; f=v; unset -f f; printf '%s\n' "$f"; f 2>/dev/null; printf ' %s\n' "$?"
+zsh,bash,ksh,sh,sh/zsh-style,ksh/zsh-style,mksh	f() { printf x; }; f </nonexistent/x; printf 'after %s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { return 3; }; f && :; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { return 7; printf no; }; f; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { set -- x y; printf '%s' "$#"; }; set -- a; f; printf '%s\n' "$#"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { shift; printf '%s' "$*"; }; f a b c; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { trap 'printf T' EXIT; }; f; printf after
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { x=$(exit 5) y=1; }; f; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { x=$(exit 5); }; f; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { x=1 y=$(exit 6); }; f; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { zqy; }<NL>alias zqy='printf Y'<NL>f 2>/dev/null; printf ' %s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f\<NL>() { printf fn; }; f; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	false && true; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	false ||<NL><NL>printf or; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	for i do printf "$i"; done; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	for i in 1 2 3; do for j in a b; do break 2; done; printf x; done; printf '%s\n' "$i"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	for i in 1 2 3; do for j in a b; do continue 2; printf n; done; printf x; done; printf '%s\n' "$i"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	for i in 1 2; do (break); printf '%s' "$i"; done; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	for i in 1 2; do cat <<E<NL>i=$i sq=$((i*i))<NL>E<NL>done
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	for i in 1 \<NL>2; do printf %s "$i"; done; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	for i in 1; do continue; done; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	for i in a b # comment<NL>do printf "$i"; done; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	i=0; until [ $i -ge 3 ]; do i=$((i+1)); done; printf '%s\n' $i
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	i=0; while [ $i -lt 2 ]; do i=$((i+1)); (exit 4); done; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	i\<NL>f true; then printf y; fi; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	if ! (exit 4); then printf 'neg %s\n' "$?"; fi
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	if cat <<E; then printf 'ok\n'; fi<NL>body<NL>E
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	if true \<NL>then printf y; fi; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	pri\<NL>ntf '%s\n' joined
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "$(\<NL>printf in)"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "${x-\"}"
+zsh,bash,ksh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "${x:-a\}b}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "\$x" "\`" "\"" "\a" "\\"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "a\<NL>b"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "a\\b" 'a\\b' a\\b
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,ash	printf '%s\n' $((1#0)) 2>/dev/null; printf 'r%s\n' $?
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' $(printf '%s ' a b \<NL>c)
+zsh,bash,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' $\<NL>HOME | grep -c /
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' '#q'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' 'a\<NL>b'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' a#b #c
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' a\<NL>b
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' a{b
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' x\#y
+zsh,bash,ksh,sh,dash,ksh/zsh-style,mksh,ash	printf '%s\n' { } if then ! case
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s|' "\x" '\x' \x; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '' | { read -r a; printf '[%s] %s\n' "$a" "$?"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'a  b\n' | { IFS=' ' read -r x y z; printf '[%s][%s][%s]\n' "$x" "$y" "$z"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'a b c d\n' | { read -r x y; printf '[%s][%s]\n' "$x" "$y"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'a\n' | { read -r v; printf '%s\n' "$v"; } 3<&0
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'a\t\tb\n' | { IFS="$(printf '\t')" read -r x y; printf '[%s][%s]\n' "$x" "$y"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'a\tb\n' | { read -r x y; printf '[%s][%s]\n' "$x" "$y"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'no newline' | { read -r a; printf '[%s] %s\n' "$a" "$?"; }
+zsh,sh/zsh-style,ksh/zsh-style,mksh	printf 'x\n' >&-; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf a # c \<NL>printf b; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf x </nonexistent/x; printf 'after %s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf x >&7; printf 'after %s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf x |<NL>tr x z; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf x |\<NL>tr x y; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	read -r a <<E<NL>line\<NL>cont<NL>E<NL>printf '[%s]\n' "$a"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	read -r a b <<E<NL>x\ y z<NL>E<NL>printf '[%s][%s]\n' "$a" "$b"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	read a <<E<NL>  lead  trail  <NL>E<NL>printf '[%s]\n' "$a"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	read a <<E<NL>line\<NL>cont<NL>E<NL>printf '[%s]\n' "$a"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	read a b <<E<NL>x\ y z<NL>E<NL>printf '[%s][%s]\n' "$a" "$b"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- '' '' x; IFS=:; printf '[%s]\n' "$*"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- '' ''; IFS=:; printf '[%s]' "$*"; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- ''; printf '[%s]' "$@"; printf '%s\n' "$#"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- 'a b' c; IFS=; for w in $*; do printf '<%s>' "$w"; done; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- 'a b' c; IFS=; printf '[%s]' $@; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- 'a:b' c; IFS=:; for w in $*; do printf '<%s>' "$w"; done; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- 'a:b' c; IFS=:; for w in $@; do printf '<%s>' "$w"; done; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- a </nonexistent/x; printf 'after %s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- a b c; IFS=:,; printf '[%s]\n' "$*"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- a b c; IFS=:; printf '[%s]\n' "$*"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- a b c; IFS=; printf '[%s]\n' "$*"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- a b; IFS=:; x="$*"; y=$*; printf '[%s][%s]\n' "$x" "$y"
+zsh,dash,sh/zsh-style,ksh/zsh-style,ash	set -- a b; IFS=:; x="$@"; printf '[%s]\n' "$x"
+zsh,dash,sh/zsh-style,ksh/zsh-style,ash	set -- a b; IFS=:; x=$@; printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- a b; IFS=; x="$*"; printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- a b; cat <<E<NL>[$@] [$*] [$#]<NL>E
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- p q; for i do printf "$i"; done; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- p q; for i; do printf "$i"; done; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set --; printf '[%s]' "$*"; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set --; printf '[%s]' "$@"; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -e; ! true; printf ok
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -e; f() { false; printf no; }; f || printf caught; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -e; false && :; printf ok
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -e; false || printf ok; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -e; if false; then :; fi; printf survived
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -e; x=$(false); printf 'not here'
+zsh,bash,ksh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -u; (printf '%s' "$unset_v") 2>/dev/null; printf 'r%s\n' $?
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -u; printf '%s' "${unset_v-d}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	trap 'printf "[%s]" "$?"' EXIT; (exit 3)
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	trap 'printf X' EXIT; trap - EXIT; printf done
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	trap 'printf trapped' EXIT; printf body
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	true &&<NL>printf and; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	true | (exit 3); printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	true || false; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	unset -f nosuch; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	unset -v nosuch; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	unset x; printf '%s\n' "${x:-'s q'}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	unset x; printf '%s\n' ${x:-'s q'}
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	unset x; printf '<%s>' ${x:-"a b"} ; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	unset x; printf '<%s>' ${x:-a b} ; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	v='  a  b  '; printf '[%s]' $v; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	v=' a : b '; IFS=' :'; set -- $v; printf '%s' "$#"; printf '<%s>' "$@"; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	v='a  b'; IFS=' '; set -- $v; printf '%s' "$#"; printf '<%s>' "$@"; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	v='a  b'; cat <<E<NL>$v ${v#a} ${#v}<NL>E
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	v=1; unset -f v; printf '[%s]\n' "${v-gone}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	v=1; unset -v v; printf '[%s]\n' "${v-gone}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	v=:a:b:; IFS=:; set -- $v; printf '%s' "$#"; printf '<%s>' "$@"; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	v=V; x=`printf '%s' "\$v"`; printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	v=a::b; IFS=:; set -- $v; printf '%s' "$#"; printf '<%s>' "$@"; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	v=ab; printf '%s\n' ${v\<NL>#a}
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	v=out; x=$(v=in; printf '%s' "$v"); printf '[%s][%s]\n' "$x" "$v"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	v=val; cat <<E<NL>\$v=$v \\ \`x\` "q" 'q'<NL>E
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	v=xy; printf '%s\n' "${v\<NL>}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	while :; do break; done; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	while read -r l; do printf '<%s>' "$l"; done <<E<NL>a b<NL>  c<NL>E<NL>printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x="$(printf '%s' "\"quoted\"")"; printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x="$(printf 'a b')"; set -- $x; printf '%s\n' "$#"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x="`printf '%s' "a b"`"; printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x="`printf '%s' '\"'`"; printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=#v; printf '%s\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$( # comment with ) paren<NL>printf ok<NL>); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$( ( printf sub ) | tr a-z A-Z ); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$( (exit 5) ); printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$( (printf a; printf b) ); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$( printf "%s" "\$(no)" ); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$( { printf o; printf e >&2; } 3>&1 1>&2 2>&3 ); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$((1 + \<NL>2)); printf '%s\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(<NL># full line comment )<NL>printf ok<NL>); printf '[%s]\n' "$x"
+zsh,sh/zsh-style,ksh/zsh-style	x=$(case ')' in ')') printf P;; esac); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(case a in (a) printf A;; (*) printf B;; esac); printf '[%s]\n' "$x"
+zsh,bash,ksh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(case a in a) printf A;; b) printf B;; esac); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(case x in (x) printf 'm';; esac); printf '[%s]\n' "$x"
+zsh,bash,ksh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(case x in x) printf 'm';; esac; printf e); printf '[%s]\n' "$x"
+zsh,bash,ksh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(case x in y|x) printf alt;; esac); printf '[%s]\n' "$x"
+zsh,bash,ksh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(case x in<NL>x) printf 'nl';;<NL>esac); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(cat <<'E'<NL>lit $HOME $((1))<NL>E<NL>); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(cat <<E<NL>$(cat <<F<NL>inner<NL>F<NL>)<NL>E<NL>); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(cat <<E<NL>in $(printf sub) $((2+3))<NL>E<NL>); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(exit 3; printf no); printf '[%s]%s\n' "$x" "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(exit 7) printf 'r=%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(exit 7); printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(f() { printf fn; }; f); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(for i in 1 2; do printf '%s' "$i"; done); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(if true; then printf t; fi); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(printf '#notcomment'); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(printf '%s' "$(( (1+2) * 3 ))"); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(printf '%s' "$((3*(2+1)))"); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(printf '%s' "$(printf '%s' "$(printf deep)")"); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(printf '%s' "$(printf '(%s)' in)"); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(printf '%s' "${v:-(def)}"); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(printf '%s' ")"); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(printf '%s' "\`"); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(printf '%s' "a b" | { read -r p q; printf '%s-%s' "$q" "$p"; }); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(printf '%s' "a)b"); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(printf '%s' "a\"b\\c"); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(printf '%s' $((1<<4))); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(printf '%s' '$(no)'); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(printf '%s' 'a)b'); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(printf '%s' 'it''s'); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(printf '%s' `printf bq`); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(printf '%s' a #c<NL>); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(printf '%s' a#b); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(printf '%s' a\)b); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(printf '%s\n' a b | while read -r l; do printf '%s.' "$l"; done); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(printf '\n\na'); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(printf 'o\n' 1>&2) 2>/dev/null; printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(printf a # trailing ) comment<NL>); printf '[%s]\n' "$x"
+zsh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(printf a) >/nonexistent/f; printf '[%s] %s\n' "$x" "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(printf e >&2 2>/dev/null); printf '[%s]\n' "$x"
+zsh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(printf o; printf e >&2) 2>&1; printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(while read -r l; do printf '<%s>' "$l"; done <<E<NL>p q<NL>E<NL>); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$({ printf g; }); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x='a b'; printf '<%s>' ${x+"$x"} ; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x='a\'; printf '%s\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=1\<NL>2; printf '%s\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=`cat <<E<NL>bt $((1+1))<NL>E<NL>`; printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=`echo 'a\\b'`; printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=`exit 4`; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=`printf '%s' "\\$HOME"`; printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=`printf '%s' "\a"`; printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=`printf '%s' "a\"b"`; printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=`printf '%s' "a\\b"`; printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=`printf '%s' $(printf dl)`; printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=`printf '%s' '\$x'`; printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=`printf '%s' 'a\\b'`; printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=`printf '%s' \\\\a`; printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=`printf '%s' \`printf in\``; printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=`printf '%s' a\b`; printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=`printf '%s\n' "\`printf nest\`"`; printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=`printf '%s\n' a\\\\b`; printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=a\<NL>b; printf '%s\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=v; printf '%s\n' "${x:+"q d"}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=v; printf '%s\n' "${x:+'s q'}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x={; printf '%s\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	zqzf() { printf F; }; unset -f zqzf; zqzf 2>/dev/null; printf '[%s]\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	zqzf() { printf F; }; unset zqzf; zqzf 2>/dev/null; printf '[%s]\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	zqzf() { printf F; }; zqzf=v; unset -v zqzf; zqzf; printf '[%s]\n' "$zqzf"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	zqzf() { printf F; }; zqzf=v; unset zqzf; zqzf; printf '[%s]\n' "${zqzf-unset}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	zqzf() { printf f; }; zqzf=v; unset -f zqzf; printf '%s\n' "$zqzf"; zqzf 2>/dev/null; printf ' %s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	{ (exit 2); }; printf '%s\n' "$?"
+zsh,sh/zsh-style,ksh/zsh-style,mksh	{ printf 'x\n'; } >&- 2>/dev/null; printf 'r=%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	{ printf a; } # c<NL>printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	{ printf a; }; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	{ printf a;}; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	{ printf x; } </nonexistent/x; printf 'after %s\n' "$?"
+ksh	print $(( pow(2,10) )) $(( pow(2,0.5) )) $(( pow(2,-1) )) $(( pow(10,20) )) $(( pow(0,0) ))
+ksh	print $(( atan2(1,1) )) $(( atan2(-0.0,-1) )) $(( atan2(1,0) ))
+ksh	print $(( fdim(5,3) )) $(( fdim(3,5) )) $(( fmax(1,2) )) $(( fmin(1,2) )) $(( fmax(nan,1) )) $(( fmin(-0.0,0.0) ))
+ksh	print $(( fma(2,3,4) )) $(( fma(0.1,10,-1) )); print $(( fma(1,2) )); print rc=$?
+ksh	print $(( round(2.5) )) $(( round(-2.5) )) $(( round(0.5) )) $(( trunc(-2.7) )) $(( trunc(2.7) )) $(( nearbyint(2.5) )) $(( nearbyint(-3.5) ))
+ksh	print $(( exp2(3) )) $(( exp2(0.5) )) $(( tgamma(5) )) $(( tgamma(0.5) )) $(( tgamma(172) )) $(( nexttoward(1,2) ))
+ksh	print $(( signbit(-1.0) )) $(( signbit(0.0) )) $(( signbit(-0.0) )) $(( isfinite(1) )) $(( isfinite(inf) )) $(( isnormal(0) )) $(( iszero(-0.0) ))
+ksh	print $(( isunordered(nan,1) )) $(( isgreater(2,1) )) $(( isgreater(nan,1) )) $(( isless(1,2) )) $(( islessequal(1,1) )) $(( isgreaterequal(1,1) )) $(( islessgreater(1,1) ))
+ksh	print $(( pow(2,3)/3 )) $(( isless(1,2)/2 )) $(( round(2.5)/2 )) $(( trunc(7.5)/2 )); (( pow(2,3) == 8 )); print $?
+ksh	function f { print $0 $1; }; f a; function g { print $0; h; print $0; }; function h { print $0; }; g
+ksh	function g { f; }; f() { print $0; }; g; function k { (print $0); x=$(print $0); print $x; eval 'print $0'; set -- y; print $0; }; k
+mksh	print -r -- $'\cA|\c?|\ca|\c[|\cz' | od -An -c
+mksh	x=$'a\c@b'; echo ${#x}
+mksh	print -r -- $'\ca|\c1|\c-' | od -An -c
+mksh	print -r -- $'\c\x41' | od -An -c
+mksh	echo 'a\Eb' | od -An -c
+mksh	print 'a\cb'; print c
+mksh	echo 'a\cb'; echo c
+mksh	print -n 'x\c'; print y
+mksh	for ((i=0;i<3;i++)); do echo $i; done; echo after
+mksh	echo before; for ((;;)); do break; done
+mksh	x=1; f() { typeset x; x=2; }; f; echo $x
+mksh	f() { local -r r=1; r=2 2>/dev/null; echo in$?; }; f; echo ${r-u}
+mksh	f() { local a; set -A a 1 2; echo ${#a[*]}; }; f; echo ${#a[*]}
+mksh	function f { typeset -u u=abc; echo $u; }; f; echo ${u-u}
+mksh	f() { local x=1; unset x; echo ${x-gone}; }; x=out; f
+mksh	set -A a 1 2 3; unset 'a[1]'; set +A a x y; echo ${a[*]} ${!a[*]}
+mksh	set -A a -- -x y; echo ${a[0]}
+mksh	typeset -n r=v; v=1; echo ${!r}
+mksh	f() { typeset -n ref=$1; ref=set; }; f out; echo $out
+mksh	set -- -c; getopts :ab o; echo "$o" "$OPTARG"
+mksh	whence -v if; whence -v nosuch; echo rc=$?
+mksh	x=abc; typeset -u x; echo $x; typeset -l x; echo $x
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- -x; while getopts :ab o; do printf '%s[%s]\n' "$o" "${OPTARG-u}"; done
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- -x; while getopts ab o 2>/dev/null; do printf '%s[%s]\n' "$o" "${OPTARG-u}"; done
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- -c; while getopts :c: o; do printf '%s[%s]\n' "$o" "${OPTARG-u}"; done
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- -c; while getopts c: o 2>/dev/null; do printf '%s[%s]\n' "$o" "${OPTARG-u}"; done
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- -a -- -b; while getopts ab o; do printf '%s' "$o"; done; printf ' %s\n' "$OPTIND"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- -carg; getopts c: o; printf '%s %s %s\n' "$o" "$OPTARG" "$OPTIND"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	getopts ab o -a -b; printf '%s %s\n' "$o" "$OPTIND"; getopts ab o -a -b; printf '%s %s\n' "$o" "$OPTIND"; getopts ab o -a -b; printf '%s %s %s\n' "$?" "$o" "$OPTIND"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- a -b; getopts b o; printf '%s %s %s\n' "$?" "$o" "$OPTIND"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- -a; getopts a o; OPTIND=1; set -- -b; getopts ab o; printf '%s %s\n' "$o" "$OPTIND"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- -; getopts a o; printf '%s %s %s\n' "$?" "$o" "$OPTIND"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'a\\\nb c\n' | { read x y; printf '[%s][%s]\n' "$x" "$y"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'a\\\nb c\n' | { read -r x y; printf '[%s][%s]\n' "$x" "$y"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf ' a  b  c \n' | { read x y; printf '[%s][%s]\n' "$x" "$y"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'a::b:c:\n' | { IFS=: read x y z; printf '[%s][%s][%s]\n' "$x" "$y" "$z"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'a : b : c\n' | { IFS=' :' read x y z; printf '[%s][%s][%s]\n' "$x" "$y" "$z"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'a:b\n' | { IFS=: read x y z w; printf '[%s][%s][%s][%s]\n' "$x" "$y" "${z-u}" "${w-u}"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'a:b:\n' | { IFS=: read x y; printf '[%s][%s]\n' "$x" "$y"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'a:b::\n' | { IFS=: read x y; printf '[%s][%s]\n' "$x" "$y"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'abc' | { read x; printf '%s [%s]\n' "$?" "$x"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'a\\tb\n' | { read x; printf '[%s]\n' "$x"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '  x  \n' | { IFS= read x; printf '[%s]\n' "$x"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s-%s\n' a b c
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s %d\n' a
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%d %d\n' "'a" '"b'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%d\n' abc; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%b|%s\n' 'a\tb' 'a\tb'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%b\n' 'x\cy' z; printf 'after\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%o %x %X %u\n' 8 255 255 3
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%5s|%-5s|%.2s\n' ab cd efgh
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%05d|%+d|% d\n' 42 5 5
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%d\n' 0x1f 010
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '\101\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%b\n' '\0101' '\101'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'x\n' extra
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%*d|\n' 5 3
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%i\n' -7
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ ! -n "" ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ ! = x ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ ! ! = ! ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ a = a -a b = c ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ a = a -o b = c ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ a = b -o a = a -a b = c ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ ! a = b ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ \( a = a \) ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ -n ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ -z ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ x ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ 1 -eq a ] 2>/dev/null; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ 1 -eq ] 2>/dev/null; printf '%s\n' "$?"
+zsh,bash,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ a = b c ] 2>/dev/null; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ a = a 2>/dev/null; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	test 10 -gt 9; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	test 010 -eq 10; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	test -5 -lt 3; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	test ' 5 ' -eq 5 2>/dev/null; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	test a \< b; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	test = = =; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	test -n -n; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	test ! ; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	test ! -z; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	test -d . -a -d /; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ "" -a x ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -e; false || true; printf 'a\n'; ! true; printf 'b\n'; false && true; printf 'c\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -e; f() { false; printf 'in\n'; }; f || printf 'or\n'; printf 'end\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -e; (false; printf 'sub\n'); printf 'after\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -e; x=$(false); printf 'x\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -e; if false; then :; fi; while false; do :; done; printf 'ok\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -e; false; printf 'no\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -e; f() { return 3; }; f; printf 'no\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -u; printf '%s\n' "${u-dflt}" "${u:-d2}"; printf '%s\n' "$u" 2>/dev/null; printf 'no\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -u; printf '%s\n' "$#" "$@" x
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -u; printf '%s\n' "$*" y
+zsh,bash,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -u; f() { printf '%s\n' "$1"; }; f 2>/dev/null; printf 'no\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	(trap 'printf "exit\n"' EXIT; printf 'body\n'); printf 'after\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	trap 'printf "e %s\n" "$?"' EXIT; false
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	trap 'exit 3' EXIT; exit 1
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	trap 'printf "t\n"' EXIT; (exit 4); printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	trap ':' INT; trap 'printf x' TERM; trap
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	trap 'printf hi' EXIT; trap - EXIT; printf 'none\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { trap 'printf "r\n"' EXIT; }; f; printf 'mid\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	trap 'printf "%s\n" "$?"; exit 0' EXIT; false
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(trap 'printf in' EXIT; printf body); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	export ZZA=1 ZZB='a b'; export -p | grep ZZ
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	export ZZC; export -p | grep ZZC
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	readonly ZZR=x; readonly -p | grep ZZR
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	readonly ZZS; readonly -p | grep ZZS
+zsh,bash,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	ZZQ="it's"; export ZZQ; export -p | grep ZZQ
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	umask 022; umask; umask -S
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	umask 0777; umask -S; umask 0; umask -S
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	umask u=rwx,g=rx,o=; umask
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	umask a-w; umask
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	command -v printf; command -v cd; command -v nonexistent_zz; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { :; }; command -v f
+zsh,bash,sh,dash,sh/zsh-style,ksh/zsh-style,mksh	alias ll='ls -l'; command -v ll
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	command -v if; command -v for
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	command -v /bin/ls
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	command -v sh
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { :; }; command -V f >/dev/null; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	command -V nonexistent_zz >/dev/null 2>&1; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	type nonexistent_zz >/dev/null 2>&1; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	type cd
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { :; }; type f | head -1
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- a b; shift 3 2>/dev/null; printf '%s %s\n' "$?" "$#"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- a b; shift 2; printf '%s %s\n' "$?" "$#"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	shift; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- a b c; shift 0; printf '%s\n' "$#"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	eval 'eval "printf \"%s\\n\" nested"'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=1; eval 'x=$((x+1)); eval "x=\$((x*10))"'; printf '%s\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	eval 'if' 2>/dev/null; printf 'st %s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	eval 'printf a; (' 2>/dev/null; printf 'st %s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	false; eval ''; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	eval 'false'; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	eval 'exit 5'; printf 'no\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "$((-3/2))" "$((-3%2))" "$((7%-3))"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "$((1?2:3))" "$((0?2:3))" "$((1?0?4:5:6))"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=5; printf '%s\n' "$((x+=2))" "$((x-=1))" "$((x*=3))" "$((x/=4))" "$((x%=3))" "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=6; printf '%s\n' "$((x<<=2))" "$((x>>=1))" "$((x&=7))" "$((x|=8))" "$((x^=3))"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "$((010))" "$((0x10))" "$((0X1f))"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "$((!0))" "$((!5))" "$((~0))" "$((-(-3)))" "$((+4))"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "$((2>1&&0||3))" "$((1&&0))" "$((0||0))"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "$((1<2))" "$((2<=2))" "$((3!=3))" "$((5&3))" "$((5|3))" "$((5^3))"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=3; y=x; printf '%s\n' "$((y+1))"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=; printf '%s\n' "$((x+1))"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=2; printf '%s\n' "$((x=x*x, x+1))" 2>/dev/null; printf '%s\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "$((08))" 2>/dev/null; printf 'st\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "$((2147483647+1))"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "$((-9223372036854775807-1))"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	i=1; : $((i++)) $((++i)); printf '%s\n' "$i" 2>/dev/null
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=abc.tar.gz; printf '%s\n' "${x%%.*}" "${x%.*}" "${x#*.}" "${x##*.}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=a1b2c3; printf '%s\n' "${x%%[0-9]*}" "${x##*[0-9]}" "${x#[!0-9]}" "${x%[[:digit:]]}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x='a]b'; printf '%s\n' "${x%]*}" "${x#*[]]}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x='a*b'; printf '%s\n' "${x%\**}" "${x#*"*"}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=hello; p='l*'; printf '%s\n' "${x%$p}" "${x%"$p"}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=/a/b/c; printf '%s\n' "${x##*/}" "${x%/*}" "${#x}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=; printf '[%s][%s][%s][%s]\n' "${x-a}" "${x:-b}" "${x+c}" "${x:+d}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	unset x; printf '[%s][%s]\n' "${x=set}" "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=; printf '[%s][%s]\n' "${x:=set}" "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	case 'a*' in 'a*') printf q;; a*) printf g;; esac; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	case abc in 'a*') printf q;; a*) printf g;; esac; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	case abc in "a"*) printf y;; esac; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	p='a*'; case abc in $p) printf u;; esac; case abc in "$p") printf q;; esac; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	case x in [!a]) printf neg;; esac; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	case ']' in []]) printf br;; esac; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	case - in [a-]) printf dash;; esac; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	case foo in f|g) printf no;; f*|g) printf yes;; esac; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	case '' in '') printf empty;; esac; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	case x in (x) printf paren;; esac; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	case a in a) printf 1;& b) printf 2;; esac 2>/dev/null; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=v; cat <<EOF2<NL>$x \$x `echo c`<NL>EOF2
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=v; cat <<'EOF2'<NL>$x \$x<NL>EOF2
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=v; cat <<"E"<NL>$x<NL>E
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	cat <<-EOF2<NL>	tab<NL>		two<NL>	EOF2
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	cat <<EOF2<NL>a\<NL>b<NL>EOF2
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	cat <<EOF2<NL>"q" 'q' \"<NL>EOF2
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	cat <<A; cat <<B<NL>1<NL>A<NL>2<NL>B
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { cat; }; f <<EOF2<NL>in fn<NL>EOF2
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(cat <<EOF2<NL>sub<NL>EOF2<NL>); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	cat <<EOF2<NL>$((1+2)) ${x-u}<NL>EOF2
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	readonly r=1; r=2 2>/dev/null; printf 'no\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	readonly r=1; export r=3 2>/dev/null; printf 'no %s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -o nonexistent_zz 2>/dev/null; printf 'no\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	shift 5 2>/dev/null; printf 'reached %s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	unset -f nonexistent_zz; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	readonly r=1; unset r 2>/dev/null; printf 'st %s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	exit 2>/dev/null 300; printf no
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	(exit 256); printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	(exit -1) 2>/dev/null; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	false; (exit); printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { return 300; }; f 2>/dev/null; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	trap 'printf trap; exit 9' EXIT; printf body; exit 2
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	trap 'false' EXIT; exit 0
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	trap 'printf "[%s]" "$?"' EXIT; (exit 6); exit
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -e; trap 'printf "e%s\n" "$?"' EXIT; false; printf no
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -f; printf '%s\n' /*; set +f
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -n; printf no
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- 'a b' c; IFS=:; printf '%s\n' "$*"; printf '%s\n' "$@"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- 'a b' c; IFS=; printf '%s\n' "$*"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- a b; unset IFS; printf '%s\n' "$*"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x='a  b:c'; IFS=': '; set -- $x; printf '%s|' "$@"; printf '%s\n' "$#"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=' :a::b: '; IFS=': '; set -- $x; printf '<%s>' "$@"; printf '%s\n' "$#"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x='a:b:'; IFS=:; set -- $x; printf '<%s>' "$@"; printf '%s\n' "$#"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- 1 2 3 4 5 6 7 8 9 10 11; printf '%s %s\n' "$10" "${10}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { local x=1 2>/dev/null; printf '%s\n' "$x"; }; f
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%.3d|%3.1s|%-3c|\n' 7 xyz q
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%e\n' 1 2>/dev/null
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%x\n' -1
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%d\n' -0x10
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%d %s\n' 1 a 2 b 3
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'a\0b\n' | od -c | head -1
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh	printf '%b\n' '\x41' 2>/dev/null
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh	printf '\x41\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%b' 'a\nb\c'; printf '|\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf -- '-%s\n' x
+zsh,bash,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%5%|\n' 2>/dev/null
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%q\n' 'a b' 2>/dev/null; printf 'st %s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'a b c d\n' | { read x y; printf '[%s][%s]\n' "$x" "$y"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'a\\ b c\n' | { read x y; printf '[%s][%s]\n' "$x" "$y"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'a\\\\b\n' | { read x; printf '[%s]\n' "$x"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'x\\\n' | { read x; printf '%s [%s]\n' "$?" "$x"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'l1\nl2\n' | { read a; read b; printf '%s %s\n' "$a" "$b"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '\n' | { read x; printf '%s [%s]\n' "$?" "$x"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '' | { read x; printf '%s [%s]\n' "$?" "${x-u}"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'a b\n' | { read x; printf '[%s]\n' "$x"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '  a b  \n' | { read x; printf '[%s]\n' "$x"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'a,b,,c\n' | { IFS=, read x y z; printf '[%s][%s][%s]\n' "$x" "$y" "$z"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf ',a\n' | { IFS=, read x y; printf '[%s][%s]\n' "$x" "$y"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'a, b ,c\n' | { IFS=', ' read x y z; printf '[%s][%s][%s]\n' "$x" "$y" "$z"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'a b \n' | { read x y; printf '[%s][%s]\n' "$x" "$y"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'a b c  \n' | { read x y; printf '[%s][%s]\n' "$x" "$y"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'a:b:c::\n' | { IFS=: read x y; printf '[%s][%s]\n' "$x" "$y"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'a:b: \n' | { IFS=': ' read x y; printf '[%s][%s]\n' "$x" "$y"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,ash	printf 'v\n' | { read 1x 2>/dev/null; printf '%s\n' "$?"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	IFS=: ; x='a::b'; for w in $x; do printf '<%s>' "$w"; done; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x='  a  '; printf '[%s]\n' $x
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- $(printf 'a\nb\n'); printf '%s\n' "$#"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { printf '%s\n' "$#"; }; f "" ""; f $(true)
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { return; }; false; f; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	for i in 1 2 3; do for j in a b; do [ $j = b ] && continue 2; printf '%s%s ' $i $j; done; done; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	for i in 1 2 3; do for j in a b; do break 2; done; printf no; done; printf 'out\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	i=0; while :; do i=$((i+1)); [ $i -gt 3 ] && break; done; printf '%s\n' "$i"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	for i; do printf '%s' "$i"; done; printf 'x\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- a b; for i; do printf '%s' "$i"; done; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	for i in; do printf no; done; printf 'empty\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=0; until [ $x -ge 2 ]; do x=$((x+1)); done; printf '%s\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	false; while false; do :; done; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	false; for i in; do :; done; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	false; case x in y) ;; esac; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	false; if false; then :; fi; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	false; { true; }; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	! false | false; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=1 y=$x; printf '%s\n' "$y"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(false) ; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=a; x=b true; printf '%s\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { printf '%s\n' "$v"; }; v=1 f; printf '[%s]\n' "${v-u}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	v=0; v=1 :; printf '%s\n' "$v"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	alias a1='printf "%s\n" al'; eval a1
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh	alias e='printf x'; alias e; unalias e; alias e 2>/dev/null; printf ' %s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "${#}" "${##}" 2>/dev/null
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- a b c; printf '%s\n' "${#@}" 2>/dev/null
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "$((${#PWD} > 0))"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' a"$@"b
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- 1 2; printf '[%s]' a"$@"b; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- ; printf '[%s]' "$@"; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- ; printf '[%s]' x"$@"; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- ; printf '[%s]' "$*"; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	echo 'a\tb\nc'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	echo -n x; echo y
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	echo 'a\c'; echo b
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	echo '\0101'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x='1+2'; printf '%s\n' "$((x*2))"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x='y'; y='3'; printf '%s\n' "$((x+1))"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "${x+"a b"}" "${u-"c d"}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=v; printf '%s\n' "${x:+"$x x"}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "${u-'q'}" "${u-\$}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "${u-a}b" ${u-"x y"}
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x="a'b"; printf '%s\n' "${x#*\'}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x='a"b'; printf '%s\n' "${x%\"*}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=aXbXc; printf '%s\n' "${x#*X}" "${x##*X}" "${x%X*}" "${x%%X*}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=abc; printf '%s\n' "${x#}" "${x%}" "${x#abc}" "${x#abcd}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x='*.c'; printf '%s\n' "${x#\*}" "${x#'*'}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	exec 3>&1; printf 'to3\n' >&3; exec 3>&-; printf 'ok\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	{ printf 'out\n'; printf 'err\n' >&2; } 2>&1
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	{ printf 'a\n' >&3; } 3>&1
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'x\n' 1>&2 2>/dev/null
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { printf 'f\n'; } >/dev/null; f; printf 'after\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$( { printf 'e\n' >&2; } 2>&1 ); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	cat <<EOF2 | tr a-z A-Z<NL>up<NL>EOF2
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	read x <<EOF2<NL>heredoc line<NL>EOF2<NL>printf '%s\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	read x <<'EOF2'<NL>  sp  $y<NL>EOF2<NL>printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	exec 2>/dev/null; nonexistent_zz; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	nonexistent_zz 2>/dev/null; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	cd ''; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=~; [ "$x" = "$HOME" ] && printf ok; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "$(printf '%s' "$(printf 'n')")"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "`printf '%s' \`printf q\``"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "$(echo ')')"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	trap 'printf "a b"' INT; trap -p INT 2>/dev/null; trap | head -1
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	trap "printf 'q'" HUP; trap
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	trap '' QUIT; trap
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	trap 'x' 0; trap
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	trap - INT; trap 'y' 2; trap
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	trap 'z' EXIT USR1; trap; trap - EXIT
+bash,ksh,sh,dash,mksh,ash	trap 'printf hi' 99 2>/dev/null; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	trap 'printf hi' BOGUS 2>/dev/null; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { printf x; }; type f
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	command -V if
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	alias zz=yy; command -V zz
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	command -V cd
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	type ls >/dev/null; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { local x=2; printf '%s\n' "$x"; }; x=1; f; printf '%s\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { local x; printf '[%s]\n' "${x-unset}"; }; x=1; f
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { local x; x=3; g; }; g() { printf '%s\n' "$x"; }; x=1; f; printf '%s\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { exit 4; printf no; }; f; printf no
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { return 2; }; f; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	return 2>/dev/null; printf 'after %s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	break 2>/dev/null; printf 'after %s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	continue 2>/dev/null; printf 'after %s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	for i in 1 2; do break 5; printf no; done; printf 'ok\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { eval 'return 3'; printf no; }; f; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- -x; printf '%s\n' "$1"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- --; printf '%s\n' "$#"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -x; set +x 2>/dev/null; printf 'ok\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -v 2>/dev/null; printf 'v\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	(set -e; false; printf no); printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -e; ! false; f() { false; }; ! f; printf 'ok\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -e; x=$(false; printf in); printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -e; false | true; printf 'ok\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -e; true | false; printf no
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -e; { false; printf no; } || printf 'or\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -e; f() { false; printf in; }; if f; then printf then; fi; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -e; for i in 1; do false; done; printf no
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -e; case x in x) false;; esac; printf no
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -e; (exit 3) || printf 'c %s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -e; [ 1 = 2 ]; printf no
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -eu; printf '%s\n' "${1:-none}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -u; : "${1}" 2>/dev/null; printf no
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -u; printf '%s\n' "${#}" "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -u; unset x; printf '%s\n' "${x:+set}" "${x+set}" end
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -u; printf '%s\n' "${#u}" 2>/dev/null; printf no
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- -a -b; getopts ab o; getopts ab o; getopts ab o; printf '%s %s %s\n' "$?" "$o" "$OPTIND"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- -ab; getopts ab o; printf '%s %s\n' "$o" "$OPTIND"; getopts ab o; printf '%s %s\n' "$o" "$OPTIND"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- -a x -b; while getopts ab o; do printf '%s' "$o"; done; printf ' %s\n' "$OPTIND"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- -c val -a; while getopts ac: o; do printf '%s=%s ' "$o" "${OPTARG-}"; done; printf '%s\n' "$OPTIND"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- -c -a; while getopts ac: o; do printf '%s=%s ' "$o" "${OPTARG-}"; done; printf '%s\n' "$OPTIND"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- -cval; getopts :c: o; printf '%s=%s %s\n' "$o" "$OPTARG" "$OPTIND"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- -a; getopts :b o; printf '%s=%s %s\n' "$o" "$OPTARG" "$OPTIND"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- -ax; getopts :a o; getopts :a o; printf '%s=%s %s\n' "$o" "$OPTARG" "$OPTIND"
+zsh,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,ash	set -- +a; getopts a o; printf '%s %s %s\n' "$?" "$o" "$OPTIND"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- -a; getopts a o x y; printf '%s %s %s\n' "$?" "$o" "$OPTIND"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { local OPTIND; while getopts a o; do printf '%s' "$o"; done; }; set -- -a; f -a; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh	set -- -a -b; getopts ab o; OPTIND=1; getopts ab o; printf '%s %s\n' "$o" "$OPTIND"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- -a -- x; while getopts a o; do :; done; shift $((OPTIND-1)); printf '%s\n' "$*"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%d\n' ' 42'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%d\n' '+7'
+zsh,bash,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%d\n' '-'  2>/dev/null; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%d\n' '' ; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%o\n' 0
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%#o %#x\n' 8 255
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%c%c\n' 1 23
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' 1 2 3 | tr '\n' ,; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%b\n' '\\' '\a' | od -c | head -1
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh	printf '%b\n' '\e' | od -c | head -1
+zsh,bash,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '\q\n' 2>/dev/null
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%-+5d|\n' 3
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%.0f %.1f\n' 2.5 0.05
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%g\n' 100000 1000000 0.0001
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s %s %s\n' a b
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%d%%\n' 50
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%.*s\n' 2 abcd
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%5.3s|\n' abcdef
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%-5d|%5s|\n' -3 x
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%x %o\n' "'A" "'A"
+zsh,bash,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%d\n' "'"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "$((0x7fffffffffffffff))"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "$((1<<63))" "$((1<<64))" 2>/dev/null
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "$(( -5 >> 1 ))"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "$(( 7 / 2 * 2 ))" "$(( 2 ** 3 ))" 2>/dev/null
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=10; printf '%s\n' "$(( x > 5 ? x - 5 : x + 5 ))"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "$(( (1+2) * (3+4) ))"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=3; : $(( y = x += 2 )); printf '%s %s\n' "$x" "$y"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "$((  1  ))" "$((0))" "$((-0))"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "$((077))" "$((0xff))" "$((0xFF))"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=010; printf '%s\n' "$((x))"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=0x10; printf '%s\n' "$((x+0))"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=' 5 '; printf '%s\n' "$((x+1))"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	case 'a\b' in 'a\b') printf 1;; esac; case 'a\b' in a\\b) printf 2;; esac; case 'a\b' in "a\\b") printf 3;; esac; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	case '*' in \*) printf star;; esac; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	case 'x?' in x\?) printf q;; esac; case xy in x\?) printf no;; esac; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	case a in [[:alpha:]]) printf A;; esac; case 1 in [[:alpha:]]) printf no;; [[:digit:]]) printf D;; esac; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	case '!' in [!!]) printf no;; *) printf bang;; esac; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	case '^' in [\^]) printf caret;; esac; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x='[ab]'; case a in $x) printf pat;; esac; case '[ab]' in "$x") printf lit;; esac; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	case abc in *b*) printf mid;; esac; case abc in ?b?) printf q3;; esac; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	case '' in *) printf any;; esac; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	case .x in *x) printf dot;; esac; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	case a/b in a*b) printf slash;; esac; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	case x in x) ;; esac; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	false; case x in x) ;; esac; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	case x in x) false;; esac; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	v=b; case $v in a) printf A;; b|c) printf BC;; esac; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	cat <<EOF2<NL>x\$y \\ \` end<NL>EOF2
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	cat <<EOF2<NL>${u:-def} $(printf cs)<NL>EOF2
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	cat << 'E F'<NL>a<NL>E F
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	cat <<\EOF2<NL>$x<NL>EOF2
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	cat <<E""OF2<NL>$x<NL>EOF2
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	cat <<-'X'<NL>		$v<NL>	X
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	cat <<EOF2<NL><NL>blank above<NL>EOF2
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	cat <<EOF2<NL>EOF2
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=1; cat <<EOF2<NL>$x<NL>EOF2<NL>x=2; cat <<EOF2<NL>$x<NL>EOF2
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	cat <<EOF2 >/dev/null; printf 'r %s\n' "$?"<NL>z<NL>EOF2
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	while read l; do printf '<%s>' "$l"; done <<EOF2<NL>a<NL>b<NL>EOF2<NL>printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	cat <<EOF2<NL>tab	inside<NL>EOF2
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	cat <<EOF2<NL>'$x'"$x"<NL>EOF2
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { cat <<EOF2<NL>$1<NL>EOF2<NL>}; f arg
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' 'a'"b"'c'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "a\$b" "a\`b" "a\\b" "a\qb" "a\"b"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' 'it'\''s'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "$(printf '%s' "a b")"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' \a\b
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' a\
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x='a b'; printf '[%s]\n' $x "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x='*'; cd /; printf '[%s]\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -f; x='*'; printf '[%s]\n' $x
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=''; printf '[%s]\n' $x; printf 'n\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '[%s]\n' "" ''
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '[%s]\n' "$@"x
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	IFS=x; v=axbxc; printf '[%s]' $v; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	IFS=' '; v=' a  b '; printf '[%s]' $v; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	v='a	b'; printf '[%s]' $v; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	IFS=; v='a b'; printf '[%s]' $v; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	unset IFS; v='a:b c'; printf '[%s]' $v; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	IFS=:; set -- a b; x="$*"; printf '%s\n' "$x"; x=$*; printf '%s\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	IFS=:; set -- a b; printf '%s\n' "${*}" "${@}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	: ${u?msg} 2>/dev/null; printf 'no\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' ${u?msg} 2>/dev/null; printf 'no\n'
+zsh,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	readonly ro=1; ro=2 : 2>/dev/null; printf 'no\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -o bogus_zz 2>/dev/null; printf 'no\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	trap 'x' BOGUS 2>/dev/null; printf 'tb %s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,ash	exit abc 2>/dev/null; printf 'no\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	eval 'fi' 2>/dev/null; printf 'no\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	(eval 'fi') 2>/dev/null; printf 'st %s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=$(eval 'fi' 2>/dev/null); printf 'st %s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	eval 'printf "%s\n" "$((1+1))"'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	eval "x='a b'"; printf '%s\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	cmd='printf "%s\n" one; printf "%s\n" two'; eval "$cmd"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	eval 'f() { printf "fn\n"; }'; f
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- a b c; eval "printf '%s\n' \"\${$#}\""
+zsh,bash,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { unset -f f; printf once; }; f; f 2>/dev/null; printf ' %s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=1; unset x; printf '%s\n' "${x-gone}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { :; }; unset f; type f >/dev/null 2>&1; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { printf '%s\n' "$0"; }; f | grep -c . 
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	command -p printf '%s\n' cp
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	command printf '%s\n' plain
+zsh,bash,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { printf fn; }; command f 2>/dev/null; printf ' %s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf() { echo shadow; }; command printf '%s\n' real
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	exec printf '%s\n' exec'd; printf no
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	(exec false); printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	exec 2>&1; printf 'x\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'a\\:b:c\n' | { IFS=: read x y; printf '[%s][%s]\n' "$x" "$y"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'a\\:b:c\n' | { IFS=: read -r x y; printf '[%s][%s]\n' "$x" "$y"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'a b\\\n c\n' | { read x y; printf '[%s][%s]\n' "$x" "$y"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'a\\\n' | { read x; printf '%s [%s]\n' "$?" "$x"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'end' | { read x y; printf '%s [%s][%s]\n' "$?" "$x" "$y"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '\\' | { read x; printf '%s [%s]\n' "$?" "$x"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'x y z\n' | { read; printf '[%s]\n' "${REPLY-unset}"; } 2>/dev/null
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf ' a \n' | { IFS=' ' read -r x; printf '[%s]\n' "$x"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'a  b\n' | { IFS=' ' read x y z; printf '[%s][%s][%s]\n' "$x" "$y" "$z"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf ':a\n' | { IFS=': ' read x y; printf '[%s][%s]\n' "$x" "$y"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf ' : a\n' | { IFS=': ' read x y; printf '[%s][%s]\n' "$x" "$y"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'a::\n' | { IFS=: read x y; printf '[%s][%s]\n' "$x" "$y"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'a:\n' | { IFS=: read x y; printf '[%s][%s]\n' "$x" "$y"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'a:b:\n' | { IFS=: read x; printf '[%s]\n' "$x"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'a: :\n' | { IFS=': ' read x y; printf '[%s][%s]\n' "$x" "$y"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'x\n' | { read a b c; printf '[%s][%s][%s]\n' "$a" "${b-u}" "${c-u}"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'é ü\n' | { read a b; printf '[%s][%s]\n' "$a" "$b"; }
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'one\ntwo\n' | while read l; do printf '<%s>' "$l"; done; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'one\ntwo' | while read l; do printf '<%s>' "$l"; done; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf 'one\ntwo' | while read l || [ -n "$l" ]; do printf '<%s>' "$l"; done; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	test +5 -eq 5; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	test 5 -eq ' 5'; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	test 5 -eq '5 ' 2>/dev/null; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	test -0 -eq 0; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	test 9223372036854775807 -gt 0; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	test 99999999999999999999 -gt 0 2>/dev/null; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	test '' -eq 0 2>/dev/null; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	test 0x10 -eq 16 2>/dev/null; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ ! ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ ! ! ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ -n x -a ! -n '' ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ ! -n x -o -n x ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ \( ! -n x \) -o -n x ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ x -a '' ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ -a ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ -o ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ = ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,mksh,ash	[ ( ]; printf '%s\n' "$?" 2>/dev/null
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ \( \) ] 2>/dev/null; printf '%s\n' "$?"
+zsh,bash,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ \( x \) -a \( y \) ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ a != a ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ abc \> abd ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ -z "" -a -z "" ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ 1 -ne 2 ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ 2 -ge 2 -a 3 -le 2 ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ -d / ] && [ ! -f / ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ -r /dev/null -a -w /dev/null ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ -c /dev/null ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ -s /dev/null ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ -L /dev/null ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ -h / ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ -x / ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ -S / ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ -p / ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ / -ef / ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ / -nt / ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ -t 99 ]; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ 1 -eq 1 ] extra 2>/dev/null; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	[ x = x 2>/dev/null; printf '%s\n' "$?"
+zsh,bash,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	test x = x ]; printf '%s\n' "$?" 
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	zzv='a b'; set | grep '^zzv='
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	zzv="it's"; set | grep '^zzv='
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	zzv='plain'; set | grep '^zzv='
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	zzv='$x'; set | grep '^zzv='
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	zzv='a"b'; set | grep '^zzv='
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	zzv='a\b'; set | grep '^zzv='
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	zzv='*'; set | grep '^zzv='
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,ash	zzv='~'; set | grep '^zzv='
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	zzv='x;y'; set | grep '^zzv='
+zsh,bash,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	export ZZW="it's"; export -p | grep ZZW
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	export ZZW='a"b$c'; export -p | grep ZZW
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	export ZZW=''; export -p | grep ZZW
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	export ZZW='a\b'; export -p | grep ZZW
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,ash	export ZZW='~'; export -p | grep ZZW
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	readonly ZZW='x y'; readonly -p | grep ZZW
+zsh,bash,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	readonly ZZW="q'q"; readonly -p | grep ZZW
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	trap 'printf "%s\n" "$x"' INT; trap
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	trap 'a;b' USR2; trap
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh	alias zq=plain; alias zq
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh	alias zq='a b' zr=c; alias zq zr
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh	alias zq=''; alias zq
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	alias nonexist_zz 2>/dev/null; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	unalias nonexist_zz 2>/dev/null; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	alias zq='printf ok\\n'; zq
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	alias zq='printf "%s\n" '; alias zr=hi; eval 'zq zr'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { printf '%s\n' "$@"; }; alias f2=f; eval 'f2 x'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	umask 0027; umask -S
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	umask 0002; umask -S
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	umask 0777; umask
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	umask u-w; umask
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	umask g+w,o-r; umask
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	umask =; umask
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	umask a=rx; umask
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	umask go=; umask
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	umask 0022; umask o+x; umask
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	type cd printf | head -2
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	type : true false
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	command -v : true
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	command -v '['
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { printf '%s|' "$@"; printf '\n'; }; set -- 'a b' c; f "$@" "$*" $*
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { shift; printf '%s\n' "$#"; }; f a b c; printf '%s\n' "$#"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { set -- x y; }; set -- a; f; printf '%s\n' "$1"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { printf '%s\n' "$1"; }; f "$(printf 'a\nb')"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	g() { return 3; }; f() { g; printf '%s\n' "$?"; }; f
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { (return 4); printf '%s\n' "$?"; }; f
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { false; }; f; printf '%s\n' "$?"; f && printf no; printf '\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { printf '%s\n' "$FUNCNAME"; }; f 2>/dev/null | od -c | head -1 >/dev/null; printf ok\\n
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() ( x=in; printf '%s\n' "$x" ); x=out; f; printf '%s\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { x=in; }; x=out; f; printf '%s\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { :; } ; f() { printf two\\n; }; f
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f () { printf sp\\n; }; f
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f()<NL>{<NL>printf nl\\n<NL>}<NL>f
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() if true; then printf if\\n; fi; f
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() case x in x) printf case\\n;; esac; f
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { printf '%s\n' "$@"; } >/dev/null; f a; printf 'b\n'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=1; f() { printf '%s\n' "$x"; }; x=2 f; printf '%s\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	cnt=0; f() { cnt=$((cnt+1)); [ $cnt -lt 5 ] && f; }; f; printf '%s\n' "$cnt"
+zsh,bash,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	(f() { printf sub\\n; }; f); f 2>/dev/null; printf '%s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { local a=1 b; b=2; printf '%s%s\n' "$a" "$b"; }; f; printf '[%s%s]\n' "${a-}" "${b-}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' $((1)) "$((2))" $(( 3 ))
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=5; printf '%s\n' "$(( x ))" "$(( $x ))" "$((x))"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=2; y=3; printf '%s\n' "$(( x * y + x ** 0 ))" 2>/dev/null
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "$((10 % 3)) $((-10 % 3)) $((10 / -3))"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "$(( 1 << 2 | 1 ))" "$(( 6 & 3 ^ 1 ))" "$(( ~5 & 7 ))"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "$(( (2+3) > 4 && 1 ))"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=3; printf '%s\n' "$(( x == 3 ? 10 : 20 ))"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=0; printf '%s %s\n' "$((x++))" "$x" 2>/dev/null
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=0; printf '%s %s\n' "$((++x))" "$x" 2>/dev/null
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=5; printf '%s %s\n' "$((x--))" "$((--x))" 2>/dev/null
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	a=1; b=a; c=b; printf '%s\n' "$((c+1))"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=1; x=$((x)) ; printf '%s\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "$(( 0x10 + 010 + 10 ))"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "$((   ))" 2>/dev/null; printf 'st %s\n' "$?"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh	alias zq="'q"; alias zq
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh	alias zq="q'"; alias zq
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh	alias zq="a''b"; alias zq
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh	alias zq="''"; alias zq
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh	alias zq="echo 'q'"; alias zq
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh	alias zq="it's"; alias zq
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=abcabc; printf '%s\n' "${x#*b}" "${x##*b}" "${x%b*}" "${x%%b*}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=aaa; printf '%s\n' "${x#a}" "${x##a}" "${x#a*}" "${x##a*}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x='a.b.c'; printf '%s\n' "${x%.[a-z]}" "${x#[!.]*.}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=foo; printf '%s\n' "${x#[fF]}" "${x%[[:lower:]]}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x='a b'; printf '%s\n' "${x% *}" "${x#* }"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=/usr/local/bin; printf '%s\n' "${x#/*/}" "${x##/*/}" "${x%/*/*}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=ab; printf '%s\n' "${x#?}" "${x%?}" "${x#??}" "${x#???}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x='\a'; printf '%s\n' "${x#\\}" "${x#'\'}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=abc; y=b; printf '%s\n' "${x#a$y}" "${x%"$y"c}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x='a?c'; printf '%s\n' "${x#a\?}" "${x#a?}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=; printf '[%s]\n' "${x#a}" "${#x}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	unset x; printf '[%s]\n' "${x#a}" "${x%%*}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- abc def; printf '%s\n' "${1#a}" "${2%f}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=12345; printf '%s\n' "${#x}" "${x%"${x#??}"}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=hello; printf '%s\n' "${x%l*}" "${x%%l*}" "${x#*l}" "${x##*l}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x='[x]'; printf '%s\n' "${x#\[}" "${x%\]}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x='a*b*c'; printf '%s\n' "${x#*\*}" "${x##*\*}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=v; printf '%s\n' "${x:+${x}${x}}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "${u:-${u2:-deep}}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=; printf '%s\n' "${x:-a}${x-b}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	unset x; : ${x:=assigned}; printf '%s\n' "$x"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	unset x; printf '%s\n' "${x:=a b}"; printf '%s\n' $x
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	x=5; printf '%s\n' "${x:+set}${x:-unset}"
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	printf '%s\n' "${#HOME}" | grep -c '^[0-9]'
+zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { printf '%s\n' "${1+set}" "${2-unset}"; }; f ''
+zsh	- echo dash 2>&1
+zsh	alias -s txt=echo; x.txt 2>&1
+zsh	f g() { echo fg; }; g
+zsh	f() { repeat 3 echo; select x in a; do :; done; }; functions f
+zsh	print -P '%e %i %I %_' 
+zsh	printf '%5%|\n' 2>&1
+zsh	printf '%a\n' 1 2>&1
+zsh	read -a arr <<< "1 2 3" 2>&1; echo ${arr[1]}
+zsh	repeat 2 echo r
+zsh	x=1 builtin :; echo ${x-u}
+zsh	x=1; readonly x; x=2 2>&1; echo $x
+zsh,ksh/zsh-style	case x { x) echo X;; }
+zsh,ksh/zsh-style	f() { () { echo ${funcstack[@]}; } }; f
+zsh,ksh/zsh-style	foreach i (a b) { echo $i } 2>&1
+zsh,ksh/zsh-style	if [[ 1 == 1 ]] { echo y } else { echo n }
+zsh,sh/zsh-style,ksh/zsh-style	_x=1; echo $_x
+zsh,sh/zsh-style,ksh/zsh-style	: ${(AA)h::=a 1 b 2}; print -r -- ${(kv)h}
+zsh,sh/zsh-style,ksh/zsh-style	: ${x::=foo}; print -r -- $x; : ${y:=bar}; print -r -- $y
+zsh,sh/zsh-style,ksh/zsh-style	(( x = 3 )) ; echo $x
+zsh,sh/zsh-style,ksh/zsh-style	() { local x=1; echo $x; }; echo ${x-u}
+zsh,sh/zsh-style,ksh/zsh-style	(trap 'echo sub' EXIT); echo after
+zsh,sh/zsh-style,ksh/zsh-style	{ echo $((1/0)); } always { echo TRY_BLOCK_ERROR=$TRY_BLOCK_ERROR; }; echo after
+zsh,sh/zsh-style,ksh/zsh-style	{ echo a; } always { echo b; }
+zsh,sh/zsh-style,ksh/zsh-style	{ echo a; exit 2; } ; echo no
+zsh,sh/zsh-style,ksh/zsh-style	{ exit 3; } always { echo cleanup; }
+zsh,sh/zsh-style,ksh/zsh-style	a=$(print -l a b); echo ${#a}
+zsh,sh/zsh-style,ksh/zsh-style	alias -g G='| tr a-z A-Z'; echo hi G
+zsh,sh/zsh-style,ksh/zsh-style	alias a1=b; type a1; alias a1; alias -L a1
+zsh,sh/zsh-style,ksh/zsh-style	alias foo='echo F'; eval 'f() { foo; }'; unalias foo; f 2>&1
+zsh,sh/zsh-style,ksh/zsh-style	alias foo='echo F'; f() { foo; }; f
+zsh,sh/zsh-style,ksh/zsh-style	alias l='echo L'; l
+zsh,sh/zsh-style,ksh/zsh-style	alias q=x; command -v q; command -V q
+zsh,sh/zsh-style,ksh/zsh-style	builtin -- echo b 2>&1
+zsh,sh/zsh-style,ksh/zsh-style	case a in (a) echo A;; esac
+zsh,sh/zsh-style,ksh/zsh-style	case a in a|b) echo A;; esac
+zsh,sh/zsh-style,ksh/zsh-style	cat <<-X<NL>	tab<NL>	X
+zsh,sh/zsh-style,ksh/zsh-style	cat <<< "$((1+1))"
+zsh,sh/zsh-style,ksh/zsh-style	cat <<< here
+zsh,sh/zsh-style,ksh/zsh-style	command -- echo c
+zsh,sh/zsh-style,ksh/zsh-style	command -- echo x
+zsh,sh/zsh-style,ksh/zsh-style	command -p echo hi
+zsh,sh/zsh-style,ksh/zsh-style	command -v echo; command -V echo | head -1
+zsh,sh/zsh-style,ksh/zsh-style	command exit 3; echo no
+zsh,sh/zsh-style,ksh/zsh-style	command export z=1; echo $z
+zsh,sh/zsh-style,ksh/zsh-style	command typeset x=1 2>&1; echo $x
+zsh,sh/zsh-style,ksh/zsh-style	echo -e '\e[0m' | od -c | head -1
+zsh,sh/zsh-style,ksh/zsh-style	echo -n -e 'a\0b' | od -c | head -1
+zsh,sh/zsh-style,ksh/zsh-style	echo -n x; echo -e 'a\x41'; echo -E 'a\x41'
+zsh,sh/zsh-style,ksh/zsh-style	echo '  a  ' | { IFS= read x; echo "[$x]"; }
+zsh,sh/zsh-style,ksh/zsh-style	echo '  a  ' | { read x; echo "[$x]"; }
+zsh,sh/zsh-style,ksh/zsh-style	echo '\0101' 'a\vb' | od -c | head -2
+zsh,sh/zsh-style,ksh/zsh-style	echo 'a\tb'
+zsh,sh/zsh-style,ksh/zsh-style	echo "$(printf 'a\n\n\n')" | od -c | head -1
+zsh,sh/zsh-style,ksh/zsh-style	echo "${(t)x}" 2>&1
+zsh,sh/zsh-style,ksh/zsh-style	echo "${$(echo 'x y')}"
+zsh,sh/zsh-style,ksh/zsh-style	echo {,}
+zsh,sh/zsh-style,ksh/zsh-style	echo {1..-2}
+zsh,sh/zsh-style,ksh/zsh-style	echo {1..3} {a..c} {1..10..3}
+zsh,sh/zsh-style,ksh/zsh-style	echo {a,b,}c
+zsh,sh/zsh-style,ksh/zsh-style	echo {a,b}{c,d}
+zsh,sh/zsh-style,ksh/zsh-style	echo $'a\0b' | od -c | head -1
+zsh,sh/zsh-style,ksh/zsh-style	echo $'a\x41' 
+zsh,sh/zsh-style,ksh/zsh-style	echo $(( -0.0 )) $(( 1e-320 )) 2>&1
+zsh,sh/zsh-style,ksh/zsh-style	echo $(( "3" + 1 )) 2>&1
+zsh,sh/zsh-style,ksh/zsh-style	echo $(( [#16] 255 )) $(( [#2] 5 )) $(( [##16] 255 )) $(( [#16_4] 65535 ))
+zsh,sh/zsh-style,ksh/zsh-style	echo $(( [#8] -8 )) $(( [#36] 35 ))
+zsh,sh/zsh-style,ksh/zsh-style	echo $(( #a )) $(( ##a )) $(( ##^A )) 2>&1
+zsh,sh/zsh-style,ksh/zsh-style	echo $(( $# ))
+zsh,sh/zsh-style,ksh/zsh-style	echo $(( 0.1 + 0.2 )) $(( 100000000000000000000.0 ))
+zsh,sh/zsh-style,ksh/zsh-style	echo $(( 010 + 1 ))
+zsh,sh/zsh-style,ksh/zsh-style	echo $(( 017 )) $(( 0x1F )) $(( 36#z )) $(( 64#_ )) 2>&1
+zsh,sh/zsh-style,ksh/zsh-style	echo $(( 09 + 1 )) 2>&1
+zsh,sh/zsh-style,ksh/zsh-style	echo $(( 0b101 )) $(( 0B11 )) $(( 0x_ff )) 2>&1
+zsh,sh/zsh-style,ksh/zsh-style	echo $(( 1 << 62 )) $(( -1 >> 1 )) $(( 1 >>> 1 )) 2>&1
+zsh,sh/zsh-style,ksh/zsh-style	echo $(( 1_000_000 )) 2>&1
+zsh,sh/zsh-style,ksh/zsh-style	echo $(( 1.0 == 1 )) $(( 0.1 < 0.2 ))
+zsh,sh/zsh-style,ksh/zsh-style	echo $(( 1/3.0 )) $(( 10.0 )) $(( 1e10 )) $(( 1.5e-5 ))
+zsh,sh/zsh-style,ksh/zsh-style	echo $(( 10 % 3 )) $(( -10 % 3 )) $(( 10 % -3 ))
+zsh,sh/zsh-style,ksh/zsh-style	echo $(( 1e3 )) 2>&1
+zsh,sh/zsh-style,ksh/zsh-style	echo $(( 3 % -2 )) $(( -7 / 2 ))
+zsh,sh/zsh-style,ksh/zsh-style	echo $(( 3 <=> 4 )) 2>&1
+zsh,sh/zsh-style,ksh/zsh-style	echo $(( 5.0 / 0 )) $(( -5.0/0 )) $(( 0.0/0 ))
+zsh,sh/zsh-style,ksh/zsh-style	echo $(( 9223372036854775807 + 1 ))
+zsh,sh/zsh-style,ksh/zsh-style	echo $(( float(3) )) $(( int(3.9) )) 2>&1
+zsh,sh/zsh-style,ksh/zsh-style	echo $(( sqrt(4) )) 2>&1
+zsh,sh/zsh-style,ksh/zsh-style	echo $((010)) $((0x10))
+zsh,sh/zsh-style,ksh/zsh-style	echo $((010)) $((0x10)) $((08)) 2>&1
+zsh,sh/zsh-style,ksh/zsh-style	echo $((8#17)) $((2#101))
+zsh,sh/zsh-style,ksh/zsh-style	echo ${(%):-%j}
+zsh,sh/zsh-style,ksh/zsh-style	echo ${(e):-'$((1+1))'}
+zsh,sh/zsh-style,ksh/zsh-style	echo ${(U)$(echo abc)}
+zsh,sh/zsh-style,ksh/zsh-style	echo ${#$(echo abc)}
+zsh,sh/zsh-style,ksh/zsh-style	echo ${=x:-a b}
+zsh,sh/zsh-style,ksh/zsh-style	echo ${$(echo a b)[2]}
+zsh,sh/zsh-style,ksh/zsh-style	echo ${options[aliasfuncdef]} ${options[autoparamslash]} ${options[badpattern]} ${options[cshjunkiequotes]}
+zsh,sh/zsh-style,ksh/zsh-style	echo ${options[banghist]} ${options[cshnullglob]} ${options[nomatch]} ${options[rmstarsilent]}
+zsh,sh/zsh-style,ksh/zsh-style	echo ${options[emacs]} ${options[vi]} ${options[zle]} ${options[shinstdin]} ${options[interactive]}
+zsh,sh/zsh-style,ksh/zsh-style	echo ${options[evallineno]} ${options[globassign]} ${options[magicequalsubst]} ${options[pathdirs]}
+zsh,sh/zsh-style,ksh/zsh-style	echo ${options[forcefloat]} ${options[globdots]} ${options[extendedglob]} ${options[unset]}
+zsh,sh/zsh-style,ksh/zsh-style	echo ${options[kshautoload]} ${options[bsdecho]} ${options[cbases]} ${options[continueonerror]} 
+zsh,sh/zsh-style,ksh/zsh-style	echo ${options[kshglob]} ${options[bareglobqual]} ${options[globsubst]} ${options[equals]}
+zsh,sh/zsh-style,ksh/zsh-style	echo ${options[localtraps]} ${options[localpatterns]} ${options[localloops]} ${options[typesetsilent]}
+zsh,sh/zsh-style,ksh/zsh-style	echo ${options[multios]} ${options[octalzeroes]} ${options[functionargzero]} ${options[localoptions]}
+zsh,sh/zsh-style,ksh/zsh-style	echo ${options[noclobber]} ${options[clobber]} ${options[histsubstpattern]} ${options[interactivecomments]}
+zsh,sh/zsh-style,ksh/zsh-style	echo ${options[posixbuiltins]} ${options[posixidentifiers]} ${options[posixstrings]}
+zsh,sh/zsh-style,ksh/zsh-style	echo ${options[rcexpandparam]} ${options[rcquotes]} ${options[sourcetrace]} ${options[warncreateglobal]}
+zsh,sh/zsh-style,ksh/zsh-style	echo ${options[shfileexpansion]} ${options[shnullcmd]} ${options[shoptionletters]} ${options[kshzerosubscript]}
+zsh,sh/zsh-style,ksh/zsh-style	echo ${x:-{a,b}}
+zsh,sh/zsh-style,ksh/zsh-style	echo ${x:-$((1+1))}
+zsh,sh/zsh-style,ksh/zsh-style	echo ${x/b/c}
+zsh,sh/zsh-style,ksh/zsh-style	echo ${ZSH_EVAL_CONTEXT} 
+zsh,sh/zsh-style,ksh/zsh-style	echo ${ZSH_VERSION+v}
+zsh,sh/zsh-style,ksh/zsh-style	echo $KSH_VERSION
+zsh,sh/zsh-style,ksh/zsh-style	echo a | () { cat; }
+zsh,sh/zsh-style,ksh/zsh-style	echo a | read x; echo $x
+zsh,sh/zsh-style,ksh/zsh-style	emulate zsh; echo $(( 010 ))
+zsh,sh/zsh-style,ksh/zsh-style	emulate; echo ${options[shwordsplit]} ${options[ksharrays]} ${options[shglob]}
+zsh,sh/zsh-style,ksh/zsh-style	eval -- 'echo e'
+zsh,sh/zsh-style,ksh/zsh-style	eval 'echo "a b"' 'c'
+zsh,sh/zsh-style,ksh/zsh-style	exec -a foo true; echo no
+zsh,sh/zsh-style,ksh/zsh-style	exec 3>&1; echo x >&3; exec 3>&-
+zsh,sh/zsh-style,ksh/zsh-style	f() { :; }; command -v f; command -V f | head -1
+zsh,sh/zsh-style,ksh/zsh-style	f() { :; }; x=1 f; echo ${x-unset}
+zsh,sh/zsh-style,ksh/zsh-style	f() { (echo; echo) ; }; functions f
+zsh,sh/zsh-style,ksh/zsh-style	f() { [[ $a =~ ^x ]] ; [[ ! -z a ]]; [[ (a < b) ]]; }; functions f
+zsh,sh/zsh-style,ksh/zsh-style	f() { { echo; } always { echo; }; }; functions f
+zsh,sh/zsh-style,ksh/zsh-style	f() { echo 'a b' "c d" $'e\tf' \g; }; functions f
+zsh,sh/zsh-style,ksh/zsh-style	f() { echo "${a:-"b c"}" "$(echo "x")"; }; functions f
+zsh,sh/zsh-style,ksh/zsh-style	f() { echo ${(j:,:)a} ${a[1]} ${#a} ${=a} ${~a} ${^a}; }; functions f
+zsh,sh/zsh-style,ksh/zsh-style	f() { echo ${FUNCNAME-u} $funcstack; }; f
+zsh,sh/zsh-style,ksh/zsh-style	f() { echo $1; }; f "a b" c
+zsh,sh/zsh-style,ksh/zsh-style	f() { echo $x; }; x=5 f; echo ${x-u}
+zsh,sh/zsh-style,ksh/zsh-style	f() { echo f; }; type f; whence -f f
+zsh,sh/zsh-style,ksh/zsh-style	f() { echo in; }; x=1 command f; echo ${x-u}
+zsh,sh/zsh-style,ksh/zsh-style	f() { emulate -L zsh; setopt shwordsplit; x='a b'; set -- $x; echo $#; }; f; x='a b'; set -- $x; echo $#
+zsh,sh/zsh-style,ksh/zsh-style	f() { exit 7; }; f; echo no
+zsh,sh/zsh-style,ksh/zsh-style	f() { false; echo after; }; trap 'echo E' ERR; f
+zsh,sh/zsh-style,ksh/zsh-style	f() { for ((i=0;i<1;i++)); do :; done; for x in a b; do :; done; }; functions f
+zsh,sh/zsh-style,ksh/zsh-style	f() { if [ x ]; then :; elif true; then :; else :; fi; }; functions f
+zsh,sh/zsh-style,ksh/zsh-style	f() { local a; a=1; for i in 1; do echo $i; done; }; functions f
+zsh,sh/zsh-style,ksh/zsh-style	f() { local IFS=:; x='a:b'; set -- $x; echo $#; }; f; x='a:b'; set -- $x; echo $#
+zsh,sh/zsh-style,ksh/zsh-style	f() { local x; echo ${x-unset} ${+x}; }; f
+zsh,sh/zsh-style,ksh/zsh-style	f() { local x; x=2; echo $x; }; x=1; f; echo $x
+zsh,sh/zsh-style,ksh/zsh-style	f() { local x=1; unset x; echo ${x-unset}; }; f
+zsh,sh/zsh-style,ksh/zsh-style	f() { setopt localtraps; trap 'echo int' INT; }; f; trap | head -1
+zsh,sh/zsh-style,ksh/zsh-style	f() { setopt localtraps; trap 'echo L' USR1; }; f; trap
+zsh,sh/zsh-style,ksh/zsh-style	f() { shift; echo $1; }; f a b
+zsh,sh/zsh-style,ksh/zsh-style	f() { trap 'echo exit-f' EXIT; echo in; }; f; echo out
+zsh,sh/zsh-style,ksh/zsh-style	f() { trap 'echo fexit' EXIT; }; f; echo after
+zsh,sh/zsh-style,ksh/zsh-style	f() { trap 'echo I' INT; }; f; trap
+zsh,sh/zsh-style,ksh/zsh-style	f() { trap 'echo int' INT; }; f; trap | head -1
+zsh,sh/zsh-style,ksh/zsh-style	f() { trap 'echo T' EXIT; }; f; echo after
+zsh,sh/zsh-style,ksh/zsh-style	f() { TRAPEXIT() { echo fTE; }; }; f; echo w
+zsh,sh/zsh-style,ksh/zsh-style	f() { typeset -g y=5; }; f; echo $y
+zsh,sh/zsh-style,ksh/zsh-style	f() { typeset -g z=1; local z=2; }; f; echo $z
+zsh,sh/zsh-style,ksh/zsh-style	f() { typeset x=1; }; f; echo ${x-u}
+zsh,sh/zsh-style,ksh/zsh-style	f() { while :; do break; done; until :; do :; done; }; functions f
+zsh,sh/zsh-style,ksh/zsh-style	f() echo short; f
+zsh,sh/zsh-style,ksh/zsh-style	false; echo ${pipestatus[@]}
+zsh,sh/zsh-style,ksh/zsh-style	float -F 3 f=1; echo $f; float -E 2 e=12345; echo $e
+zsh,sh/zsh-style,ksh/zsh-style	float f=0.1; echo $f; f=1e100; echo $f
+zsh,sh/zsh-style,ksh/zsh-style	float f=1.5; echo $f
+zsh,sh/zsh-style,ksh/zsh-style	float f=1234567.0; echo $f
+zsh,sh/zsh-style,ksh/zsh-style	for ((i=0; i<2; i++)) { echo $i; }
+zsh,sh/zsh-style,ksh/zsh-style	for ((i=0;i<3;i++)); do echo $i; done
+zsh,sh/zsh-style,ksh/zsh-style	for i in {1..3}; { echo $i; }
+zsh,sh/zsh-style,ksh/zsh-style	for i in 1 2; do { continue; } always { echo al$i; }; done
+zsh,sh/zsh-style,ksh/zsh-style	for i j in 1 2 3 4; do echo $i$j; done
+zsh,sh/zsh-style,ksh/zsh-style	foreach x (a b) echo $x; end 2>&1
+zsh,sh/zsh-style,ksh/zsh-style	function f { echo f; }; functions f
+zsh,sh/zsh-style,ksh/zsh-style	function f { trap 'echo exit-f' EXIT; echo in; }; f; echo out
+zsh,sh/zsh-style,ksh/zsh-style	function f { trap 'echo int' INT; }; f; trap | head -1
+zsh,sh/zsh-style,ksh/zsh-style	function f { typeset x=1; }; f; echo ${x-u}
+zsh,sh/zsh-style,ksh/zsh-style	function f() { echo paren; }; f
+zsh,sh/zsh-style,ksh/zsh-style	i=0; until (( ++i > 2 )); do echo $i; done
+zsh,sh/zsh-style,ksh/zsh-style	i=5; echo $(( i++ + ++i )) $i
+zsh,sh/zsh-style,ksh/zsh-style	IFS=: read a b <<< 'x:y:z'; echo "$a|$b"
+zsh,sh/zsh-style,ksh/zsh-style	IFS=' :'; x=' a : b '; set -- $x; echo $# "$1"
+zsh,sh/zsh-style,ksh/zsh-style	integer -i 8 o=8; echo $o
+zsh,sh/zsh-style,ksh/zsh-style	integer i=010; echo $i
+zsh,sh/zsh-style,ksh/zsh-style	integer i=2#1010; echo $i
+zsh,sh/zsh-style,ksh/zsh-style	integer i=3; i+=2; echo $i
+zsh,sh/zsh-style,ksh/zsh-style	let 'x = 010'; echo $x
+zsh,sh/zsh-style,ksh/zsh-style	let x=2+3; echo $x
+zsh,sh/zsh-style,ksh/zsh-style	nocorrect echo ok
+zsh,sh/zsh-style,ksh/zsh-style	print - -n
+zsh,sh/zsh-style,ksh/zsh-style	print -c -- a bb ccc dddd
+zsh,sh/zsh-style,ksh/zsh-style	print -f '%s' a; echo
+zsh,sh/zsh-style,ksh/zsh-style	print -ln a b
+zsh,sh/zsh-style,ksh/zsh-style	print -P '%-3>>abcdef%>>' 2>&1
+zsh,sh/zsh-style,ksh/zsh-style	print -P '%(1j.j.nj) %(!.r.u) %(#.r.u)'
+zsh,sh/zsh-style,ksh/zsh-style	print -P '%(5c.a.b) %(3~.a.b) %(l.a.b)'
+zsh,sh/zsh-style,ksh/zsh-style	print -P '%(e.a.b) %(_.a.b)'
+zsh,sh/zsh-style,ksh/zsh-style	print -P '%{abc%}' '%G' | od -c | head
+zsh,sh/zsh-style,ksh/zsh-style	print -P '%%' '%)' '%('
+zsh,sh/zsh-style,ksh/zsh-style	print -P '%10>-->%Babcdefghijklmnop%b%>>'
+zsh,sh/zsh-style,ksh/zsh-style	print -P '%2F' | od -c
+zsh,sh/zsh-style,ksh/zsh-style	print -P '%F{123}x' | od -c | head -2
+zsh,sh/zsh-style,ksh/zsh-style	print -P '%F{red}x%f' | od -c | head -2
+zsh,sh/zsh-style,ksh/zsh-style	print -P '%h %!' 
+zsh,sh/zsh-style,ksh/zsh-style	print -P '%v' '%E' | od -c | head -2
+zsh,sh/zsh-style,ksh/zsh-style	print -P '%x %N' 
+zsh,sh/zsh-style,ksh/zsh-style	print -r -- -
+zsh,sh/zsh-style,ksh/zsh-style	print -r -- ${(%):-%%} ${(%):-%B}| od -c | head -2
+zsh,sh/zsh-style,ksh/zsh-style	print -r -- ${(l.3..0.)${:-7}} ${(r.3..0.)${:-7}}
+zsh,sh/zsh-style,ksh/zsh-style	print -r -- ${(q)${:-$'\x01'}} ${(q+)${:-$'\x01'}} ${(q-)${:-$'\x01'}}
+zsh,sh/zsh-style,ksh/zsh-style	print -r -- ${(w)#:-a b c} 2>&1
+zsh,sh/zsh-style,ksh/zsh-style	print -r -- ${#${:-}} ${#${:-x}}
+zsh,sh/zsh-style,ksh/zsh-style	print -r -- ${${:-abc}[2]} ${${(s::)${:-abc}}[3]}
+zsh,sh/zsh-style,ksh/zsh-style	print -R -- a -n
+zsh,sh/zsh-style,ksh/zsh-style	print -r -n -- a b; echo
+zsh,sh/zsh-style,ksh/zsh-style	print -r -o -- B a C b
+zsh,sh/zsh-style,ksh/zsh-style	print -r -O -i -- B a C b
+zsh,sh/zsh-style,ksh/zsh-style	print -rC2 -- 1 2 3 4 5
+zsh,sh/zsh-style,ksh/zsh-style	print -rC2 -a -- 1 2 3 4 5
+zsh,sh/zsh-style,ksh/zsh-style	print -rC3 -- a bb ccc dddd e f g
+zsh,sh/zsh-style,ksh/zsh-style	print -rl -- ${(on):-a10 a9}
+zsh,sh/zsh-style,ksh/zsh-style	print -v var -- hi; echo $var
+zsh,sh/zsh-style,ksh/zsh-style	print ${(j:,:)${(s: :)"a b c"}}
+zsh,sh/zsh-style,ksh/zsh-style	printf -v arr '%s\n' a b 2>&1; echo $arr
+zsh,sh/zsh-style,ksh/zsh-style	printf -v var '%s-%s' a b; echo $var
+zsh,sh/zsh-style,ksh/zsh-style	printf '\0101\n' 
+zsh,sh/zsh-style,ksh/zsh-style	printf '%.0f %.0f %.0f\n' 0.5 1.5 2.5
+zsh,sh/zsh-style,ksh/zsh-style	printf '%.3s\n' é日本
+zsh,sh/zsh-style,ksh/zsh-style	printf '%#x %#o\n' 255 8
+zsh,sh/zsh-style,ksh/zsh-style	printf '%+.3e\n' 12345
+zsh,sh/zsh-style,ksh/zsh-style	printf '%2$s %s\n' a b 2>&1
+zsh,sh/zsh-style,ksh/zsh-style	printf '%5s|\n' é
+zsh,sh/zsh-style,ksh/zsh-style	printf '%5s|%-5s|%.1s\n' ab ab ab
+zsh,sh/zsh-style,ksh/zsh-style	printf '%b' '\0101\n' '\x41\n' 'é\n' '\e' | od -c | head -2
+zsh,sh/zsh-style,ksh/zsh-style	printf '%c\n' ''
+zsh,sh/zsh-style,ksh/zsh-style	printf '%d\n' -0
+zsh,sh/zsh-style,ksh/zsh-style	printf '%d\n' '"a' "'é"
+zsh,sh/zsh-style,ksh/zsh-style	printf '%e\n' 0
+zsh,sh/zsh-style,ksh/zsh-style	printf '%f\n' 1e400 2>&1
+zsh,sh/zsh-style,ksh/zsh-style	printf '%g %g %g\n' 100000 1000000 0.00001
+zsh,sh/zsh-style,ksh/zsh-style	printf '%hd\n' 70000 2>&1
+zsh,sh/zsh-style,ksh/zsh-style	printf '%i %i\n' 010 0x10
+zsh,sh/zsh-style,ksh/zsh-style	printf '%q\n' $'\x01' $'\x7f' $'a\nb' '!' '^x' '{a}' 'a b=c'
+zsh,sh/zsh-style,ksh/zsh-style	printf '%q\n' $'\xe9' 'é' '~' '#a' 'a#' '-'
+zsh,sh/zsh-style,ksh/zsh-style	printf '%s %s %s\n' a b c d
+zsh,sh/zsh-style,ksh/zsh-style	printf '%s\n' '\101'
+zsh,sh/zsh-style,ksh/zsh-style	printf '%s\n' "${(q)${:-'~'}}" "${(q)${:-'a~'}}" "${(q)${:-'='}}"
+zsh,sh/zsh-style,ksh/zsh-style	printf 'a%%b\n'
+zsh,sh/zsh-style,ksh/zsh-style	read -A arr <<< "1 2 3" 2>&1; echo ${arr[1]}
+zsh,sh/zsh-style,ksh/zsh-style	read -d : a <<< 'x:y'; echo $a
+zsh,sh/zsh-style,ksh/zsh-style	read -r a b <<< "1 2 3"; echo $b
+zsh,sh/zsh-style,ksh/zsh-style	read -r x <<< 'a\b'; echo "$x"
+zsh,sh/zsh-style,ksh/zsh-style	read x <<< 'a\b'; echo "$x"
+zsh,sh/zsh-style,ksh/zsh-style	repeat 3 { echo -n r; }; echo
+zsh,sh/zsh-style,ksh/zsh-style	select x in a b; do echo $x; break; done <<< 2
+zsh,sh/zsh-style,ksh/zsh-style	set -- 1 2; f() { echo $#; }; f a; echo $#
+zsh,sh/zsh-style,ksh/zsh-style	set -e; f() { false; echo inside; }; f; echo out
+zsh,sh/zsh-style,ksh/zsh-style	set -e; false || true; echo ok
+zsh,sh/zsh-style,ksh/zsh-style	set -e; trap 'echo e2' ERR; false; echo no
+zsh,sh/zsh-style,ksh/zsh-style	set -u; echo ${unsetvar-d}; echo $unsetvar 2>&1; echo after
+zsh,sh/zsh-style,ksh/zsh-style	setopt | wc -l; unsetopt | wc -l
+zsh,sh/zsh-style,ksh/zsh-style	setopt braceccl; echo {abc}
+zsh,sh/zsh-style,ksh/zsh-style	setopt cbases octalzeroes; echo $(( [#8] 8 ))
+zsh,sh/zsh-style,ksh/zsh-style	setopt cbases; echo $(( [#16] 255 )) $(( [#8] 8 ))
+zsh,sh/zsh-style,ksh/zsh-style	setopt ignorebraces; echo {a,b}
+zsh,sh/zsh-style,ksh/zsh-style	setopt octalzeroes; echo $(( 010 ))
+zsh,sh/zsh-style,ksh/zsh-style	trap -- 'echo a' SIGHUP; trap
+zsh,sh/zsh-style,ksh/zsh-style	trap '' EXIT; exit 3
+zsh,sh/zsh-style,ksh/zsh-style	trap '' HUP; trap
+zsh,sh/zsh-style,ksh/zsh-style	trap 'echo a' 1 2; trap
+zsh,sh/zsh-style,ksh/zsh-style	trap 'echo e' ERR; false; true
+zsh,sh/zsh-style,ksh/zsh-style	trap 'echo e1' ERR; ! true; echo done
+zsh,sh/zsh-style,ksh/zsh-style	trap 'echo e1' ERR; f() { false; }; f; echo done
+zsh,sh/zsh-style,ksh/zsh-style	trap 'echo e1' ERR; if false; then :; fi; echo done
+zsh,sh/zsh-style,ksh/zsh-style	trap 'echo top' EXIT; f() { trap - EXIT; }; f; echo end
+zsh,sh/zsh-style,ksh/zsh-style	trap 'echo top' EXIT; f() { trap 'echo inner' EXIT; }; f; echo end
+zsh,sh/zsh-style,ksh/zsh-style	trap 'echo x' 0; trap
+zsh,sh/zsh-style,ksh/zsh-style	trap 'echo x' EXIT; trap; trap - EXIT
+zsh,sh/zsh-style,ksh/zsh-style	TRAPEXIT() { echo TE; }; echo x
+zsh,sh/zsh-style,ksh/zsh-style	TRAPZERR() { echo Z; }; false; echo z
+zsh,sh/zsh-style,ksh/zsh-style	true | false | true; echo ${pipestatus[@]}
+zsh,sh/zsh-style,ksh/zsh-style	type echo; type -w echo 2>&1; whence -v echo
+zsh,sh/zsh-style,ksh/zsh-style	type if; type -a true | head -2
+zsh,sh/zsh-style,ksh/zsh-style	typeset -A h; h[k]=v; echo ${h[k]} ${#h[@]}
+zsh,sh/zsh-style,ksh/zsh-style	typeset -i 16 h=255; echo $h; h=h+1; echo $h
+zsh,sh/zsh-style,ksh/zsh-style	typeset -i 2 b=5; echo $b
+zsh,sh/zsh-style,ksh/zsh-style	typeset -lu x 2>&1; typeset -l y; print -r -- ${(t)y}
+zsh,sh/zsh-style,ksh/zsh-style	typeset -rx R=1; print -r -- ${(t)R}
+zsh,sh/zsh-style,ksh/zsh-style	typeset -T AB ab; print -r -- ${(t)AB} ${(t)ab}
+zsh,sh/zsh-style,ksh/zsh-style	unset u; print -r -- ${u-d} ${u:-d} ${u+s} ${u:+s} ${u=e} $u
+zsh,sh/zsh-style,ksh/zsh-style	unset x; f() { local x=1; g; }; g() { x=2; }; f; echo ${x-unset}
+zsh,sh/zsh-style,ksh/zsh-style	while (( i++ < 2 )) { echo w$i; }
+zsh,sh/zsh-style,ksh/zsh-style	x=''; print -r -- ${(q)x} ${(qq)x} ${(q-)x} ${(q+)x}.
+zsh,sh/zsh-style,ksh/zsh-style	x='{a,b}'; echo $x
+zsh,sh/zsh-style,ksh/zsh-style	x='\t'; print -r -- ${(g:e:)x} | od -c | head -1
+zsh,sh/zsh-style,ksh/zsh-style	x='a "b c" d'; print -rl -- ${(Q)${(z)x}}
+zsh,sh/zsh-style,ksh/zsh-style	x='a "b c" d'; print -rl -- ${(z)x}
+zsh,sh/zsh-style,ksh/zsh-style	x='a b  c'; print -r -- ${(s: :)x} ${#${(s: :)x}} ${(z)x}
+zsh,sh/zsh-style,ksh/zsh-style	x='a b c'; print -r -- ${(w)#x} ${(W)#x}
+zsh,sh/zsh-style,ksh/zsh-style	x='a b c'; print -r -- ${x[(w)2]} ${x[(ws:b:)1]}
+zsh,sh/zsh-style,ksh/zsh-style	x='a b'; print -r -- ${(q)x} ${(q-)x} ${(q+)x}
+zsh,sh/zsh-style,ksh/zsh-style	x='a b'; print -r -- ${x:q} ${x:x} 2>&1
+zsh,sh/zsh-style,ksh/zsh-style	x='a b'; print -rl -- ${=x} "${=x}"
+zsh,sh/zsh-style,ksh/zsh-style	x='a:b'; IFS=:; set -- $x; echo $#
+zsh,sh/zsh-style,ksh/zsh-style	x='a"b'; print -r -- ${(qq)x} ${(qqq)x} ${(qqqq)x}
+zsh,sh/zsh-style,ksh/zsh-style	x='a%b'; print -r -- ${(%)x}
+zsh,sh/zsh-style,ksh/zsh-style	x="a b"; set -- $x; echo $#
+zsh,sh/zsh-style,ksh/zsh-style	x="it's"; print -r -- ${(q)x} ${(qq)x} ${(qqq)x} ${(qqqq)x} ${(q-)x} ${(q+)x}
+zsh,sh/zsh-style,ksh/zsh-style	x={a,b}; echo $x
+zsh,sh/zsh-style,ksh/zsh-style	x=/a/b/c.tar.gz; print -r -- ${x:r:r} ${x:e} ${x:t:s/./_/} ${x:gs/a/A/}
+zsh,sh/zsh-style,ksh/zsh-style	x=/a/b/c.txt; print -r -- ${x:h} ${x:t} ${x:r} ${x:e} ${x:h:h} ${x:t:r}
+zsh,sh/zsh-style,ksh/zsh-style	x=$'\e[1m'; print -r -- ${(V)x}
+zsh,sh/zsh-style,ksh/zsh-style	x=$'\t'; print -r -- ${(q-)x} ${(q+)x}
+zsh,sh/zsh-style,ksh/zsh-style	x=$'\x41\101B'; echo $x
+zsh,sh/zsh-style,ksh/zsh-style	x=$'\xff'; print -r -- ${(qqqq)x} ${(q+)x} | od -c | head -1
+zsh,sh/zsh-style,ksh/zsh-style	x=$'a\'b'; print -r -- ${(qqqq)x} ${(qq)x}
+zsh,sh/zsh-style,ksh/zsh-style	x=$'a\0b'; echo ${#x}
+zsh,sh/zsh-style,ksh/zsh-style	x=$'a\0b'; print -r -- "$x" | od -c | head -1
+zsh,sh/zsh-style,ksh/zsh-style	x=$'a\0b'; print -r -- ${#${(0)x}}
+zsh,sh/zsh-style,ksh/zsh-style	x=$'a\nb'; print -r -- ${(f)x} ${#${(f)x}}
+zsh,sh/zsh-style,ksh/zsh-style	x=$'a\tb'; print -r -- ${(q)x} ${(qqqq)x} ${(V)x}
+zsh,sh/zsh-style,ksh/zsh-style	x=$'a\x7fb'; print -r -- ${(q)x} ${(qqqq)x} ${(q+)x}
+zsh,sh/zsh-style,ksh/zsh-style	x=${$(echo abc):1}; echo $x 2>&1
+zsh,sh/zsh-style,ksh/zsh-style	x=010; echo $(( x )) 
+zsh,sh/zsh-style,ksh/zsh-style	x=010; echo $((x+0))
+zsh,sh/zsh-style,ksh/zsh-style	x=08; echo $(( x )) 2>&1
+zsh,sh/zsh-style,ksh/zsh-style	x=1 :; echo ${x-unset}
+zsh,sh/zsh-style,ksh/zsh-style	x=1 command :; echo ${x-unset}
+zsh,sh/zsh-style,ksh/zsh-style	x=1 command eval :; echo ${x-u}
+zsh,sh/zsh-style,ksh/zsh-style	x=1 eval 'echo $x'; echo ${x-unset}
+zsh,sh/zsh-style,ksh/zsh-style	x=1 exec true; echo no
+zsh,sh/zsh-style,ksh/zsh-style	x=1 export y=2; echo ${x-unset} $y
+zsh,sh/zsh-style,ksh/zsh-style	x=1 printf ''; echo ${x-u}
+zsh,sh/zsh-style,ksh/zsh-style	x=1 readonly y=2; echo ${x-u}
+zsh,sh/zsh-style,ksh/zsh-style	x=1 set -- ; echo ${x-u}
+zsh,sh/zsh-style,ksh/zsh-style	x=1 set -- a; echo ${x-unset}
+zsh,sh/zsh-style,ksh/zsh-style	x=1 trap; echo ${x-u}
+zsh,sh/zsh-style,ksh/zsh-style	x=1 true; echo ${x-unset}
+zsh,sh/zsh-style,ksh/zsh-style	x=1 typeset y; echo ${x-u}
+zsh,sh/zsh-style,ksh/zsh-style	x=1 unset y; echo ${x-u}
+zsh,sh/zsh-style,ksh/zsh-style	x=1 y=2 eval 'echo $x$y'
+zsh,sh/zsh-style,ksh/zsh-style	x=1; eval 'x=2'; echo $x
+zsh,sh/zsh-style,ksh/zsh-style	x=1; f() { x=2; }; f; echo $x
+zsh,sh/zsh-style,ksh/zsh-style	x=1; x+=2; echo $x
+zsh,sh/zsh-style,ksh/zsh-style	x=10; y=x; print -r -- ${(P)y} ${(e)${:-\$x}}
+zsh,sh/zsh-style,ksh/zsh-style	x=3; print -r -- ${(%):-%3d} 2>&1 | head -c0; echo ok
+zsh,sh/zsh-style,ksh/zsh-style	x=5; echo {1..$x}
+zsh,sh/zsh-style,ksh/zsh-style	x=5; print -P '%(x.a.b)'
+zsh,sh/zsh-style,ksh/zsh-style	x=a; print -r -- ${(A)x} 2>&1; print -r -- ${(A)=x::=1 2}; print $x
+zsh,sh/zsh-style,ksh/zsh-style	x=a:b:c; print -r -- ${(s.:.)x[2]} ${${(s.:.)x}[2]}
+zsh,sh/zsh-style,ksh/zsh-style	x=aaa; print -r -- ${x:s/a/b/} ${x:gs/a/b/} ${x:&}
+zsh,sh/zsh-style,ksh/zsh-style	x=ab; print -r -- ${(~)x} ${~x}
+zsh,sh/zsh-style,ksh/zsh-style	x=abc; echo ${#x} ${x%c} ${x#a}
+zsh,sh/zsh-style,ksh/zsh-style	x=abc; echo ${x:0:1} ${x:1} ${x::2}
+zsh,sh/zsh-style,ksh/zsh-style	x=abc; echo ${x:1} ${x: -1} ${x:(-2)}
+zsh,sh/zsh-style,ksh/zsh-style	x=abc; echo ${x^^} 2>&1
+zsh,sh/zsh-style,ksh/zsh-style	x=abc; print -r -- "${(pl:5::\t:)x}" | od -c | head -1
+zsh,sh/zsh-style,ksh/zsh-style	x=abc; print -r -- ${(D)x} ${(g::)x}
+zsh,sh/zsh-style,ksh/zsh-style	x=abc; print -r -- ${(l:6:)x} ${(r:6:)x} ${(l:6::-:)x} ${(r:6::-:)x} ${(l:2:)x}
+zsh,sh/zsh-style,ksh/zsh-style	x=abc; print -r -- ${(l:7::12:)x} ${(r:7::12::XY:)x}
+zsh,sh/zsh-style,ksh/zsh-style	x=abcabc; print -r -- ${(SB)x#b} ${(SE)x#b} ${(SM)x#b} ${(SN)x#b}
+zsh,sh/zsh-style,ksh/zsh-style	x=abcabc; print -r -- ${x/b/X} ${x//b/X} ${x/#a/X} ${x/%c/X} ${x:/abcabc/Y}
+zsh,sh/zsh-style,ksh/zsh-style	x=b; print -r -- ${${x}:-z} ${${x/b/}:-z}
+zsh,sh/zsh-style,ksh/zsh-style	x=é 2>&1; echo $x
+zsh,sh/zsh-style,ksh/zsh-style	x=foo; print -r -- ${#x} ${(c)#x}
+zsh,sh/zsh-style,ksh/zsh-style	x=foo; print -r -- ${x:u:l} ${(U)x:l}
+zsh,sh/zsh-style,ksh/zsh-style	x=hello; print -r -- ${(U)x} ${(C)x} ${(L)x:-Q}
+zsh,sh/zsh-style,ksh/zsh-style	x=hello; print -r -- ${x[2,3]} ${x[-2,-1]} ${x[(n:2:i)l]}
+zsh,sh/zsh-style,ksh/zsh-style	y='1 2'; echo a{$y}
+zsh,sh/zsh-style,ksh/zsh-style	y='a b'; export x=$y; echo "$x"
+zsh,sh/zsh-style,ksh/zsh-style	y='a b'; typeset x=$y; echo "$x"
+zsh,sh/zsh-style,ksh/zsh-style	y='a=b c'; typeset $y; echo "$a|$c"
+zsh,sh/zsh-style,ksh/zsh-style	y=b; echo a{$y,c}
