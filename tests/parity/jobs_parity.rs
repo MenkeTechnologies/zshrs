@@ -1367,7 +1367,7 @@ fn cmdarg_last_command_replaces_the_shell() {
 /// zshrs spawned the command in its own process group with SIGTSTP ignored,
 /// so `^Z` did nothing, and `fg` / `bg` only sent SIGCONT.
 mod foreground_job_control {
-    use crate::zpty_probe::{assert_same_verdict, sq, OPEN_PUMPED};
+    use crate::zpty_probe::{assert_same_verdict, sq, CLOSE_PUMPED, OPEN_PUMPED};
 
     fn driver(line: &str, then: &str, verdict: &str) -> String {
         format!(
@@ -1406,6 +1406,21 @@ mod foreground_job_control {
             r#"[[ $all == *"[1]  + continued  /bin/sleep 4"* && $all == *J=1* && $all == *W=0* ]] && print V=yes || print V=no"#,
         );
         assert_same_verdict(&d, "V", "bg continued the suspended command");
+    }
+
+    /// c:Src/exec.c:3093 + c:3234-3235 — the job path runs `command NAME`
+    /// through execcmd_exec, whose BINF_COMMAND walk skips the function and
+    /// drops a `--`. zshrs handed it the bare NAME, so a wrapper
+    /// `ls() { command ls … }` called itself until FUNCNEST.
+    #[test]
+    fn command_under_job_control_skips_a_function_of_the_same_name() {
+        let line = r#"FUNCNEST=5; ls() { print -r -- I${:-}N; command ls -d /; }; ls; command -- ls -d /; print R${:-}=$?"#;
+        let d = format!(
+            "{OPEN_PUMPED}\nzpty -w w {}; pump\n{CLOSE_PUMPED}\n{}\n",
+            sq(line),
+            r#"[[ ${#${(M)${(f)all}:#IN*}} == 1 && $all != *nested* && $all == *R=0* ]] && print V=yes || print V=no"#,
+        );
+        assert_same_verdict(&d, "V", "command ran the external, not the function");
     }
 }
 

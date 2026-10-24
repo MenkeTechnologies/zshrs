@@ -6954,7 +6954,19 @@ impl ShellExecutor {
             && self.subshell_snapshots.is_empty()
             && crate::exec_jobs::NOT_JOB_LEADER.with(|d| d.get()) == 0
         {
-            let words: Vec<String> = std::iter::once(cmd.to_string()).chain(args.iter().cloned()).collect();
+            // execcmd_exec resolves the head again. For `command NAME` C's
+            // args still start with the `command` word, whose BINF_COMMAND
+            // skips the shfunctab lookup (c:Src/exec.c:3093), so the `command`
+            // handler's NAME must keep it: `rm() { command rm -v "$@" }` called
+            // itself under MONITOR. `--` keeps a `-`-led NAME from reading as an
+            // option (c:3176-3177).
+            let prefix: &[&str] = if crate::native_cmds::is_forced_external() { &["command", "--"] } else { &[] };
+            let words: Vec<String> = prefix
+                .iter()
+                .map(|w| w.to_string())
+                .chain(std::iter::once(cmd.to_string()))
+                .chain(args.iter().cloned())
+                .collect();
             return Ok(crate::fusevm_bridge::execcmd_simple_job(words, false, job_text));
         }
 

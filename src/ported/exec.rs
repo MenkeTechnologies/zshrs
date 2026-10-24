@@ -11468,11 +11468,15 @@ pub fn execcmd_exec(
                 {
                     v.remove(0); // c:3165
                 }
-                // c:3176-3177 — `if (IS_DASH(argdata[0]) && IS_DASH(argdata[1])
-                // && !argdata[2]) uremnode(preargs, argnode);`
-                if v.first().map(|w| w == "--").unwrap_or(false) {
-                    v.remove(0); // c:3177
-                }
+            }
+            // c:3234-3235 — `if (IS_DASH(argdata[0]) && IS_DASH(argdata[1])
+            // && !argdata[2]) uremnode(preargs, argnode);` closes the whole
+            // BINF_COMMAND arm, `-p` or not: `command -- ls` runs ls.
+            if !dispatch.has_command_vv
+                && ((dispatch.cflags | dispatch.orig_cflags) & BINF_COMMAND) != 0
+                && v.first().map(|w| w == "--").unwrap_or(false)
+            {
+                v.remove(0); // c:3235
             }
         }
         let _ = head_args;
