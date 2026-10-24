@@ -11973,12 +11973,14 @@ pub fn getkeystring(s: &str, how: u32, mut misc: Option<&mut i32>) -> (String, u
                 consumed += 1;
             }
             // !!! DROP-IN GATE (no C counterpart) !!! `\E` is ESC everywhere in
-            // bash, ksh93 and /bin/sh.
+            // bash, ksh93 and /bin/sh, and in mksh outside a printf FORMAT (the
+            // FORMAT arm above runs first).
             Some('E')
                 if (how & GETKEY_EMACS) == 0
                     && !(crate::dash_mode::bash_mode()
                         || crate::dash_mode::ksh93_mode()
-                        || crate::dash_mode::sh_mode()) =>
+                        || crate::dash_mode::sh_mode()
+                        || crate::dash_mode::pdksh_family()) =>
             {
                 consumed += 1;
                 if miscadded {
@@ -12432,7 +12434,28 @@ pub fn getkeystring(s: &str, how: u32, mut misc: Option<&mut i32>) -> (String, u
                 // caller can detect + suppress the newline.
                 if c == 'c' && (how & GETKEY_BACKSLASH_C) != 0 {
                     GETKEY_TRUNCATED.with(|cell| cell.set(true));
+                    // !!! PDKSH (no C counterpart) !!! mksh's `\c` only drops the
+                    // trailing newline: the rest of the word is still printed
+                    // (`print 'a\cb'` writes `ab`).
+                    if crate::dash_mode::pdksh_family() {
+                        continue;
+                    }
                     break;
+                }
+                // !!! PDKSH (no C counterpart) !!! mksh `$'\cX'` is the control
+                // character of the RAW next character (`\c\x41` is 0x1C then
+                // `x41`): `?` is DEL, anything else keeps its low five bits, so
+                // `\ca` is ^A and `\c-` is ^M.
+                if c == 'c'
+                    && (how & crate::ported::zsh_h::GETKEY_DOLLAR_QUOTE as u32) != 0
+                    && crate::dash_mode::pdksh_family()
+                {
+                    if let Some(x) = chars.peek().copied().filter(char::is_ascii) {
+                        chars.next();
+                        consumed += 1;
+                        result.push(if x == '?' { '\u{7f}' } else { ((x as u8) & 0x1f) as char });
+                        continue;
+                    }
                 }
                 // !!! BASH-MODE (no C counterpart) !!! bash `$'\cX'` is the
                 // control character (`\c?` is DEL); any other unknown escape
