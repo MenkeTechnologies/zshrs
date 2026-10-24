@@ -367,7 +367,10 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
                 return match r {
                     Some(n) => n,
                     None => {
-                        if !crate::ported::zsh_h::isset(crate::ported::zsh_h::UNSET) {
+                        // !!! DROP-IN GATE (no C counterpart) !!! see math_unset_is_error.
+                        if !crate::ported::zsh_h::isset(crate::ported::zsh_h::UNSET)
+                            && crate::dash_mode::math_unset_is_error(true)
+                        {
                             // c:345-346
                             crate::ported::utils::zerr(&format!("{}: parameter not set", name));
                         }
@@ -566,6 +569,17 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
                         }
                     }
                 }
+            }
+            // !!! BASH GATE (no C counterpart) !!! `--bash` reads `name[i]` here
+            // rather than through the c:345-346 path above, and bash's `set -u`
+            // rejects an element of an UNSET array (`$((a[1]))` → "a: unbound
+            // variable", fatal); an unset element of a set array is 0.
+            if crate::dash_mode::bash_mode()
+                && !crate::ported::zsh_h::isset(crate::ported::zsh_h::UNSET)
+                && crate::ported::params::issetvar(arr_name) == 0
+                && crate::dash_mode::math_unset_is_error(true)
+            {
+                crate::ported::utils::zerr(&format!("{}: parameter not set", arr_name));
             }
             return mnumber {
                 l: 0,
@@ -773,7 +787,12 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
         // (`a=four; $((a+1))`) must be set; only a name written in the expression itself
         // defaults to 0.
         let nested_unset = crate::dash_mode::ksh93_mode() && M_LEVEL.with(|c| c.get()) > 1;
-        if !crate::ported::zsh_h::isset(crate::ported::zsh_h::UNSET) || nested_unset {
+        // !!! DROP-IN GATE (no C counterpart) !!! mksh reads an unset name as 0
+        // even under `set -u`; bash and /bin/sh make the error fatal (see
+        // math_unset_is_error).
+        if (!crate::ported::zsh_h::isset(crate::ported::zsh_h::UNSET) || nested_unset)
+            && crate::dash_mode::math_unset_is_error(false)
+        {
             crate::ported::utils::zerr(&format!("{}: parameter not set", name));
         }
         mnumber {

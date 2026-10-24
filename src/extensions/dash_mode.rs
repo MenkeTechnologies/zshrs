@@ -1112,6 +1112,33 @@ pub fn bash_special_array(name: &str) -> Option<Vec<String>> {
     }
 }
 
+/// Whether an unset parameter read by NAME inside arithmetic (`$((x))`,
+/// `(( a[1] ))`, `let x`) is an error under `set -u` in the emulated shell,
+/// where zsh always raises "parameter not set" (Src/math.c:345-346).
+/// `subscripted` is true for `name[index]` whose `name` is unset.
+///
+/// ```text
+///                      $((x))   $((a[1]))   (a unset, set -u)
+///   mksh               0        0
+///   ksh93              error    0
+///   bash, /bin/sh      error    error        — and FATAL in `(( ))` / `let` too
+/// ```
+///
+/// bash's error ends the shell wherever it is raised (`err_unboundvar`,
+/// FORCE_EOF); zsh's leaves `(( x ))` and `let x` with status 2 or 1 and
+/// carries on. So under `--bash` / `--sh` this also raises ERRFLAG_HARD.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn math_unset_is_error(subscripted: bool) -> bool {
+    if pdksh_family() || (subscripted && ksh93_mode()) {
+        return false;
+    }
+    if bash_mode() || sh_mode() {
+        crate::ported::utils::errflag.fetch_or(crate::ported::zsh_h::ERRFLAG_HARD, Ordering::Relaxed);
+    }
+    true
+}
+
 /// ksh93's `.sh.*` namespace under `--ksh`, as scalars. `None` for any other
 /// name, or outside ksh93 mode.
 ///
