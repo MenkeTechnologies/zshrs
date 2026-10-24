@@ -555,7 +555,15 @@ impl ShellExecutor {
                     }
                     _ => 1,
                 },
-                Some(Err(_)) => 1,
+                // bash: a non-number is "invalid number", a dash word "invalid
+                // option"; both print the usage line and are status 2.
+                Some(Err(_)) => {
+                    let a = &args[0];
+                    let why = if a.starts_with('-') { "invalid option" } else { "invalid number" };
+                    eprintln!("zshrs: caller: {a}: {why}");
+                    eprintln!("caller: usage: caller [expr]");
+                    2
+                }
             };
         }
         let depth: usize = args.first().and_then(|s| s.parse().ok()).unwrap_or(0);
@@ -2488,10 +2496,16 @@ impl ShellExecutor {
                     );
                 }
                 "disabled" => {
+                    // Under `--bash` only bash's own builtins can be disabled;
+                    // the zsh builtins the drop-in hides are not `enable -n`'d ones.
+                    let bash_table = Self::compgen_builtin_names();
                     let mut names: Vec<String> = crate::ported::builtin::BUILTINS_DISABLED
                         .lock()
                         .map(|d| d.iter().cloned().collect())
                         .unwrap_or_default();
+                    if crate::dash_mode::bash_mode() {
+                        names.retain(|n| bash_table.contains(&n.as_str()));
+                    }
                     names.sort();
                     results.extend(names.into_iter().filter(|n| keep(n)));
                 }
@@ -2541,12 +2555,21 @@ impl ShellExecutor {
                 "shopt" => results.extend(
                     crate::dash_mode::BASH_SHOPTS.iter().map(|(n, _, _)| *n).filter(|n| keep(n)).map(String::from),
                 ),
-                "signal" => results.extend(
-                    crate::ported::signals_h::SIGS
-                        .iter()
-                        .map(|(n, _)| format!("SIG{n}"))
-                        .filter(|n| keep(n)),
-                ),
+                // bash's signal_names[] order: EXIT, the signals by number
+                // (one name per number), then the DEBUG / ERR / RETURN traps.
+                "signal" => {
+                    let mut sigs: Vec<(i32, &str)> = Vec::new();
+                    for (n, num) in crate::ported::signals_h::SIGS.iter() {
+                        if !sigs.iter().any(|(k, _)| k == num) {
+                            sigs.push((*num, n));
+                        }
+                    }
+                    sigs.sort_by_key(|(num, _)| *num);
+                    let names = std::iter::once("EXIT".to_string())
+                        .chain(sigs.into_iter().map(|(_, n)| format!("SIG{n}")))
+                        .chain(["DEBUG", "ERR", "RETURN"].into_iter().map(String::from));
+                    results.extend(names.filter(|n| keep(n)));
+                }
                 "variable" => {
                     let mut names: Vec<String> = crate::ported::params::paramtab()
                         .read()
@@ -2566,9 +2589,10 @@ impl ShellExecutor {
             }
         }
 
-        if let Some(words) = wordlist {
-            results.extend(words.split_whitespace().filter(|w| keep(w)).map(String::from));
+        if let Some(words) = &wordlist {
+            results.extend(Self::compgen_expand_wordlist(words).into_iter().filter(|w| keep(w)));
         }
+        let (globpat_given, func_given, command_given) = (globpat.is_some(), func.is_some(), command.is_some());
         if let Some(pattern) = globpat {
             if let Ok(paths) = glob::glob(&pattern) {
                 results.extend(paths.flatten().map(|p| p.to_string_lossy().into_owned()).filter(|n| keep(n)));
@@ -2634,13 +2658,101 @@ impl ShellExecutor {
             }
         }
 
+        // bash: a `compgen` asked for nothing generates nothing and succeeds;
+        // a generator that produced no match is status 1.
+        let asked = !actions.is_empty() || wordlist.is_some() || globpat_given || func_given || command_given;
         if results.is_empty() {
-            return 1;
+            return if asked { 1 } else { 0 };
         }
         for r in results {
             println!("{pre}{r}{suf}");
         }
         0
+    }
+
+    /// `compgen -W WORDLIST`: bash splits the list at `$IFS` (quote-aware),
+    /// then expands each word with every expansion but pathname expansion —
+    /// brace, tilde, parameter, command and arithmetic substitution, word
+    /// splitting and quote removal (`x='p q'; compgen -W '$x r'` is p, q, r;
+    /// `compgen -W 'a\ b c'` is `a b`, c; `f*` stays literal).
+    fn compgen_expand_wordlist(words: &str) -> Vec<String> {
+        let ifs = crate::ported::params::getsparam("IFS").unwrap_or_else(|| " \t\n".to_string());
+        let mut chunks: Vec<String> = Vec::new();
+        let mut cur = String::new();
+        let (mut sq, mut dq, mut bq, mut esc) = (false, false, false, false);
+        // Closers still owed by an open `$(…)` / `${…}` / `$((…))`: an IFS
+        // character inside one does not delimit (`$(echo s t)` is one word).
+        let mut nest: Vec<char> = Vec::new();
+        let mut prev = '\0';
+        for c in words.chars() {
+            if esc {
+                cur.push(c);
+                esc = false;
+                prev = c;
+                continue;
+            }
+            match c {
+                '\\' if !sq => {
+                    esc = true;
+                    cur.push(c);
+                }
+                '\'' if !dq && !bq && nest.is_empty() => {
+                    sq = !sq;
+                    cur.push(c);
+                }
+                '"' if !sq && !bq && nest.is_empty() => {
+                    dq = !dq;
+                    cur.push(c);
+                }
+                '`' if !sq => {
+                    bq = !bq;
+                    cur.push(c);
+                }
+                '(' | '{' if !sq && (prev == '$' || !nest.is_empty()) => {
+                    nest.push(if c == '(' { ')' } else { '}' });
+                    cur.push(c);
+                }
+                ')' | '}' if !sq && nest.last() == Some(&c) => {
+                    nest.pop();
+                    cur.push(c);
+                }
+                c if !sq && !dq && !bq && nest.is_empty() && ifs.contains(c) => {
+                    if !cur.is_empty() {
+                        chunks.push(std::mem::take(&mut cur));
+                    }
+                }
+                // A blank that is not an IFS character does not split the word;
+                // escape it so the assignment parse below keeps it too.
+                ' ' | '\t' | '\n' if !sq && !dq && !bq && nest.is_empty() => {
+                    cur.push('\\');
+                    cur.push(c);
+                }
+                c => cur.push(c),
+            }
+            prev = c;
+        }
+        if !cur.is_empty() {
+            chunks.push(cur);
+        }
+        if chunks.is_empty() {
+            return Vec::new();
+        }
+        // Each chunk is expanded as array-assignment words with globbing off.
+        const TMP: &str = "__zshrs_compgen_words";
+        let glob_was = crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBOPT);
+        crate::ported::options::dosetopt(crate::ported::zsh_h::GLOBOPT, 0, 1);
+        let mut out = Vec::new();
+        for chunk in chunks {
+            // A chunk that fails to parse must not reuse the previous chunk's words.
+            crate::ported::params::unsetparam(TMP);
+            crate::ported::exec::execstring(&format!("{TMP}=( {chunk} )"), 0, 0, "compgen");
+            out.extend(crate::ported::params::getaparam(TMP).unwrap_or_default());
+        }
+        crate::ported::params::unsetparam(TMP);
+        if glob_was {
+            crate::ported::options::dosetopt(crate::ported::zsh_h::GLOBOPT, 1, 1);
+        }
+        out
     }
 
     /// Builtin names visible to `compgen -b`: bash's own table under `--bash`,
@@ -10148,7 +10260,7 @@ pub(crate) fn readarray(args: &[String]) -> i32 {
     let mut skip = 0usize;
     let mut strip_trailing = false;
     let mut callback: Option<String> = None;
-    let mut callback_quantum = 0usize;
+    let mut callback_quantum = 5000usize; // bash's default `-c`
     let mut fd: i32 = 0;
     let mut origin: Option<usize> = None;
 
@@ -10191,7 +10303,14 @@ pub(crate) fn readarray(args: &[String]) -> i32 {
             "-c" => {
                 i += 1;
                 if i < args.len() {
-                    callback_quantum = args[i].parse().unwrap_or(5000);
+                    // bash: a quantum below 1 is "invalid callback quantum", status 1.
+                    callback_quantum = match args[i].parse::<i64>() {
+                        Ok(q) if q >= 1 => q as usize,
+                        _ => {
+                            eprintln!("zshrs: mapfile: {}: invalid callback quantum", args[i]);
+                            return 1;
+                        }
+                    };
                 }
             }
             "-u" => {
@@ -10261,6 +10380,40 @@ pub(crate) fn readarray(args: &[String]) -> i32 {
         }
     }
 
+    // `-C callback`: bash evaluates `CALLBACK INDEX 'LINE'` every
+    // `callback_quantum` stored lines, after the line is read and before it
+    // is assigned, so the callback sees the elements stored so far
+    // (`printf 'a\nb\n' | mapfile -t -C f -c 1 x` runs `f 0 'a'`, `f 1 'b'`).
+    // Assign element by element in that case; otherwise in one store below.
+    if let Some(cb) = callback {
+        let base = origin.unwrap_or(0);
+        if origin.is_none() {
+            crate::bash_arrays::clear(&array_name);
+            crate::ported::params::setaparam(&array_name, Vec::new());
+        }
+        for (k, l) in lines.into_iter().enumerate() {
+            let idx = base + k;
+            if (k + 1) % callback_quantum == 0 {
+                let quoted = format!("'{}'", l.replace('\'', "'\\''"));
+                crate::ported::exec::execstring(&format!("{cb} {idx} {quoted}"), 0, 0, "mapfile");
+            }
+            let mut cur = crate::ported::params::getaparam(&array_name).unwrap_or_default();
+            let old_len = cur.len();
+            if cur.len() < idx {
+                cur.resize(idx, String::new());
+            }
+            match cur.get_mut(idx) {
+                Some(slot) => *slot = l,
+                None => cur.push(l),
+            }
+            crate::ported::params::setaparam(&array_name, cur);
+            if idx > old_len {
+                crate::bash_arrays::note_subscript_set(&array_name, old_len, idx);
+            }
+        }
+        return 0;
+    }
+
     match origin {
         Some(o) => {
             // `-O origin`: keep what is there, pad up to `origin` (bash holes), overwrite from it.
@@ -10285,7 +10438,6 @@ pub(crate) fn readarray(args: &[String]) -> i32 {
             crate::ported::params::setaparam(&array_name, lines);
         }
     }
-    let _ = (callback, callback_quantum);
     0
 }
 
