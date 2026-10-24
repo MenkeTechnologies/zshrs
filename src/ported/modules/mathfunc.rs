@@ -235,6 +235,12 @@ pub fn boot_(m: *const module) -> i32 {
     // C body c:572-573 — `return 0`. Faithful empty-body port; the
     //                    math functions are registered via the mf_list
     //                    feature dispatch, no extra boot work needed.
+    // !!! EMULATION-ONLY (no C counterpart) !!! Under a bare `--ksh` the
+    // module also carries ksh93's built-in functions zsh lacks (`pow`,
+    // `atan2`, `fma`, `signbit`, …); see src/extensions/ksh_mathfunc.rs.
+    if crate::dash_mode::ksh93_mode() {
+        crate::ksh_mathfunc::add_ksh93_mathfuncs();
+    }
     0
 }
 
@@ -242,6 +248,8 @@ pub fn boot_(m: *const module) -> i32 {
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
 pub fn cleanup_(m: *const module) -> i32 {
     // c:577
+    // !!! EMULATION-ONLY !!! the ksh93 additions boot_ made.
+    crate::ksh_mathfunc::remove_ksh93_mathfuncs();
     setfeatureenables(m, module_features(), None) // c:584
 }
 
