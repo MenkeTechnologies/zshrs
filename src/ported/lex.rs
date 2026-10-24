@@ -1671,7 +1671,15 @@ fn gettok() -> lextok {
                 // case terminators; dash lexes `;` then a stray `&` / `|` (syntax error).
                 // bash 3.2 (/bin/sh) has no `;&` either.
                 Some('&') if !crate::dash_mode::dash_strict() && !crate::dash_mode::sh_mode() => SEMIAMP,
-                Some('|') if !crate::dash_mode::dash_strict() => SEMIBAR,
+                // bash, /bin/sh and ksh93 have no `;|` either (mksh and zsh do).
+                Some('|')
+                    if !crate::dash_mode::dash_strict()
+                        && !crate::dash_mode::bash_mode()
+                        && !crate::dash_mode::sh_mode()
+                        && !crate::dash_mode::ksh93_mode() =>
+                {
+                    SEMIBAR
+                }
                 _ => {
                     if let Some(d) = d {
                         hungetc(d);
