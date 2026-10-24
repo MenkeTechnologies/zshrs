@@ -1209,11 +1209,11 @@ fn unescape_ws_and_quotes(s: &str) -> String {
     out
 }
 
-/// `${~s}` — tilde expansion followed by filename generation. `nonomatch`
-/// (sh:10) means a pattern that matches nothing survives as itself, so the
-/// fallback is the tilde-expanded word.
+/// `${~s}` — `filesubstr` (tilde AND equals expansion) followed by
+/// filename generation. `nonomatch` (sh:10) means a pattern that matches
+/// nothing survives as itself, so the fallback is the file-expanded word.
 fn glob_subst(s: &str) -> Vec<String> {
-    let expanded = tilde_expand(s);
+    let expanded = file_expand(s);
     if !has_glob_meta(&expanded) {
         return vec![expanded];
     }
@@ -1225,16 +1225,24 @@ fn glob_subst(s: &str) -> Vec<String> {
     }
 }
 
-/// The leading-`~` half of `${~s}`, via the canonical `filesubstr`
-/// (`Src/subst.c:737`) so `~`, `~+`, `~-`, `~±N`, `~user` and `~[dyn]` all
-/// behave as they do elsewhere. `filesubstr` dispatches on the Tilde TOKEN
-/// (`Src/zsh.h:189`) the lexer produces; a word rebuilt from `$PREFIX` /
-/// `$SUFFIX` carries a plain ASCII `~`, so retokenize it first.
-fn tilde_expand(s: &str) -> String {
-    if !s.starts_with('~') {
-        return s.to_string();
-    }
-    let tokenized = format!("\u{e198}{}", &s[1..]);
+/// The leading-`~` / leading-`=` half of `${~s}`, via the canonical
+/// `filesubstr` (`Src/subst.c:737`) so `~`, `~+`, `~-`, `~±N`, `~user`,
+/// `~[dyn]` (c:741-797) and `=cmd` (c:799-804, `equalsubstr` under
+/// EQUALS) all behave as they do elsewhere. GLOB_SUBST runs `shtokenize`
+/// over the substituted value (c:Src/subst.c:830), which makes a leading
+/// `~` the Tilde token and a leading `=` the Equals token
+/// (c:Src/glob.c:3632/3637); `prefork` then hands the word to
+/// `filesubstr`. A word rebuilt from `$PREFIX` / `$SUFFIX` carries plain
+/// ASCII, so retokenize the leading character here. Without the `=` arm
+/// `cat =ls` left `_expand` with nothing and the chain fell through to
+/// command-name completion instead of offering `=ls` / `/bin/ls`.
+fn file_expand(s: &str) -> String {
+    let tok = match s.chars().next() {
+        Some('~') => crate::ported::zsh_h::Tilde,
+        Some('=') => crate::ported::zsh_h::Equals,
+        _ => return s.to_string(),
+    };
+    let tokenized = format!("{}{}", tok, &s[1..]);
     crate::ported::subst::filesubstr(&tokenized, false).unwrap_or_else(|| s.to_string())
 }
 
