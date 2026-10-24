@@ -931,14 +931,12 @@ jobs:
       #    4  case ${(U)} / ${(L)} / ${(C)}
       #    2  ${(ml:8::.:)j}       -- NOT a port gap; see below
       #
-      # The 18 substitution cases are an INTERFACE boundary, not a missing
-      # guard. pattern.rs already degrades correctly (`charinc` and
-      # `anyof_membership` gate on GF_MULTIBYTE, `charsub` on the option), but
-      # `patmatch` takes `&str` and the scan feeds it `&val[q_byte..]`. Byte
-      # mode has to probe offsets that fall INSIDE a character, and Rust cannot
-      # take that slice -- so closing these means making the pattern entry
-      # point byte-native, a core-subsystem change rather than a local one.
-      # Flagged rather than papered over.
+      # The 18 substitution cases are fixed (BUGS.md #1205, 2026-10-23):
+      # patcompile honours the option, the single-byte class test uses libc
+      # ctype, and src/byte_units.rs spells each non-ASCII byte as one Meta
+      # pair in pattern and subject so the paramsubst walkers can step bytes
+      # on char boundaries. --count 1000 now leaves 10, all the two upstream
+      # defects below ((ml:) and the case-fold token leak).
       #
       # The 6 quoting cases need per-BYTE printability. C's WC_ISPRINT is
       # `iswprint(cc)` (Src/ztype.h:79) and byte mode hands it the raw byte as
