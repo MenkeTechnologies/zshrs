@@ -817,6 +817,20 @@ as its default zsh instead, so point Warp's startup shell (Settings → Features
 → Session) at a `zsh`-named link such as `~/bin/zsh`. Warp launches it as
 `exec -a -zsh <path> -g --no-rcs` and then sources the rc files itself.
 
+In `~/.warp/settings.toml` the key Warp reads is `new_session_shell_override`,
+with the `custom` variant:
+
+```toml
+[session]
+new_session_shell_override = { custom = "/path/to/zsh" }
+```
+
+`startup_shell_override` is only a fallback for when that key is unset, and
+`{ executable = "…" }` resolves only to a shell listed in `/etc/shells`; any
+other path silently starts the system default. Warp shows a "slow bootstrap"
+banner when the `Bootstrapped` hook takes longer than 7 seconds. The session
+still works.
+
 The whole table below is re-checked against those binaries by the startup-file
 parity + fuzz harness on every run. `$ENV` is expanded (parameter, command,
 arithmetic and tilde substitution) before use in every shell that reads it.
