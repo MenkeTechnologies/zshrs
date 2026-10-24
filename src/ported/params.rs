@@ -10857,6 +10857,20 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
                 i += 1;
             }
         }
+        // !!! DROP-IN GATE — bash sparse arrays. An append literal with
+        // explicit indices (`a=(x); a+=([5]=y)`) leaves the slots it
+        // skipped UNSET in bash (`${!a[@]}` → `0 5`), where zsh
+        // fills them with "" below. Record those gaps in the hole table;
+        // the dense Vec keeps its "" padding exactly as zsh does. The
+        // plain `a=(…)` literal is marked by its caller
+        // (bash_arrays::note_holes_outside), so only `+=` lands here.
+        if (flags & ASSPM_AUGMENT) != 0 && crate::dash_mode::bash_mode() {
+            for (k, slot) in fullval.iter().enumerate() {
+                if slot.is_none() {
+                    crate::bash_arrays::note_unset(name, k);
+                }
+            }
+        }
         // c:3530-3537 — unfilled slots become "".
         val = fullval.into_iter().map(|o| o.unwrap_or_default()).collect();
         // c:3538-3540 — setarrvalue(v, fullval); return. The orig
@@ -12040,6 +12054,18 @@ pub fn unsetparam(name: &str) -> i32 {
             // !!! PDKSH GATE (no C counterpart) !!! mksh's `unset` of a local drops
             // the local instance and reveals the outer value (`f() { local x=5;
             // unset x; echo $x; }; x=0; f` prints 0); zsh keeps the local, unset.
+            let outer = pm_owned.old.take().unwrap();
+            paramtab().write().unwrap().insert(name.to_string(), outer);
+        } else if crate::dash_mode::bash_mode()
+            && pm_owned.level > 0
+            && pm_owned.old.is_some()
+            && locallevel.load(Ordering::Relaxed) as i32 > pm_owned.level
+        {
+            // !!! BASH GATE (no C counterpart) !!! bash's dynamic unset: an
+            // `unset` run from a function DEEPER than the one that made the
+            // local pops that local and reveals the binding below it (`x=g;
+            // f() { local x=l; g; echo $x; }; g() { unset x; }` prints `g`).
+            // Unset in the local's OWN scope keeps it, unset, as in zsh.
             let outer = pm_owned.old.take().unwrap();
             paramtab().write().unwrap().insert(name.to_string(), outer);
         } else if pm_owned.old.is_some()

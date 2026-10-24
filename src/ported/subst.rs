@@ -8035,12 +8035,13 @@ pub fn paramsubst(
                     subexp_value = Some(format!("{target}[{shown}]"));
                     idx = body_chars.len();
                     bash_handled = true;
-                } else if bang_bash
+                } else if (bang_bash || (bang_ksh && crate::dash_mode::ksh93_mode()))
                     && after.len() == 1
                     && matches!(after[0], '@' | '*' | '\u{e187}' /* Star */)
                 {
-                    // `${!prefix@}` / `${!prefix*}` (BASH only; mksh/pdksh lack
-                    // it) → the NAMES of all set
+                    // `${!prefix@}` / `${!prefix*}` (bash and ksh93 —
+                    // `pfx_a=1 pfx_b=2; ${!pfx_@}` is `pfx_a pfx_b` in both;
+                    // mksh/pdksh reject it) → the NAMES of all set
                     // parameters whose name begins with `prefix`, sorted (bash
                     // name-matching indirection). `@` splats them as separate
                     // words, `*` joins via IFS — same distinction as `$@`/`$*`,
@@ -9054,6 +9055,36 @@ pub fn paramsubst(
         // drop, and so does Nularg (c:Src/exec.c:2143 `if (c != Nularg)`):
         // C's untokenize would spell the markers `'`/`"` for the re-lex to
         // read as quotes again, and the Bnull pairs carry that instead.
+        //
+        // !!! DROP-IN GATE — mksh/pdksh (no C counterpart) !!! mksh R59 applies
+        // the pattern / substring / case operators to SCALARS only: on the
+        // whole positional list or an `[@]`/`[*]` splat (`${@#p}`,
+        // `${a[@]/p/r}`, `${a[*]%x}`, `${@:1}`, `${@^}`, `${@@Q}`) it reports
+        // "bad substitution" and aborts with status 1. The default family
+        // (`${@:-x}`, `${a[@]+y}`) is still accepted. ksh93, bash and zsh map
+        // the operator over the elements.
+        if crate::dash_mode::korn_mode()
+            && crate::dash_mode::pdksh_family()
+            && subexp_value.is_none()
+            && ((subscript.is_none() && matches!(var_name.as_str(), "@" | "*")) || sub_is_splat)
+        {
+            use crate::ported::zsh_h::{Dash, Equals, Hat, Pound};
+            let raw: &[char] = &body_chars[idx..];
+            let element_op = match raw.first().copied() {
+                Some('#' | '%' | '/' | '^' | ',' | '@') => true,
+                Some(c) if c == Pound || c == Hat => true,
+                Some(':') => !matches!(
+                    raw.get(1).copied(),
+                    Some('-' | '=' | '+' | '?') | Some(Dash) | Some(Equals)
+                ),
+                _ => false,
+            };
+            if element_op {
+                zerr("bad substitution");
+                errflag.fetch_or(crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
+                return (String::new(), new_pos, Vec::new());
+            }
+        }
         let rest: String = {
             // One quoting level of the walk: the unquoted top level, a
             // `"…"` span, or the body of a nested `${…}` (with its count of
