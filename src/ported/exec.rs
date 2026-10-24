@@ -7594,6 +7594,21 @@ pub fn doshfunc(
         let mut stack = FUNCSTACK.lock().unwrap_or_else(|e| e.into_inner());
         stack.push(frame); // c:6016 funcstack = &funcsave->fstack
     }
+    // !!! EMULATION-ONLY (no C counterpart) !!! ksh93 sets `$0` to the
+    // function's name inside a `function name { … }` definition, and only
+    // there: a POSIX `name() { … }` body keeps its caller's `$0`
+    // (`function g { f; }; f() { print $0; }; g` prints `g`). zsh's
+    // `emulate ksh` clears FUNCTION_ARGZERO for both spellings, so the
+    // keyword spelling is set here, now that its frame is on the stack, and
+    // put back as the frame is popped — before a function-scoped EXIT trap
+    // runs, which ksh93 runs with the caller's `$0`.
+    let ksh_keyword_argzero = (!isset(FUNCTIONARGZERO)
+        && crate::dash_mode::in_ksh93_keyword_function())
+    .then(|| {
+        let prev = crate::ported::utils::argzero();
+        crate::ported::utils::set_argzero(Some(name.clone()));
+        prev
+    });
 
     // c:6021-6042 — body execution. C: `runshfunc(prog, wrappers, name)`.
     // zshrs delegates to the body_runner closure (typically a fusevm
@@ -7679,6 +7694,9 @@ pub fn doshfunc(
     {
         let mut stack = FUNCSTACK.lock().unwrap_or_else(|e| e.into_inner());
         stack.pop();
+    }
+    if let Some(prev) = ksh_keyword_argzero {
+        crate::ported::utils::set_argzero(prev);
     }
     // c:Src/exec.c:6260 — `endparamscope();` inside `runshfunc`, i.e.
     // BEFORE control returns to doshfunc's epilogue at c:6103. zshrs
