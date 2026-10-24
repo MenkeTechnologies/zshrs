@@ -525,6 +525,16 @@ pub fn execbuiltin(
         // !!! KSH93-ONLY (no C counterpart) !!! ksh93 `print -e` is accepted (escapes
         // are already on; `-r` turns them off).
         if crate::dash_mode::ksh93_mode() && name == "print" {
+            // ksh93u+m `print` takes -e -f -n -p -r -R -s -u -v (and -C, not ported);
+            // any other letter is "unknown option", status 2.
+            optstr_bytes = crate::dash_mode::keep_option_letters(&optstr_bytes, "fnprRsuv-");
+            optstr_bytes.push(b'e');
+        }
+        // !!! PDKSH (no C counterpart) !!! mksh(1) `print [-Aceinprsu[n] | -R [en]]`:
+        // `-e` is accepted and zsh's extra letters (`-z`, `-P`, `-m`, …) are
+        // "unknown option", status 1.
+        if crate::dash_mode::pdksh_family() && name == "print" {
+            optstr_bytes = crate::dash_mode::keep_option_letters(&optstr_bytes, "celnNprsuR-");
             optstr_bytes.push(b'e');
         }
         let mut skipinvalid = (flags & BINF_SKIPINVALID as i32) != 0;
@@ -646,6 +656,14 @@ pub fn execbuiltin(
                         } {
                             ops.ind[rival as usize] = 0;
                         }
+                    }
+                    // !!! PDKSH (no C counterpart) !!! mksh's print ignores the letters
+                    // after `R` in the same word (`print -Rn x` keeps the newline,
+                    // `print -Rz x` is fine) and `-R` clears an earlier `-e`.
+                    if c == b'R' && name == "print" && crate::dash_mode::pdksh_family() {
+                        ops.ind[b'e' as usize] = 0;
+                        k = arg_bytes.len();
+                        continue;
                     }
                                                                           // c:347 — `if (optptr[1] == ':')` — option takes arg.
                     if optidx + 1 < optstr_bytes.len() && optstr_bytes[optidx + 1] == b':' {
@@ -777,6 +795,11 @@ pub fn execbuiltin(
                 && ops.ind[b'f' as usize] == 0
             {
                 optstr_bytes = b"ne".to_vec(); // c:400
+                // !!! KORN-FAMILY (no C counterpart) !!! ksh93 and mksh take only `-n`
+                // after `-R`: `print -R -e 'a\tb'` prints `-e a\tb`.
+                if crate::dash_mode::korn_mode() {
+                    optstr_bytes = b"n".to_vec();
+                }
                 flags |= BINF_SKIPINVALID as i32; // c:401
                 skipinvalid = true;
             }
@@ -14557,7 +14580,9 @@ pub fn bin_print(
         // then GETKEYS_PRINT for print (EMACS), else GETKEYS_ECHO.
         let escape_how: u32 = if OPT_ISSET(ops, b'b') {
             GETKEYS_BINDKEY // c:4755
-        } else if !echo_mode && !dash_e {
+        } else if !echo_mode && !dash_e && !crate::dash_mode::pdksh_family() {
+            // !!! PDKSH (no C counterpart) !!! mksh's print decodes exactly as its
+            // echo does (`\0101` is A, `\101` and `\z` stay literal): GETKEYS_ECHO.
             GETKEYS_PRINT // c:4758
         } else if crate::dash_mode::dash_faithful() {
             // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash's echo
@@ -14577,6 +14602,11 @@ pub fn bin_print(
                 let (s, truncated) = crate::dash_mode::ksh93_print_escapes(a);
                 new_args.push(s);
                 if truncated {
+                    // ksh93 still writes the separator after the cut word when
+                    // more words followed (`print 'p\cq' r` → `p `).
+                    if new_args.len() < processed_args.len() {
+                        new_args.push(String::new());
+                    }
                     backslash_c_truncated = true;
                     break;
                 }
@@ -14593,6 +14623,11 @@ pub fn bin_print(
                 // c:utils.c:7045 — `\c` truncated; drop remaining
                 // args entirely AND suppress trailing newline.
                 backslash_c_truncated = true;
+                // !!! PDKSH (no C counterpart) !!! mksh's `\c` only drops the
+                // newline; later words still print (`echo 'a\cb' c` → `ab c`).
+                if crate::dash_mode::pdksh_family() {
+                    continue;
+                }
                 break;
             }
         }
