@@ -7469,14 +7469,15 @@ impl ZshCompiler {
             || unquoted(s, '\u{e197}')   // Quest (parse/tokens.rs:30)
             || unquoted(s, '[')
             || unquoted(s, '\u{e191}')   // Inbrack (parse/tokens.rs:24)
-            // extendedglob `^pat` (negation) and `pat~excl` (exclusion).
-            // `^` is a no-op without `setopt extendedglob`, but routing
-            // through expand_glob lets the runtime decide. The unquoted
-            // check ensures `"^b"` (literal) isn't treated as a glob.
-            // Also matches `/path/^pat` — `^` at the start of any path
-            // component (after `/`) is a negation in extendedglob.
-            || (untoked.starts_with('^') && untoked.len() > 1)
-            || untoked.contains("/^")
+            // extendedglob `^pat` (negation). c:Src/pattern.c:4377-4380
+            // haswilds fires on a Hat ANYWHERE in the word
+            // (`setopt extendedglob; echo x^1` globs to `x2`), gated on
+            // EXTENDEDGLOB at run time — the lexer tokenizes `^` to Hat
+            // unconditionally (c:Src/lex.c:434). Routing through
+            // expand_glob lets the runtime haswilds decide, exactly as
+            // for `#` below. The unquoted check keeps `"^b"` literal.
+            || unquoted(s, '^')
+            || unquoted(s, '\u{e186}') // Hat
             // extendedglob `#` / `##` hash quantifier — c:Src/pattern.c
             // :4365 haswilds gates `#` as wild whenever EXTENDEDGLOB is
             // set. Trigger unconditionally at compile time: `setopt
