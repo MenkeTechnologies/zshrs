@@ -251,7 +251,8 @@ pub fn escape_shglob_parens(v: &str, keep_ksh_groups: bool) -> String {
             '(' => {
                 let ksh = keep_ksh_groups
                     && i > 0
-                    && matches!(cs[i - 1], '@' | '*' | '+' | '?' | '!')
+                    && (matches!(cs[i - 1], '@' | '*' | '+' | '?' | '!')
+                        || (crate::dash_mode::ksh93_mode() && ksh93_count_prefix_ends(&cs, i)))
                     && !(i >= 2 && matches!(cs[i - 2], '\\' | Bnull | Bnullkeep));
                 groups.push(ksh);
                 if !ksh {
@@ -277,6 +278,29 @@ pub fn escape_shglob_parens(v: &str, keep_ksh_groups: bool) -> String {
         i += 1;
     }
     out
+}
+
+/// !!! WARNING: RUST-ONLY HELPER — NO C COUNTERPART !!!
+///
+/// Whether the `(` at `cs[open]` is the group of a ksh93 count prefix
+/// (`{3}(a)`, `{2,4}(a)`, `{2,}(a)`, `{,2}(a)`) — the shape
+/// [`crate::ksh_pattern::ksh93_count_prefix`] compiles. ksh93 reads that
+/// `(` as a group just as it does after `@ * + ? !`
+/// (`ksh -c '[[ aaa == {3}(a) ]] && echo M'` prints `M`), so
+/// [`escape_shglob_parens`] must leave it live for patcompile to see.
+fn ksh93_count_prefix_ends(cs: &[char], open: usize) -> bool {
+    if open == 0 || cs[open - 1] != '}' {
+        return false;
+    }
+    let mut start = open - 1;
+    while start > 0 && (cs[start - 1].is_ascii_digit() || cs[start - 1] == ',') {
+        start -= 1;
+    }
+    if start == 0 || cs[start - 1] != '{' {
+        return false;
+    }
+    let prefix: String = cs[start - 1..=open].iter().collect();
+    crate::ksh_pattern::ksh93_count_prefix(prefix.as_bytes(), b'(').is_some()
 }
 
 /// Whether SH_GLOB's `(` / `|` / `)` suppression applies at all right now.

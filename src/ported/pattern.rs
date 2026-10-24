@@ -75,7 +75,7 @@ use crate::zsh_h::{
     ZPC_INBRACK, ZPC_INPAR, ZPC_KSH_AT, ZPC_KSH_BANG, ZPC_KSH_BANG2, ZPC_KSH_PLUS, ZPC_KSH_QUEST,
     ZPC_KSH_STAR, ZPC_NULL, ZPC_OUTPAR, ZPC_QUEST, ZPC_SLASH, ZPC_STAR, ZPC_TILDE,
 };
-use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 // =====================================================================
@@ -1661,9 +1661,18 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
         // Generation"). zsh has the same closure only as the postfix
         // `(pat)(#cm,n)`, so the bounds are read here and the group the next
         // patcomppiece compiles is wrapped in the same P_COUNT node.
+        //
+        // The group after the prefix is a ksh group like `@(…)`, so — as
+        // for `@(` (c:495-499, c:1279) — the lookahead is the literal
+        // Inpar, not `zpc_special[ZPC_INPAR]`, which SH_GLOB (always on
+        // in a Korn emulation) has turned into Marker. The cursor stops
+        // ON the closing `}`, and KSH93_COUNT_GROUP tells patcomppiece to
+        // read that `}` as the group's `@` trigger byte; otherwise the
+        // bare `(` would compile as a literal under SH_GLOB.
         if pending_count.is_none() && ksh_count_active {
-            if let Some((min, max, len)) = crate::ksh_pattern::ksh93_count_prefix(&bytes[off..], sp_inpar) {
-                patparse_off.store(off + len, Ordering::Relaxed);
+            if let Some((min, max, len)) = crate::ksh_pattern::ksh93_count_prefix(&bytes[off..], b'(') {
+                patparse_off.store(off + len - 1, Ordering::Relaxed);
+                KSH93_COUNT_GROUP.store(true, Ordering::Relaxed);
                 pending_count = Some((min, max));
                 continue;
             }
@@ -2299,6 +2308,12 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
         else if c == sp[ZPC_KSH_QUEST as usize] {
             kshchar = b'?';
         } // c:1290-1291
+        // !!! EMULATION-ONLY (no C counterpart) !!! the `}` closing a
+        // ksh93 count prefix (`{3}(a)`), left here by patcompbranch: the
+        // group it counts is an `@(…)` group.
+        else if c == b'}' && KSH93_COUNT_GROUP.swap(false, Ordering::Relaxed) {
+            kshchar = b'@';
+        }
     }
     drop(parse);
 
@@ -3168,6 +3183,16 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
                     {
                         break;
                     }
+                }
+                // !!! EMULATION-ONLY (no C counterpart) !!! a ksh93 count
+                // prefix (`a{1}(b)`) ends the run the same way, so the
+                // next patcompbranch iteration reads it as the count.
+                if b == b'{'
+                    && crate::dash_mode::ksh93_mode()
+                    && isset(KSHGLOB)
+                    && crate::ksh_pattern::ksh93_count_prefix(&p.as_bytes()[local_off..], b'(').is_some()
+                {
+                    break;
                 }
                 buf.push(b);
                 local_off += 1;
@@ -5452,6 +5477,11 @@ pub static patstart: Mutex<String> = Mutex::new(String::new()); // c:269
 /// Position within `patparse` we're currently looking at. C source
 /// uses a `char *` cursor; Rust uses byte offset into the String.
 pub static patparse_off: AtomicUsize = AtomicUsize::new(0);
+
+/// !!! EMULATION-ONLY (no C counterpart) !!! Set by `patcompbranch` when
+/// it has consumed a ksh93 count prefix up to its closing `}`; the next
+/// `patcomppiece` reads that `}` as the `@` of an `@(…)` group.
+pub static KSH93_COUNT_GROUP: AtomicBool = AtomicBool::new(false);
 
 // C: `static int errsfound;` — approximate-match error count.
 pub static errsfound: AtomicI32 = AtomicI32::new(0); // c:274
