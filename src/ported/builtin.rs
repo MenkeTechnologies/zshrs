@@ -408,15 +408,21 @@ pub fn execbuiltin(
     argc = args.len() as i32; // c:275
 
     // !!! BASH/KSH93 GATE (no C counterpart) !!! bash's `read -a NAME` / `-n N` /
-    // `-N N` / `-p PROMPT` and ksh93's `-A NAME` / `-n N` / `-N N` take a VALUE, glued
+    // `-N N` / `-p PROMPT` and ksh93's / mksh's `-A NAME` / `-n N` / `-N N` take a VALUE, glued
     // (`-n2`) or as the next word, and options may follow it (`read -a a -d , x`).
     // zsh's parser sees boolean letters there, so the value word would end option
     // parsing. Lift each value out and queue it after the options, in the order
     // bin_read takes them back off: prompt, count, array name.
     let args: Vec<String> = if name == "read"
-        && (crate::dash_mode::bash_mode() || crate::dash_mode::ksh93_mode())
+        && (crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode())
     {
-        let value_flags: &[u8] = if crate::dash_mode::bash_mode() { b"anNp" } else { b"AnN" };
+        let value_flags: &[u8] = if crate::dash_mode::bash_mode() {
+            b"anNp"
+        } else if crate::dash_mode::pdksh_family() {
+            b"nN" // mksh's `-A` is a plain letter: `read -A a -d ,` ends the options at `a`
+        } else {
+            b"AnN"
+        };
         let mut opts: Vec<String> = Vec::with_capacity(args.len());
         let (mut prompt, mut count, mut aname): (Option<String>, Option<String>, Option<String>) =
             (None, None, None);
@@ -17581,8 +17587,8 @@ pub fn bin_read(
     // is left as the first positional; pull it out and route through the
     // char-read path (also skips the tty requirement).
     // ksh93 spells the same two reads `-n N` / `-N N` (ksh93u+m `read -n 2 a <<< abcd`
-    // -> `ab`), so the gate covers it too.
-    let read_counts = crate::dash_mode::bash_mode() || crate::dash_mode::ksh93_mode();
+    // -> `ab`), so the gate covers it too, and so does mksh (`read -n2 v <<< abcd`).
+    let read_counts = crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode();
     // !!! SHARED-OPTSTR GUARD (no C counterpart) !!! the registered optstr
     // carries bash's `-a` / `-N`; zsh's own is "cd:ek:%lnpqrst:%zu:AE"
     // (c:Src/builtin.c:109), where both are `bad option` (status 1).
