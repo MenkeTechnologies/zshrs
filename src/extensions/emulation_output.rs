@@ -833,6 +833,46 @@ pub fn alias_always_quotes() -> bool {
     matches!(personality(), Personality::Dash | Personality::Sh)
 }
 
+/// dash's `single_quote()`, the quoting behind its `alias`, `trap`, `set`,
+/// `export -p` and `readonly -p` listings. The text alternates two kinds of
+/// run: everything up to the next `'` goes inside `'…'` (that run is emitted
+/// even when empty, so a value starting with a quote opens with `''`), and a
+/// run of consecutive quotes goes inside ONE `"…"`. The loop stops once the
+/// text is used up after a quote run, so no empty `''` is ever emitted at the
+/// end. Measured on /bin/dash:
+///
+/// ```text
+/// alias x="'q"    → x=''"'"'q'
+/// alias x="q'"    → x='q'"'"
+/// alias x="a''b"  → x='a'"''"'b'
+/// alias x=""      → x=''
+/// ```
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn dash_single_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    let mut rest = s;
+    loop {
+        let plain = rest.find('\'').unwrap_or(rest.len());
+        out.push('\'');
+        out.push_str(&rest[..plain]);
+        out.push('\'');
+        rest = &rest[plain..];
+        if rest.is_empty() {
+            break;
+        }
+        let quotes = rest.find(|c| c != '\'').unwrap_or(rest.len());
+        out.push('"');
+        out.push_str(&rest[..quotes]);
+        out.push('"');
+        rest = &rest[quotes..];
+        if rest.is_empty() {
+            break;
+        }
+    }
+    out
+}
+
 /// `set -o` rendered the way this personality's shell renders it, or
 /// `None` for zsh and bash (whose listings are handled by their own
 /// existing paths).
@@ -1153,5 +1193,19 @@ mod tests {
             assert_eq!(dash_kill_l_number(16).as_deref(), Some("16"), "dash's table has no STKFLT");
             assert_eq!(dash_kill_l_number(29).as_deref(), Some("IO"));
         }
+    }
+
+    /// dash's `single_quote()`: a run of quotes shares one `"…"`, a leading
+    /// quote keeps the empty `''` opener, and nothing empty follows a
+    /// trailing quote.
+    #[test]
+    fn dash_single_quote_groups_quote_runs() {
+        assert_eq!(dash_single_quote(""), "''");
+        assert_eq!(dash_single_quote("ls -l"), "'ls -l'");
+        assert_eq!(dash_single_quote("'q"), r#"''"'"'q'"#);
+        assert_eq!(dash_single_quote("q'"), r#"'q'"'""#);
+        assert_eq!(dash_single_quote("a''b"), r#"'a'"''"'b'"#);
+        assert_eq!(dash_single_quote("''"), r#"''"''""#);
+        assert_eq!(dash_single_quote("echo 'q'"), r#"'echo '"'"'q'"'""#);
     }
 }
