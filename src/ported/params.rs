@@ -6042,6 +6042,23 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
         }
         t if t == PM_INTEGER => {
             if let Some(ref s) = val {
+                // !!! PDKSH GATE (no C counterpart) !!! mksh appends to an integer's TEXT
+                // and evaluates the result: `typeset -i x=5; x+=3` is 53, `typeset -i16 x=5;
+                // x+=3` is 16#53, and `x+=" 3"` is the math error `5 3: unexpected '3'`.
+                // zsh, bash and ksh93 add instead (c:2776).
+                let pdksh_append = (flags & ASSPM_AUGMENT) != 0
+                    && (flags & ASSPM_ENV_IMPORT) == 0
+                    && crate::dash_mode::korn_mode()
+                    && crate::dash_mode::pdksh_family();
+                let appended: String;
+                let s: &String = if pdksh_append {
+                    let cur = pm.gsu_i.as_ref().map_or(pm.u_val, |g| (g.getfn)(pm));
+                    let base = if pm.base > 0 { pm.base as u32 } else { 10 };
+                    appended = format!("{}{}", convbase(cur, base), s);
+                    &appended
+                } else {
+                    s
+                };
                 let ival: i64 = if (flags & ASSPM_ENV_IMPORT) != 0 {
                     s.parse::<i64>().unwrap_or(0)
                 } else {
@@ -6107,7 +6124,7 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
                 // path is what makes `integer x=42; x+=8` store 50 instead
                 // of 8. Without this the integer `+=` operator silently
                 // replaced.
-                let final_val = if (flags & ASSPM_AUGMENT) != 0 {
+                let final_val = if (flags & ASSPM_AUGMENT) != 0 && !pdksh_append {
                     // c:2776 `pm->u.val += val.l` through the getfn's value.
                     pm.gsu_i
                         .as_ref()
