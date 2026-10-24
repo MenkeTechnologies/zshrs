@@ -8002,8 +8002,9 @@ impl ZshCompiler {
             // local $@` declares two parameters.
             let ssub = self.ssub_c1761();
             if ssub {
+                let argc = if self.ssub_join_with_space(name == "@", false) { 5 } else { 1 };
                 self.builder.emit(
-                    Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_JOIN_STAR, 1),
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_JOIN_STAR, argc),
                     0,
                 );
                 return;
@@ -9022,7 +9023,18 @@ impl ZshCompiler {
             // paramsubst path.
             // Same quoted-affix exclusion as the `${=NAME}` fast path above:
             // `""${a[@]}""` must keep its quoted empty literals.
-            let take_fast = (!is_star || !dq_for_splice)
+            // The quoted test, with the synthetic Dnull pair a scalar
+            // assignment's value is compiled in (see `synthetic_dq_wrap_depth`)
+            // and the `[[ ]]` / `case` glob-suppression bump left out.
+            let real_dq = (raw_dq_for_splice && self.synthetic_dq_wrap_depth == 0)
+                || (self.dq_context_depth - self.cond_glob_suppress_depth) > 0;
+            // An unquoted `${a[*]}` that /bin/sh joins with a space has to reach
+            // the joiner below, not paramsubst (see `ssub_join_with_space`).
+            let sh_star_space = is_star
+                && !real_dq
+                && self.ssub_c1761()
+                && self.ssub_join_with_space(false, true);
+            let take_fast = (!is_star || !dq_for_splice || sh_star_space)
                 && !(has_quote_markers && !word_is_single_dq_span(s));
             if take_fast {
                 // dash has no array subscripts: leave `${name[@]}` / `${name[*]}` to the
@@ -9118,7 +9130,11 @@ impl ZshCompiler {
                     // c:4261 element-count half of the rule, which is a RUN-time
                     // fact and so is applied by the handler.
                     let join_argc: u8 = if ssub {
-                        1
+                        if self.ssub_join_with_space(!is_star, is_star && !real_dq) {
+                            5
+                        } else {
+                            1
+                        }
                     } else if is_star {
                         0
                     } else if dq_for_splice {
@@ -16401,6 +16417,24 @@ impl ZshCompiler {
     ///
     /// Distinct from `brace_array_ssub` above, which is the older UNPAIRED
     /// spelling still used by the `BUILTIN_BRIDGE_BRACE_ARRAY` route.
+    /// !!! DROP-IN GATE (no C counterpart) !!! zsh's `ssub` join (c:Src/subst.c:4226)
+    /// is IFS[0] for every array, and so is dash's. bash, ksh93 and mksh join a
+    /// `[@]` / `$@` (`at`) with a SPACE wherever they want a scalar —
+    /// `IFS=:; x=${a[@]}`, `typeset v=${a[@]}`, `case ${a[@]} in`, `[[ ${a[@]} ]]`,
+    /// `<<<${a[@]}` all give `1 2 3`. /bin/sh (bash 3.2) does too, and also for an
+    /// UNQUOTED array `${a[*]}` (`sh_star`, not `$*`), but not in a typeset-family
+    /// argument, which keeps IFS[0]: `local v=${a[@]}` → `1:2:3`.
+    fn ssub_join_with_space(&self, at: bool, sh_star: bool) -> bool {
+        if crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode() {
+            at
+        } else if crate::dash_mode::sh_mode() {
+            let typeset_arg = self.assign_builtin_arg_depth > 0 && self.assign_context_depth > 0;
+            !typeset_arg && (at || sh_star)
+        } else {
+            false
+        }
+    }
+
     fn ssub_c1761(&self) -> bool {
         self.scalar_assign_depth > 0
             || (self.assign_builtin_arg_depth > 0 && self.assign_context_depth > 0)

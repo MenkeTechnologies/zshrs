@@ -8763,7 +8763,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     //      value ARRAY-shaped it returns the array and FORCE_SPLIT's c:3931
     //      `!isarr` gate passes it through.
     vm.register_builtin(BUILTIN_ARRAY_JOIN_STAR, |vm, argc| {
-        let join_no_split = argc == 1;
+        // argc 5 is argc 1 whose join the compiler decided is a space — a
+        // bash / Korn / `/bin/sh` drop-in's `[@]` (see `ssub_join_with_space`
+        // in compile_zsh.rs).
+        let space_join = argc == 5;
+        let join_no_split = argc == 1 || space_join;
         let name = vm.pop().to_str();
         let (elems, joined, ifs_opt, in_dq) = with_executor(|exec| {
             // c:Src/params.c — `"$*"` joins by IFS[0]. zsh
@@ -8799,6 +8803,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // sepjoin(aval, sep, 1); isarr = 0; }`. And argc 1 is the caller
         // saying it wants the join without the split (see the contract above).
         if in_dq || join_no_split {
+            if space_join {
+                return Value::str(elems.join(" "));
+            }
             // !!! DROP-IN GATE (no C counterpart) !!! bash, ksh93 and mksh join a
             // `$@` in a scalar assignment with a space (`set -- a b; IFS=:;
             // x="$@"` → `a b`); zsh and dash use IFS[0], and `$*` is IFS[0]
