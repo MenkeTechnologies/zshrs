@@ -6437,6 +6437,19 @@ impl ZshCompiler {
                     self.builder.emit(Op::LoadConst(ac), 0);
                 }
                 let mut stack_values = 0usize;
+                // !!! KORN GATE (no C counterpart) !!! mksh R59 has no `[k]=v`
+                // compound elements: `x=([3]=c)` stores the word `[3]=c`. ksh93
+                // decides on the FIRST element: `a=([k]=v …)` is a keyed
+                // (associative, see BUILTIN_SET_ARRAY) literal, while after a
+                // plain first element `a=(x [3]=y)` keeps `[3]=y` as a word.
+                let kv_elements = if crate::dash_mode::korn_mode() && crate::dash_mode::pdksh_family()
+                {
+                    false
+                } else if crate::dash_mode::ksh93_mode() {
+                    elements.first().is_some_and(|e| split_kv_element(e).is_some())
+                } else {
+                    true
+                };
                 if !batched {
                     for elem in elements.iter() {
                         // c:Src/subst.c:49-79 keyvalpairelement, invoked
@@ -6453,7 +6466,7 @@ impl ZshCompiler {
                         // distinguishes quoted (`"[k]=v"` — plain element,
                         // c:54 start[0]==Inbrack is the TOKEN form only)
                         // from unquoted.
-                        if self.emit_kv_pair_element(elem) {
+                        if kv_elements && self.emit_kv_pair_element(elem) {
                             stack_values += 3;
                             continue;
                         }

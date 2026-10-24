@@ -5851,6 +5851,28 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             if prefix_restored {
                 save_inline_prefix_param(exec, &name);
             }
+            // !!! KSH93 GATE (no C counterpart) !!! a ksh93 compound literal
+            // whose first element is `[key]=value` makes NAME associative
+            // whatever it was (`a=(1 2); a=([0]=v)` → `typeset -A a=([0]=v)`);
+            // the compiler only emits the Marker triads for that shape. A
+            // read-only NAME is left to the indexed path, which reports it.
+            if crate::dash_mode::ksh93_mode()
+                && values.first().is_some_and(|e| e.starts_with(crate::ported::zsh_h::Marker))
+                && exec.assoc(&name).is_none()
+                && !exec.is_readonly_param(&name)
+            {
+                exec.set_assoc(name.clone(), IndexMap::new()); // c:Src/params.c:3602 sethparam
+            }
+            // …and a list of plain words replaces a non-empty associative array
+            // with an indexed one: `a=([k]=v); a=(1 2)` → `typeset -a a=(1 2)`.
+            // (ksh93 refuses the same words onto an EMPTY one; not modelled.)
+            if crate::dash_mode::ksh93_mode()
+                && values.first().is_some_and(|e| !e.starts_with(crate::ported::zsh_h::Marker))
+                && exec.assoc(&name).is_some_and(|h| !h.is_empty())
+                && !exec.is_readonly_param(&name)
+            {
+                crate::ported::params::unsetparam(&name);
+            }
             // Assoc init `typeset -A m; m=(k v k v ...)` — route to
             // canonical sethparam (Src/params.c:3602) which parses the
             // flat (k,v) pair list internally.
@@ -6126,6 +6148,32 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if array_assignment_expansion_failed() {
             crate::ported::builtin::LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed);
             return Value::Status(1);
+        }
+        // !!! KSH93 GATE (no C counterpart) !!! a keyed `a+=([k]=v …)` (see the
+        // compiler's first-element rule) starts an associative array when NAME
+        // is unset, while onto a non-empty indexed array its elements are plain
+        // words: `a=(1 2); a+=([5]=y)` → `typeset -a a=(1 2 '[5]=y')`.
+        let marker = crate::ported::zsh_h::Marker;
+        if crate::dash_mode::ksh93_mode() && values.first().is_some_and(|e| e.starts_with(marker)) {
+            with_executor(|exec| {
+                if exec.assoc(&name).is_some() {
+                    return;
+                }
+                if exec.array(&name).is_some_and(|a| !a.is_empty()) {
+                    values = values
+                        .chunks(3)
+                        .map(|ch| match ch {
+                            [m, k, v] => format!("[{}]{}={}", k, &m[marker.len_utf8()..], v),
+                            _ => ch.concat(),
+                        })
+                        .collect();
+                } else if !crate::ported::params::paramtab()
+                    .read()
+                    .is_ok_and(|t| t.get(&name).is_some())
+                {
+                    exec.set_assoc(name.clone(), IndexMap::new()); // c:Src/params.c:3602 sethparam
+                }
+            });
         }
         let blocked = with_executor(|exec| -> bool {
             // Assoc append `m+=(k1 v1 ...)`: merge the (k,v) pairs into
