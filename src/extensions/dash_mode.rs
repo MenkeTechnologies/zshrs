@@ -1131,6 +1131,21 @@ pub fn korn_sh_scalar(name: &str) -> Option<String> {
                 .unwrap_or_default(),
         ),
         ".sh.file" => Some(crate::ported::utils::scriptfilename_get().unwrap_or_default()),
+        // The subshell depth: `( … )` and `$( … )` each add one, the same
+        // count zsh keeps in $ZSH_SUBSHELL.
+        //   ksh -c 'echo ${.sh.subshell}; (echo ${.sh.subshell}; (echo ${.sh.subshell}))'
+        //   → 0 1 2
+        ".sh.subshell" => Some(crate::ported::params::getsparam("ZSH_SUBSHELL").unwrap_or_else(|| "0".into())),
+        // The function-call depth, `name()` and `function name` alike:
+        //   ksh -c 'f() { echo ${.sh.level}; }; function g { f; }; echo ${.sh.level}; f; g'
+        //   → 0 1 2
+        ".sh.level" => Some(
+            crate::ported::modules::parameter::FUNCSTACK
+                .lock()
+                .map(|f| f.iter().filter(|fs| fs.tp == crate::ported::zsh_h::FS_FUNC).count())
+                .unwrap_or(0)
+                .to_string(),
+        ),
         _ => None,
     }
 }
