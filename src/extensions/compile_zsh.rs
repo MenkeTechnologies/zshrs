@@ -7110,9 +7110,13 @@ impl ZshCompiler {
                 //
                 // Detector: every char in the value is either inside
                 // a Snull pair OR is a Bnull-escaped char OR is the
-                // Bnull marker itself. NO `$` / `` ` `` outside
-                // Snull pairs (those would mean an unquoted
-                // expansion segment that the bridge must handle).
+                // Bnull marker itself. NO token char outside Snull
+                // pairs: `$` / `` ` `` mean an unquoted expansion
+                // segment, a `Dnull` a double-quoted one
+                // (`a='b'"c"`), and `Star` / `Inbrace` / … a live
+                // glob or brace (`a='b'x*`, `a='b'{x,y}`) — all of
+                // which only the runtime expand path handles; this
+                // fold would emit their token bytes raw.
                 let value_is_sq_concat = !value_chars.is_empty() && {
                     let mut inside_sq = false;
                     let mut all_inside_or_escaped = true;
@@ -7129,7 +7133,7 @@ impl ZshCompiler {
                                 i += 2;
                                 continue;
                             }
-                            if matches!(c, '$' | '`' | '\u{e185}' | '\u{e18c}' | '\u{e193}' | '\u{e199}') {
+                            if matches!(c, '$' | '`') || crate::token_char::itok_char(c) {
                                 all_inside_or_escaped = false;
                                 break;
                             }
