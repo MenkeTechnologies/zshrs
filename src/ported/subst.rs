@@ -7852,7 +7852,28 @@ pub fn paramsubst(
                 }
                 let target: String = body_chars[idx..j].iter().collect();
                 let after = &body_chars[j..];
-                if after.is_empty() {
+                // `${!ref}` on a NAMEREF (bash): bash(1) "If the control
+                // variable … is a name reference, ${!name} expands to the
+                // name of the variable referenced" — `x=1; declare -n r=x;
+                // ${!r}` is `x`, not the indirect value of `1`.
+                let bash_ref_target = if crate::dash_mode::bash_mode() && after.is_empty() {
+                    match crate::ported::params::resolve_nameref_name(&target, None) {
+                        crate::ported::params::nameref_resolution::Target {
+                            name, subscript, ..
+                        } if name != target => Some(match subscript {
+                            Some(s) => format!("{name}[{s}]"),
+                            None => name,
+                        }),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                if let Some(resolved) = bash_ref_target {
+                    subexp_value = Some(resolved);
+                    idx = body_chars.len();
+                    bash_handled = true;
+                } else if after.is_empty() {
                     if bang_bash {
                         // !!! BASH-MODE GATE (no C counterpart) !!! bash 5 rejects an
                         // indirection through an unset or empty variable: "invalid
@@ -8179,6 +8200,36 @@ pub fn paramsubst(
                 sub_is_splat && matches!($s, "@" | "*")
             };
         }
+        // !!! DROP-IN GATE — bash/ksh93/mksh nameref to an array ELEMENT
+        // (`declare -n r=a[1]`): every braced read of `r` — `${r}`,
+        // `${r:-d}`, `${#r}` — is a read of `${a[1]}`. Splice the referent's
+        // subscript into the body so the ordinary subscript machinery below
+        // parses it exactly as if `${a[1]…}` had been written. (Only these
+        // modes admit a subscripted refname at all — see valid_refname.)
+        let body_chars: Vec<char> = if (crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode())
+            && subexp_value.is_none()
+            && !(idx < body_chars.len() && (body_chars[idx] == '[' || body_chars[idx] == Inbrack))
+            && crate::ported::params::is_nameref(&var_name)
+        {
+            match crate::ported::params::resolve_nameref_name(&var_name, None) {
+                crate::ported::params::nameref_resolution::Target {
+                    name,
+                    subscript: Some(k),
+                    ..
+                } => {
+                    var_name = name;
+                    let mut spliced: Vec<char> = body_chars[..idx].to_vec();
+                    spliced.push('[');
+                    spliced.extend(k.chars());
+                    spliced.push(']');
+                    spliced.extend_from_slice(&body_chars[idx..]);
+                    spliced
+                }
+                _ => body_chars,
+            }
+        } else {
+            body_chars
+        };
         if idx < body_chars.len() && (body_chars[idx] == '[' || body_chars[idx] == Inbrack) {
             // c:2867
             // dash/ash have no array subscripts — braced `${name[...]}` (any of
@@ -14041,7 +14092,27 @@ pub fn paramsubst(
                     (f & crate::ported::zsh_h::PM_UNSET) != 0
                 })
             });
+            // c:Src/params.c:570-575 — getparamnode follows a PM_NAMEREF
+            // before fetchvalue looks at the node, so set-ness is the
+            // REFERENT's: a ref to a never-set name (`typeset -n s=x`), an
+            // unbound ref (`typeset -n t`) or one whose target was unset
+            // through it (`unset s`) is vunset (c:2805), not set-empty.
+            let nameref_referent_unset = !used_subexp
+                && crate::ported::params::is_nameref(&var_name)
+                && match crate::ported::params::resolve_nameref_name(&var_name, None) {
+                    crate::ported::params::nameref_resolution::Target {
+                        pm: None, ..
+                    } => true,
+                    crate::ported::params::nameref_resolution::Target {
+                        pm: Some(p),
+                        subscript: None,
+                        ..
+                    } => (p.node.flags as u32 & crate::ported::zsh_h::PM_UNSET) != 0,
+                    crate::ported::params::nameref_resolution::Placeholder(..) => true,
+                    _ => false,
+                };
             !ksh_clamped_past_end_c2954!()
+                && !nameref_referent_unset
                 && (used_subexp
                     || vars_contains(&var_name)
                     || (!node_unset_c2805

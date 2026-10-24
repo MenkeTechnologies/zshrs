@@ -17554,8 +17554,21 @@ pub fn valid_refname(val: &str, flags: i32) -> bool {
         return val.len() == 1;
     }
     // c:6500 — `return !*itype_end(val, INAMESPC, 0) && isident(val);`
-    crate::ported::utils::itype_end(val, crate::ported::ztype_h::INAMESPC, false) == val.len()
-        && isident(val)
+    let ie = crate::ported::utils::itype_end(val, crate::ported::ztype_h::INAMESPC, false);
+    // !!! DROP-IN GATE — bash/ksh93/mksh accept an array ELEMENT as a
+    // nameref target (`declare -n r=a[1]` / `typeset -n r=a[1]`: `$r`
+    // reads `${a[1]}`, `r=v` writes it). The 5.9-era C test above stops
+    // at the `[` and rejects it; resolve_nameref_name already splits a
+    // `name[sub]` refname (c:6339), so admit `NAME[...]` there.
+    if ie > 0
+        && ie < val.len()
+        && (crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode())
+        && val[ie..].starts_with('[')
+        && val.ends_with(']')
+    {
+        return isident(&val[..ie]);
+    }
+    ie == val.len() && isident(val)
 }
 
 /// !!! WARNING: RUST-ONLY HELPER !!!
@@ -23433,6 +23446,10 @@ fn nameref_element_read(pm: &param, target: &str, key: &str) -> Option<String> {
             pm.u_arr.clone()?
         };
         let len = arr.len() as i64;
+        // c:Src/params.c:1619-1620 — `if (isset(KSHARRAYS) && r >= 0) r++;`:
+        // a KSH_ARRAYS subscript is 0-based, so `typeset -n r=a[1]` under
+        // ksh/bash emulation names the SECOND element.
+        let idx = if isset(KSHARRAYS) && idx >= 0 { idx + 1 } else { idx };
         let pos = if idx < 0 { len + idx + 1 } else { idx };
         if pos >= 1 && pos <= len {
             return Some(arr[(pos - 1) as usize].clone());
