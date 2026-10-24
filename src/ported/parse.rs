@@ -1655,6 +1655,23 @@ fn par_for() -> Option<ZshCommand> {
     set_nocorrect(1);
     set_infor(if tok() == FOR { 2 } else { 0 }); // c:1095
     zshlex(); // c:1096
+    // c:1094 `incmdpos = 0` lexes the loop variable OUTSIDE command
+    // position, where a reserved word stays a plain STRING: every shell
+    // runs `for if in 1; do echo $if; done`. This port keeps incmdpos (see
+    // above), so a reserved-word token here goes back to the STRING the C
+    // lexer would have produced.
+    if tok() != STRING_LEX {
+        if let Some(word) = tokstr() {
+            let is_reswd = crate::ported::hashtable::reswdtab_lock()
+                .read()
+                .ok()
+                .and_then(|t| t.get(&word).map(|r| r.token == tok()))
+                .unwrap_or(false);
+            if is_reswd {
+                set_tok(STRING_LEX);
+            }
+        }
+    }
 
     // Check for C-style: for (( init; cond; step ))
     if tok() == DINPAR {
@@ -2821,6 +2838,13 @@ fn par_funcdef() -> Option<ZshCommand> {
 
     // Optional ()
     let saw_paren = tok() == INOUTPAR;
+    // !!! KSH93 GATE (no C counterpart) !!! ksh93 has no `function name()`
+    // spelling: `ksh -c 'function f() { :; }'` is "syntax error: `(' unexpected"
+    // (mksh, bash and zsh accept it).
+    if saw_paren && !names.is_empty() && crate::dash_mode::ksh93_mode() {
+        set_tok(LEXERR);
+        return None;
+    }
     // Track the byte position just past `()` / the most-recent separator, so an
     // UNBRACED short body (`function f () cmd`) can be sliced for `functions`
     // rendering. pos() AFTER a zshlex is already past the next token (one-token
