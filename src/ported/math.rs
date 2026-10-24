@@ -330,7 +330,7 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
             // model: associations (whose per-key gsu such as
             // `compstate[nmatches]` lives in `assoc_key_hit`), module
             // specials (PARTAB), and --bash's 0-based indexing.
-            let is_hash_or_special = crate::ported::params::paramtab()
+            let is_hash = crate::ported::params::paramtab()
                 .read()
                 .ok()
                 .and_then(|t| t.get(arr_name).map(|pm| PM_TYPE(pm.node.flags as u32) == PM_HASHED))
@@ -338,7 +338,8 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
                 || crate::ported::params::paramtab_hashed_storage()
                     .lock()
                     .map(|m| m.contains_key(arr_name))
-                    .unwrap_or(false)
+                    .unwrap_or(false);
+            let is_hash_or_special = is_hash
                 || crate::ported::modules::parameter::PARTAB
                     .iter()
                     .any(|e_| e_.name == arr_name);
@@ -403,7 +404,11 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
             // uses (`m_error_set`, drained by mathevall at the `m_error_take`
             // below) so it propagates instead of being discarded. An
             // ordinary unevaluable index still yields 0, as before.
-            let idx_val = match matheval(idx_str) {
+            // c:Src/params.c getindex — an association subscript is a KEY, never
+            // evaluated (`typeset -A m; $(( m[x] ))` reads key `x`), so only an
+            // array index is computed. Evaluating a key also tripped the ksh93
+            // nested-unset check below on a key spelled like an unset name.
+            let idx_val = match if is_hash { Ok(mnumber { l: 0, d: 0.0, type_: MN_INTEGER }) } else { matheval(idx_str) } {
                 Ok(n) => {
                     if n.type_ == MN_FLOAT {
                         crate::zlong_cast::zlong_from_double(n.d)
@@ -657,6 +662,13 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
                 let t = raw.trim_start().trim_start_matches(['+', '-']);
                 t.len() > 1 && t.starts_with('0')
             };
+            // !!! DROP-IN GATE (no C counterpart) !!! bash, /bin/sh and mksh have
+            // integer-only arithmetic: a variable holding `1.0` is re-read as an
+            // expression and fails on the `.` ("invalid arithmetic operator",
+            // "unexpected '.'"), so it must not take the float fast path.
+            let integer_only = crate::dash_mode::bash_mode()
+                || crate::dash_mode::sh_mode()
+                || crate::dash_mode::pdksh_family();
             if !octal_lead {
                 if let Ok(n) = raw.parse::<i64>() {
                     return mnumber {
@@ -665,7 +677,7 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
                         type_: MN_INTEGER,
                     };
                 }
-                if let Ok(f) = raw.parse::<f64>() {
+                if let Some(f) = raw.parse::<f64>().ok().filter(|_| !integer_only) {
                     return mnumber {
                         l: 0,
                         d: f,
@@ -1454,13 +1466,159 @@ pub(crate) fn lexconstant() -> i32 {
             .chars()
             .filter(|&c| c != '_')
             .collect();
-        let base: u32 = base_str.parse().unwrap_or(10);
-        // zsh: `1#X` errors with "invalid base (must be 2 to 36 inclusive)".
-        // i64::from_str_radix panics on out-of-range base; reject early.
-        if !(2..=36).contains(&base) {
+        // c:563 — `yyval.u.l = zstrtol_underscore(ptr, &ptr, 10, 1);` read the
+        // digits before the `#`; c:566 `lastbase = yyval.u.l`.
+        let base_num: i64 = crate::ported::utils::zstrtol_underscore(&base_str, 10, true).0;
+
+        // !!! PDKSH GATE (no C counterpart) !!! mksh getnum (var.c): the token is
+        // the whole `[alnum#]*` run (expr.c), a base below 1 or a second `#` is
+        // "bad number", base 1 is the code of the ONE character after the `#`
+        // (`1#a` is 97, `1#` is 0), a base past 36 is read as 10 (`64#10` is 10),
+        // and every digit must be below the base (`16#1g` is "bad number").
+        if crate::dash_mode::pdksh_family() {
+            let bad = |tok: &str| format!("{tok}: bad number '{tok}'");
+            if base_num < 1 {
+                m_error_set(bad(&m_input_slice_from(num_start)));
+                return EOI;
+            }
+            let mut val: i64 = 0;
+            if base_num == 1 {
+                // expr.c `cp += ez_mbtoc(NULL, cp)`: one character; mksh's
+                // default (non-UTF-8) mode takes one byte, so a multibyte
+                // character leaves a stray byte the parser rejects.
+                if let Some(c) = peek() {
+                    if !c.is_ascii() {
+                        m_error_set(format!("{}: unexpected character", m_input_slice_from(num_start)));
+                        return EOI;
+                    }
+                    advance();
+                    val = c as i64;
+                }
+            } else {
+                let base = if base_num > 36 { 10 } else { base_num };
+                while let Some(c) = peek().filter(|c| c.is_ascii_alphanumeric() || *c == '#') {
+                    let digit = match c {
+                        '0'..='9' => c as i64 - '0' as i64,
+                        'a'..='z' => c as i64 - 'a' as i64 + 10,
+                        'A'..='Z' => c as i64 - 'A' as i64 + 10,
+                        _ => i64::MAX, // a second `#`: have_base
+                    };
+                    if digit >= base {
+                        let tok: String = m_input_slice_from(num_start)
+                            .chars()
+                            .take_while(|c| c.is_ascii_alphanumeric() || *c == '#')
+                            .collect();
+                        m_error_set(bad(&tok));
+                        return EOI;
+                    }
+                    advance();
+                    val = val.wrapping_mul(base).wrapping_add(digit);
+                }
+            }
+            let val = i64::from(val as i32);
+            m_lastbase_set(base_num as i32);
+            m_yyval_set(mnumber {
+                l: if is_neg { i64::from(val.wrapping_neg() as i32) } else { val },
+                d: 0.0,
+                type_: MN_INTEGER,
+            });
+            return NUM;
+        }
+
+        // !!! BASH-MODE GATE (no C counterpart) !!! bash expr.c strlong: the
+        // token is the `[alnum#@_]*` run (readtok), the base is 2..64 ("invalid
+        // arithmetic base"), digits are 0-9, a-z = 10-35, A-Z = 10-35 up to base
+        // 36 and 36-61 above it, `@` = 62, `_` = 63, each below the base ("value
+        // too great for base"), and a second `#` is "invalid number". bash 5
+        // rejects an empty digit run ("invalid integer constant"); /bin/sh
+        // (bash 3.2) reads it as 0.
+        if crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode() {
+            let tok: String = m_input_slice_from(num_start)
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '#' | '@' | '_'))
+                .collect();
+            let fail = |what: &str| {
+                m_error_set(format!("{what} (error token is \"{tok}\")"));
+                EOI
+            };
+            if !(2..=64).contains(&base_num) {
+                return fail("invalid arithmetic base");
+            }
+            let base = base_num;
+            let mut val: i64 = 0;
+            let digits_start = m_pos();
+            while let Some(c) = peek().filter(|c| c.is_ascii_alphanumeric() || matches!(c, '#' | '@' | '_')) {
+                let digit = match c {
+                    '#' => return fail("invalid number"),
+                    '0'..='9' => c as i64 - '0' as i64,
+                    'a'..='z' => c as i64 - 'a' as i64 + 10,
+                    'A'..='Z' => c as i64 - 'A' as i64 + if base <= 36 { 10 } else { 36 },
+                    '@' => 62,
+                    _ => 63,
+                };
+                if digit >= base {
+                    return fail("value too great for base");
+                }
+                advance();
+                val = val.wrapping_mul(base).wrapping_add(digit);
+            }
+            if m_pos() == digits_start && crate::dash_mode::bash_mode() {
+                return fail("invalid integer constant");
+            }
+            m_lastbase_set(base as i32);
+            m_yyval_set(mnumber {
+                l: if is_neg { val.wrapping_neg() } else { val },
+                d: 0.0,
+                type_: MN_INTEGER,
+            });
+            return NUM;
+        }
+
+        // !!! KSH93 GATE (no C counterpart) !!! ksh93 takes bases up to 64
+        // (libast strtoi.h: `n >= 2 && n <= 64`); past 36 the digits come from
+        // _Sfcv64, 0-9 a-z A-Z @ _ (`64#Z` is 61, `64#_` is 63). The digit run
+        // stops at the first character the table rejects, like zstrtol.
+        if crate::dash_mode::ksh93_mode() && (37..=64).contains(&base_num) {
+            let base = base_num;
+            let mut val: i64 = 0;
+            while let Some(digit) = peek().and_then(|c| match c {
+                '0'..='9' => Some(c as i64 - '0' as i64),
+                'a'..='z' => Some(c as i64 - 'a' as i64 + 10),
+                'A'..='Z' => Some(c as i64 - 'A' as i64 + 36),
+                '@' => Some(62),
+                '_' => Some(63),
+                _ => None,
+            }) {
+                if digit >= base {
+                    break;
+                }
+                advance();
+                val = val.wrapping_mul(base).wrapping_add(digit);
+            }
+            m_lastbase_set(base as i32);
+            m_yyval_set(mnumber {
+                l: if is_neg { val.wrapping_neg() } else { val },
+                d: 0.0,
+                type_: MN_INTEGER,
+            });
+            return NUM;
+        }
+
+        // c:567 — `zstrtol_underscore(ptr, &ptr, lastbase, 1)`: a base of 0
+        // autodetects like a bare constant (c:Src/utils.c:2452-2461), so
+        // `0#1` is 1 and `0#0x10` is 16; anything else outside 2..36 is
+        // zstrtol's "invalid base" (c:Src/utils.c:2463-2464).
+        // !!! KSH93 GATE (no C counterpart) !!! ksh93 has no base 0 (`0#1` is an
+        // "arithmetic syntax error"); libast strtoi.h takes only 2..64.
+        let base: u32 = if (0..=36).contains(&base_num) && !(base_num == 0 && crate::dash_mode::ksh93_mode()) {
+            base_num as u32
+        } else {
+            37
+        };
+        if base != 0 && !(2..=36).contains(&base) {
             m_error_set(format!(
                 "invalid base (must be 2 to 36 inclusive): {}",
-                base
+                base_num
             ));
             m_yyval_set(mnumber {
                 l: 0,
@@ -2525,7 +2683,14 @@ pub(crate) fn zzlex() -> i32 {
                             || (next == '.' && ahead.get(1).copied().is_some_and(is_digit))
                         {
                             m_pos_sub(1); // Put back the -
-                            return lexconstant();
+                            let tok = lexconstant();
+                            // !!! PDKSH GATE (no C counterpart) !!! mksh negates in 32 bits:
+                            // the folded `-2147483648` is INT32_MIN, not 2^31.
+                            if crate::dash_mode::pdksh_family() && m_yyval().type_ == MN_INTEGER {
+                                let n = m_yyval();
+                                m_yyval_set(mnumber { l: i64::from(n.l as i32), ..n });
+                            }
+                            return tok;
                         }
                     }
                     return UMINUS;
@@ -2579,7 +2744,11 @@ pub(crate) fn zzlex() -> i32 {
             }
 
             '^' => {
-                if peek() == Some('^') {
+                // !!! DROP-IN GATE (no C counterpart) !!! `^^` / `^^=` (logical
+                // XOR) are zsh's own; bash, ksh93, mksh, dash and /bin/sh lex `^`
+                // alone and fail on the second one ("unexpected '^'", "syntax
+                // error: operand expected").
+                if peek() == Some('^') && !crate::dash_mode::posix_faithful() {
                     advance();
                     if peek() == Some('=') {
                         advance();
@@ -4318,7 +4487,9 @@ pub(crate) fn op(what: i32) {
                     val.l
                 };
                 mnumber {
-                    l: v.wrapping_neg(),
+                    // !!! PDKSH GATE (no C counterpart) !!! mksh negates in 32 bits:
+                    // `x=-2147483648; $(( -x ))` is INT32_MIN again.
+                    l: if crate::dash_mode::pdksh_family() { i64::from((v as i32).wrapping_neg()) } else { v.wrapping_neg() },
                     d: 0.0,
                     type_: MN_INTEGER,
                 }
@@ -4347,11 +4518,17 @@ pub(crate) fn op(what: i32) {
                 }
             } else {
                 mnumber {
-                    l: (if val.type_ == MN_FLOAT {
-                        crate::zlong_cast::zlong_from_double(val.d)
-                    } else {
-                        val.l
-                    }) + 1,
+                    l: {
+                        let n = (if val.type_ == MN_FLOAT {
+                            crate::zlong_cast::zlong_from_double(val.d)
+                        } else {
+                            val.l
+                        })
+                        .wrapping_add(1);
+                        // !!! PDKSH GATE (no C counterpart) !!! mksh steps in 32 bits (`x=2147483647;
+                        // (( x++ ))` leaves INT32_MIN); zsh wraps the int64 (C signed overflow).
+                        if crate::dash_mode::pdksh_family() { i64::from(n as i32) } else { n }
+                    },
                     d: 0.0,
                     type_: MN_INTEGER,
                 }
@@ -4377,11 +4554,17 @@ pub(crate) fn op(what: i32) {
                 }
             } else {
                 mnumber {
-                    l: (if val.type_ == MN_FLOAT {
-                        crate::zlong_cast::zlong_from_double(val.d)
-                    } else {
-                        val.l
-                    }) - 1,
+                    l: {
+                        let n = (if val.type_ == MN_FLOAT {
+                            crate::zlong_cast::zlong_from_double(val.d)
+                        } else {
+                            val.l
+                        })
+                        .wrapping_sub(1);
+                        // !!! PDKSH GATE (no C counterpart) !!! mksh steps in 32 bits (`x=2147483647;
+                        // (( x++ ))` leaves INT32_MIN); zsh wraps the int64 (C signed overflow).
+                        if crate::dash_mode::pdksh_family() { i64::from(n as i32) } else { n }
+                    },
                     d: 0.0,
                     type_: MN_INTEGER,
                 }
@@ -4414,11 +4597,17 @@ pub(crate) fn op(what: i32) {
                 }
             } else {
                 mnumber {
-                    l: (if val.type_ == MN_FLOAT {
-                        crate::zlong_cast::zlong_from_double(val.d)
-                    } else {
-                        val.l
-                    }) + 1,
+                    l: {
+                        let n = (if val.type_ == MN_FLOAT {
+                            crate::zlong_cast::zlong_from_double(val.d)
+                        } else {
+                            val.l
+                        })
+                        .wrapping_add(1);
+                        // !!! PDKSH GATE (no C counterpart) !!! mksh steps in 32 bits (`x=2147483647;
+                        // (( x++ ))` leaves INT32_MIN); zsh wraps the int64 (C signed overflow).
+                        if crate::dash_mode::pdksh_family() { i64::from(n as i32) } else { n }
+                    },
                     d: 0.0,
                     type_: MN_INTEGER,
                 }
@@ -4449,11 +4638,17 @@ pub(crate) fn op(what: i32) {
                 }
             } else {
                 mnumber {
-                    l: (if val.type_ == MN_FLOAT {
-                        crate::zlong_cast::zlong_from_double(val.d)
-                    } else {
-                        val.l
-                    }) - 1,
+                    l: {
+                        let n = (if val.type_ == MN_FLOAT {
+                            crate::zlong_cast::zlong_from_double(val.d)
+                        } else {
+                            val.l
+                        })
+                        .wrapping_sub(1);
+                        // !!! PDKSH GATE (no C counterpart) !!! mksh steps in 32 bits (`x=2147483647;
+                        // (( x++ ))` leaves INT32_MIN); zsh wraps the int64 (C signed overflow).
+                        if crate::dash_mode::pdksh_family() { i64::from(n as i32) } else { n }
+                    },
                     d: 0.0,
                     type_: MN_INTEGER,
                 }
