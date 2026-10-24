@@ -2200,8 +2200,17 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                             hungetc('\\');
                             add(Stringg);
                         } else {
-                            // Line continuation after $
-                            continue;
+                            // !!! KSH93 GATE (no C counterpart) !!! ksh93u+m decides the
+                            // `$` is literal on seeing the backslash, before the
+                            // continuation is removed: `x=1; echo $\<NL>x` prints `$x`
+                            // (bash, mksh and zsh print 1).
+                            if crate::dash_mode::ksh93_mode() {
+                                add(Bnull);
+                                add('$');
+                            } else {
+                                // Line continuation after $
+                                continue;
+                            }
                         }
                     }
                     Some('[') if crate::dash_mode::dash_strict() || crate::dash_mode::korn_mode() => {
@@ -2246,6 +2255,24 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                     }
                     Some('{') => {
                         // c:1049-1057 — `${...}` parameter expansion.
+                        // !!! KSH93 GATE (no C counterpart) !!! ksh93u+m takes no line
+                        // continuation between `${` and the name: `${\<NL>x}` is
+                        // "syntax error: `\' unexpected" (bash, mksh and zsh join it).
+                        if crate::dash_mode::ksh93_mode() {
+                            let b = hgetc();
+                            let n = if b == Some('\\') { hgetc() } else { None };
+                            if n == Some('\n') {
+                                peek = LEXERR;
+                                break;
+                            }
+                            if let Some(n) = n {
+                                hungetc(n);
+                            }
+                            if let Some(b) = b {
+                                hungetc(b);
+                            }
+                            LEX_LEXSTOP.set(false);
+                        }
                         // C does `add(c)` where `c` was already
                         // mapped by `lextok2[c]` at switch entry from
                         // `$` (0x24) to Stringg (`\u{e185}`). Rust's
@@ -3631,6 +3658,22 @@ fn dquote_parse(endchar: char, sub: bool) -> Result<(), Option<char>> {
                         }
                         Some('{') => {
                             // c:1548 — `cmdpush(CS_BRACEPAR); bct++;`
+                            // !!! KSH93 GATE (no C counterpart) !!! `"${\<NL>x}"` is a
+                            // syntax error in ksh93u+m too; see the unquoted LX2_STRING arm.
+                            if crate::dash_mode::ksh93_mode() {
+                                let b = hgetc();
+                                let n = if b == Some('\\') { hgetc() } else { None };
+                                if n == Some('\n') {
+                                    return Err(None);
+                                }
+                                if let Some(n) = n {
+                                    hungetc(n);
+                                }
+                                if let Some(b) = b {
+                                    hungetc(b);
+                                }
+                                LEX_LEXSTOP.set(false);
+                            }
                             add(Qstring);
                             add(Inbrace);
                             cmdpush(CS_BRACEPAR as u8);
@@ -3651,6 +3694,24 @@ fn dquote_parse(endchar: char, sub: bool) -> Result<(), Option<char>> {
                         Some('$') => {
                             add(Qstring);
                             add('$');
+                        }
+                        // !!! KSH93 GATE (no C counterpart) !!! as in the unquoted
+                        // LX2_STRING arm: `"$\<NL>x"` is the literal `$x` in ksh93u+m.
+                        Some('\\') if crate::dash_mode::ksh93_mode() => {
+                            match hgetc() {
+                                Some('\n') => {
+                                    add(Bnull);
+                                    add('$');
+                                }
+                                f => {
+                                    if let Some(f) = f {
+                                        hungetc(f);
+                                    }
+                                    hungetc('\\');
+                                    LEX_LEXSTOP.set(false);
+                                    add(Qstring);
+                                }
+                            }
                         }
                         _ if split_bare_positional!(Qstring, next) => {}
                         _ => {
