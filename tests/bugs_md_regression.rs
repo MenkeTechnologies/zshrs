@@ -2907,6 +2907,52 @@ fn bash_regex_rhs_may_start_with_a_double_paren() {
     assert_eq!((ec, out.as_str()), (0, "m\n"));
 }
 
+/// bash reads a parenthesised group inside a `[[ ]]` operand as one piece of
+/// the word, so `<`, `>` and an empty `()` in it are text, not a redirection
+/// or a function definition. Sourcing Debian's
+/// /usr/share/bash-completion/bash_completion died in `_comp_compgen_help__parse`
+/// on `[[ $option =~ ^([^=<{().[]|\.[A-Za-z0-9])+=? ]]` ("parse error near
+/// `<'", then "near `()'"). Every expected value was measured with bash 5.2.37.
+#[test]
+fn bash_cond_group_keeps_angle_brackets_and_empty_parens() {
+    if zshrs_bin().is_none() {
+        return;
+    }
+    for (script, want) in [
+        (
+            r"[[ x =~ ^([^=<{().[]|\.[A-Za-z0-9])+=? ]] && echo m",
+            "m\n",
+        ),
+        (
+            r"[[ '--foo=' =~ ^([^=<{().[]|\.[A-Za-z0-9])+=? ]] && echo $BASH_REMATCH",
+            "--foo=\n",
+        ),
+        ("[[ a =~ ^([^<]) ]] && echo m", "m\n"),
+        ("[[ a =~ ^([^>]) ]] && echo m", "m\n"),
+        ("[[ '<' =~ ^(a|<) ]] && echo m", "m\n"),
+        ("[[ a =~ (<) ]] || echo n", "n\n"),
+        ("[[ 'a()' =~ a() ]] && echo m", "m\n"),
+        ("[[ a =~ (a()) ]] && echo m", "m\n"),
+        ("[[ '(' =~ ^([()]) ]] && echo m", "m\n"),
+        ("[[ a =~ ^([()]) ]] || echo n", "n\n"),
+        ("shopt -s extglob; [[ a == @([^<]) ]] && echo m", "m\n"),
+        // Outside the right-hand side nothing changes: a function definition
+        // still splits off its `()`, and a redirect still redirects.
+        ("f() { echo f; }; f", "f\n"),
+        ("[[ a =~ a ]] >/dev/null && echo m", "m\n"),
+    ] {
+        let (ec, out) = run_mode("--bash", script);
+        assert_eq!((ec, out.as_str()), (0, want), "script: {script}");
+    }
+    // Outside a group bash rejects the bare `<` too (syntax error, status 2).
+    let (ec, _) = run_mode("--bash", "[[ a =~ ^[<] ]]");
+    assert_ne!(ec, 0);
+    // zsh ends the word at the `<` (`zsh -fc '[[ a =~ ^([^<]) ]]'` is a parse
+    // error); the native mode keeps doing so.
+    let (ec, _) = run_mode("--zsh", "[[ a =~ ^([^<]) ]]");
+    assert_ne!(ec, 0);
+}
+
 /// bash nests inside `${...}` only on `${`: a bare `{` is an ordinary
 /// character and the first `}` closes the expansion. zsh counted every brace,
 /// so `${o%%[<{().[]*}` (bash-completion's `_parse_help`) ended in "closing
@@ -2928,4 +2974,110 @@ fn bash_param_braces_nest_only_on_dollar_brace() {
         let (ec, out) = run_mode("--bash", script);
         assert_eq!((ec, out.as_str()), (0, want), "script: {script}");
     }
+}
+
+/// BUGS.md #1205 — without MULTIBYTE a match unit is one BYTE, in the matcher
+/// (c:Src/pattern.c:1946) and in the `${…}` walkers (c:Src/glob.c:2958
+/// `MB_METACHARINC`). zshrs walked characters, so every substitution below
+/// kept whole characters (and `#` / `##` / `(M)` panicked on a cut).
+/// Locale-independent cases only: `?`, a bracket of literal bytes, offsets.
+#[test]
+fn nomultibyte_substitutions_walk_bytes() {
+    if zshrs_bin().is_none() {
+        return;
+    }
+    let script = r#"hex() { printf %s "$1" | od -An -tx1 | tr -d ' \n'; echo; }
+setopt extendedglob; x='aé漢z'; unsetopt multibyte
+print -r -- ${x//?/.}
+hex ${x#a?}
+hex ${x%%?z}
+hex ${(M)x#a?}
+print -r -- ${x//[é]/X}
+print -r -- ${(S)x//(#m)[^a]/<$MBEGIN>}
+[[ $x = a?????z ]] && echo y
+setopt multibyte
+print -r -- ${x//?/.}
+print -r -- ${x#a?}"#;
+    let (ec, out, err) = run_zshrs(script);
+    assert_eq!(
+        (ec, out.as_str(), err.as_str()),
+        (
+            0,
+            ".......\na9e6bca27a\n61c3a9e6bc\n61c3\naXX漢z\na<2><3><4><5><6><7>\ny\n....\n漢z\n",
+            ""
+        )
+    );
+}
+
+/// #1204 — `epochtime` (c:Src/Modules/datetime.c:248-257) is a PM_ARRAY whose
+/// `gsu.a` getfn computes the value; the node has no stored array. Bare,
+/// quoted and `(…)`-assigned reads came back empty, so the manual's
+/// `for secs nsecs in $epochtime` idiom ran zero times. The time values
+/// themselves are not compared, only their shape.
+#[test]
+fn epochtime_bare_reads_call_the_array_getfn() {
+    if zshrs_bin().is_none() {
+        return;
+    }
+    let script = r#"zmodload zsh/datetime
+a=($epochtime); print $#a
+n=0; for s ns in $epochtime; do (( n++ )); [[ $s == <-> && $ns == <-> ]] && print digits; done; print $n
+IFS=:; [[ "$epochtime" == <->:<-> ]] && print quoted; unset IFS
+x=$epochtime; [[ $x == <->' '<-> ]] && print scalar
+zmodload -F zsh/datetime -p:epochtime; a=($epochtime); print $#a ${+epochtime}
+zmodload -F zsh/datetime +p:epochtime; a=($epochtime); print $#a
+epochtime=(1 2)"#;
+    let (ec, out, err) = run_zshrs(&format!("setopt extendedglob\n{script}"));
+    assert_eq!(
+        (ec, out.as_str(), err.as_str()),
+        (
+            1,
+            "2\ndigits\n1\nquoted\nscalar\n0 0\n2\n",
+            "zsh:9: read-only variable: epochtime\n"
+        )
+    );
+}
+
+/// BUGS.md #1207 — autoloading one zsh/zle builtin left its siblings'
+/// autoload stubs in place in C (setbuiltins skips a never-added builtin,
+/// c:Src/module.c:519-520); zshrs dropped them, so `bindkey` after `zle`
+/// was "command not found" (autopair's init broke).
+#[test]
+fn zle_autoload_keeps_bindkey_stub() {
+    if zshrs_bin().is_none() {
+        return;
+    }
+    let (ec, out, err) = run_zshrs("f() { :; }; zle -N f; bindkey x f; bindkey x; whence -w vared");
+    assert_eq!((ec, out.as_str(), err.as_str()), (0, "\"x\" f\nvared: builtin\n", ""));
+}
+
+/// BUGS.md #1199 — `--bash` `complete` is bash's complete.def: `-D` / `-E` /
+/// `-I` pseudo-commands, `-o` / `-X` stored and printed, names quoted by
+/// `sh_contains_shell_metas`, and `-p` walking bash's hash order (FNV-1 into
+/// 512 buckets, newest first in a bucket). Expected output is bash 5.3's.
+#[test]
+fn bash_complete_prints_like_complete_def() {
+    if zshrs_bin().is_none() {
+        return;
+    }
+    let script = r#"f(){ :; }
+complete -o nospace -o default -A function -abv -G '*.c' -W 'a b' -X '!*.x' -F f 'x y' '' z
+complete -D -F f; complete -E -W "it's"; complete -I -c
+complete -p
+complete -r -D; complete -p -D; echo rc=$?
+complete -o bogus q; echo rc=$?"#;
+    let (ec, out) = run_mode("--bash", script);
+    assert_eq!(
+        (ec, out.as_str()),
+        (
+            0,
+            "complete -c -I\n\
+             complete -o default -o nospace -a -b -v -A function -G '*.c' -W 'a b' -X '!*.x' -F f 'x y'\n\
+             complete -F f -D\n\
+             complete -o default -o nospace -a -b -v -A function -G '*.c' -W 'a b' -X '!*.x' -F f z\n\
+             complete -W 'it'\\''s' -E\n\
+             complete -o default -o nospace -a -b -v -A function -G '*.c' -W 'a b' -X '!*.x' -F f ''\n\
+             rc=1\nrc=2\n"
+        )
+    );
 }

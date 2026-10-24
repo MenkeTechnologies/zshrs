@@ -249,6 +249,60 @@ caffeinate -
 # a `-S`-suffix theory and `fc-list`/`fc-match` under `match sets that differ
 # outright`, but the harness fingerprints all four identically.
 
+# ══════════════════════════════════════════════════════════════════════════
+# VERDICT 2026-10-22 — 'fc-list ' / 'fc-match ': NOT A zshrs DEFECT.  The
+# remaining delta is the ORACLE'S BUILD CONFIGURATION (--enable-unicode9),
+# not the listing code.  Supersedes the "+1 match count" and "forced
+# LC_ALL=C" explanations in the block below and at the top of this file:
+# the match counts are now equal (800 == 800) and only the line count moves.
+#
+# Measured at origin/main c2f3a85762, serial, --settle 1500, shared ora.dump:
+#   oracle A  <scratch>/oracle/bin/zsh            sha256 7a017e6fdcfe205b…
+#             nm: T _u9_iswprint, T _u9_wcwidth   (built --enable-unicode9)
+#   oracle B  ~/.cache/zshrs/zsh-oracle/bin/zsh   sha256 79132a0d21539db8…
+#             nm: U _wcwidth, no u9_*             (default configure)
+#   Both report `zsh 5.9.999.3-test [zsh-5.9.0.3-test-476-g8cc5ead]`.
+#
+#   vs A:  FAIL  'fc-list '   zsh   800 possibilities (823 lines)
+#                             zshrs 800 possibilities (1062 lines)
+#          FAIL  'fc-match '  same two rows
+#   vs B:  PASS  'fc-list '   (cursor col 60 on both = the "(1062 lines)?" row)
+#          PASS  'fc-match '
+#   (B run with FPATH=<scratch>/oracle/share/zsh/{site-functions,5.9.999.3-test/functions}
+#    exported, since B's install has no function library of its own.)
+#
+# MECHANISM.  Under LC_ALL=C on macOS, libc mbrtowc hands a byte >= 0x80
+# back as the wide character of the same value.  WC_ISPRINT is
+# `u9_iswprint` under ENABLE_UNICODE9 and libc `iswprint` otherwise
+# (c:Src/ztype.h:76-79).  u9_iswprint calls U+00CE printable, so
+# wcs_nicechar_sel (c:Src/utils.c:612) emits the raw byte at width 1;
+# libc iswprint in the C locale does not, so it falls to nicechar_sel
+# (\M-N, width 4) or, in a quoted match, `$'\316'`.  Every font name in
+# `fc-list -f '%{family},'` written in Greek/Cyrillic/CJK/Indic script is
+# therefore ~4x wider under B (and in zshrs) than under A, and calclist
+# (c:Src/Zle/compresult.c:1596/1611, ZMB_nicewidth) lays out fewer columns.
+#
+#   LC_ALL=C <zsh> -fc 'x=$(printf "\xce\x93"); print -r -- ${(V)x}'
+#     A: \316 \M-^S        B: \M-N\M-^S        zshrs: \M-N\M-^S
+#   LC_ALL=C <zsh> -fc 'ヌ() { :; }; which ヌ'
+#     A: $'\343\M-\C-C…    B: $'\M-c\M-\C-C…   zshrs: $'\M-c\M-\C-C…
+#   zsh's own Test/E02xtrace.ztst:175 expects `$'\M-c\M-\C-C\M-\C-L'` —
+#   oracle A fails its own test suite there; B and zshrs pass it.
+#
+# Small reproducer (fixture `compadd -- 'Γραμματοσειρά συστήματος'
+# 'Системный шрифт' abc def ghi 'Helvetica Neue'` via --init-extra):
+# PASS vs B, FAIL vs A with A rendering `�$'\223'�$'\201'αμμα…` where B and
+# zshrs render `$'\316'$'\223'$'\317'$'\201'…`.  zshrs's behaviour is the
+# deliberate one from 17f881479b (src/extensions/c_locale.rs: the ASCII
+# C locale rejects bytes above 0x7f on every platform, matching glibc and
+# E02xtrace), and the listing port reproduces the default-configured zsh
+# byte for byte.  --enable-unicode9 is opt-in (c:configure.ac:2393-2397).
+#
+# DO NOT "fix" zshrs toward oracle A: it would break E02xtrace:175 and the
+# Linux/glibc rendering.  These two cells go green when the comptab oracle
+# is a default (non-unicode9) build, or under a UTF-8 locale.
+# ══════════════════════════════════════════════════════════════════════════
+
 # ──────────────────────────────────────────────────────────────────────────
 # fingerprint b29792c9a7  ×4
 #   the `do you wish to see all N possibilities (M lines)?` ask-prompt
@@ -2212,6 +2266,26 @@ rsync
 # cell: the split is fully deterministic and vanishes under an argv-identical
 # bypass.  Refutes "diverges AFTER the adds, unexplained" — it is duplicate-
 # match suppression, and the -S '' variant shows it also moves nmatches.
+#
+# ══════════════════════════════════════════════════════════════════════════
+# 'read ' RE-MEASURED 2026-10-22 on c2f3a85762 — DELIBERATE-FEATURE, as
+# resolved below.  The extra matches are HELPDIR and INFOPATH, nothing else.
+# ══════════════════════════════════════════════════════════════════════════
+#
+#   env -u FPATH scripts/comptab_parity.py --zsh <oracle>/bin/zsh \
+#     --zshrs <tree>/debug/zshrs --dump <dump> --case 'read ' \
+#     --keys tab --jobs 1 --settle 1500
+#   zsh 152 possibilities (38 lines) / zshrs 154 (39 lines) — fp b29792c9a7
+#
+# Full lists (--keys tab,y --rows 200), split into names and diffed: 152 vs
+# 154, only zshrs: HELPDIR INFOPATH, none missing.  Both are set by
+# src/extensions/bundled_docs.rs — INFOPATH in published_dirs() (exported,
+# `info` reads it from its environment) and HELPDIR by seed_helpdir_param()
+# as a plain shell parameter for run-help.  HELPDIR is no longer EXPORTED
+# (that leak into `env <TAB>` was fixed), but `read ` completes every
+# parameter, exported or not, so it still appears here.  MANPATH is on BOTH
+# sides of this cell.  2026-09-06's 155/157 counted real (-2V) compadd
+# matches, not listed possibilities; the delta is +2 on either measure.
 #
 # ══════════════════════════════════════════════════════════════════════════
 # 'read ' RESOLVED 2026-09-06 — NOT a scratch-parameter leak.  The entry
@@ -6487,6 +6561,24 @@ gstack
 # list_outgrows_the_screen` and `asklist_is_silent_when_the_list_fits_the_
 # screen` (src/ported/zle/compresult.rs). Not added to the corpus: the cell
 # passes, and a PTY cell for it would only re-measure the settle window.
+# ══════════════════════════════════════════════════════════════════════════
+# 'getconf ' RE-MEASURED 2026-10-22 on c2f3a85762 — UNCHANGED, still the
+# 2026-09-13 tie-permutation verdict below.  Not a new regression.
+# ══════════════════════════════════════════════════════════════════════════
+#
+#   env -u FPATH scripts/comptab_parity.py --zsh <oracle>/bin/zsh \
+#     --zshrs <tree>/debug/zshrs --dump <dump> --case 'getconf ' \
+#     --keys tab --jobs 1 --settle 1500
+#   zsh 293 possibilities (147 lines) / zshrs 294 (147 lines) — fp b29792c9a7
+#
+# Full lists (--keys tab,y --rows 200), split into names and diffed: zsh 293,
+# zshrs 294, and the ONLY extra name is PIPE_BUF.  zsh lists no bare PIPE_BUF,
+# zshrs lists it once; _POSIX_PIPE_BUF is on both sides.  That is exactly the
+# pathkeys1/pathkeys2 duplicate pair the block below attributes to macOS libc
+# qsort permuting the tied pair between two makearray passes, against the
+# port's stable `qsort_tolerant`, and the same name as on 2026-09-13.
+# Mechanism not re-traced; the name set alone was re-measured.
+#
 # ══════════════════════════════════════════════════════════════════════════
 # 'getconf ' ROOT-CAUSED 2026-09-13 — TWO makearray PASSES, not one, and the
 # second exclusion is libc qsort's TIE PERMUTATION.  Supersedes the

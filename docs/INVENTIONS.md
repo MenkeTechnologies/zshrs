@@ -276,8 +276,8 @@ the mechanism that makes a large rewrite finishable.
 
 Grammar-driven, seed-replayable snippets per mode, run through both zshrs and
 real zsh, divergences re-confirmed three times so load flakes cannot register.
-22,200 cases across 74 modes, 18 divergences at 0.08%, 73 of 74 modes at zero,
-the remaining mode traced to one named root cause (`bins/parity-fuzz.rs`,
+22,500 cases across 75 modes, 3 divergences at 0.01%, 74 of 75 modes at zero,
+the remaining 3 cases traced to upstream zsh defects (`bins/parity-fuzz.rs`,
 [`PARITY.md`](PARITY.md)). McKeeman named differential testing in 1998,
 Csmith made it standard for compilers in 2011, jsfunfuzz for JS engines.
 Nobody had aimed it at a shell.

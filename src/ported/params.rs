@@ -18355,13 +18355,12 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
             // ${EPOCHSECONDS:-x} falls through to "x". Match by gating
             // the getter on the module's loaded state. Bug #31 in
             // docs/BUGS.md.
+            // The `p:` feature can also be off on a loaded module
+            // (`zmodload -F zsh/datetime -p:EPOCHSECONDS`, c:Src/module.c:1169-1190).
             // bash(1) "Shell Variables": EPOCHSECONDS / EPOCHREALTIME are
             // always-on specials, no module load.
             if !crate::dash_mode::bash_mode()
-                && !crate::ported::module::MODULESTAB
-                    .lock()
-                    .unwrap()
-                    .is_loaded("zsh/datetime")
+                && !crate::vm_helper::datetime_param_bound(name)
             {
                 return None;
             }
@@ -18373,10 +18372,7 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
             // bash(1) "Shell Variables": EPOCHSECONDS / EPOCHREALTIME are
             // always-on specials, no module load.
             if !crate::dash_mode::bash_mode()
-                && !crate::ported::module::MODULESTAB
-                    .lock()
-                    .unwrap()
-                    .is_loaded("zsh/datetime")
+                && !crate::vm_helper::datetime_param_bound(name)
             {
                 return None;
             }
@@ -18394,11 +18390,7 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
             // ` ` (the default IFS separator), matching the C path
             // `getstrvalue` → sepjoin on PM_ARRAY. Bug #317 in
             // docs/BUGS.md. Gate on zsh/datetime load per #31.
-            if !crate::ported::module::MODULESTAB
-                .lock()
-                .unwrap()
-                .is_loaded("zsh/datetime")
-            {
+            if !crate::vm_helper::datetime_param_bound(name) {
                 return None;
             }
             let arr = crate::ported::modules::datetime::getcurrenttime();

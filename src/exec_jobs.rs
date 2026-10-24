@@ -890,3 +890,167 @@ mod tests {
         assert!(t.current().is_none());
     }
 }
+
+/// `wait` for one job of the table: the `BIN_WAIT` arm of bin_fg
+/// (c:Src/jobs.c:2655-2659 `retval = zwaitjob(job, 1); if (!retval) retval =
+/// lastval2;`), shared by `wait %N` / `wait PID` and the bare `wait`, which
+/// C runs as a loop of `zwaitjob` over the table (c:2538-2542). `Ok` is the
+/// job's status, `Err` the `128 + signal` of a trapped signal that interrupted
+/// the wait (c:1714-1716), after which the job stays in the table.
+///
+/// !!! RUST-ONLY SHAPE !!! C's zwaitjob suspends on SIGCHLD; this waits
+/// proc-by-proc with a blocking `waitpid` and routes each status through
+/// `update_bg_job`, the chain C's handler drives while zwaitjob suspends.
+pub fn wait_for_job(table: &std::sync::Mutex<Vec<crate::ported::zsh_h::job>>, p: usize) -> Result<i32, i32> {
+    use crate::ported::jobs::{check_cursh_sig, stat, update_bg_job, update_job, zwaitjob, CHLD_TRAP_PENDING, LASTVAL2, PSEUDO_SIG_TRAP_PENDING};
+    use crate::ported::zsh_h::SP_RUNNING;
+    use std::sync::atomic::Ordering;
+    // c:2655-2659 — `retval = zwaitjob(job, 1); if (!retval)
+    // retval = lastval2;`. The Rust zwaitjob takes `&mut job`
+    // and suspends on SIGCHLD; holding the JOBTAB lock across
+    // the suspend would deadlock against the handler's own
+    // lock, so wait proc-by-proc with a blocking waitpid and
+    // route each status through update_bg_job — the same
+    // chain C's SIGCHLD handler drives while zwaitjob
+    // suspends (Src/signals.c:249 → jobs.c:460).
+    //
+    // A job with no forks (c:1681 `if (jn->procs || jn->auxprocs)`
+    // false) never suspends: zwaitjob takes its `else` arm and
+    // deletes the entry, so call it directly under the lock.
+    {
+        let tab = table.lock().expect("jobtab poisoned");
+        if let Some(j) = tab.get(p) {
+            if j.procs.is_empty() && j.auxprocs.is_empty() {
+                drop(tab); // zwaitjob takes JOBTAB itself
+                zwaitjob(p, 1); // c:2655 — returns 0 for this arm
+                return Ok(LASTVAL2.load(Ordering::SeqCst)); // c:2656-2657
+            }
+        }
+    }
+    // c:1684-1689 — zwaitjob's `dont_queue_signals()`, as above.
+    let q = crate::ported::signals_h::queue_signal_level();
+    crate::ported::signals_h::dont_queue_signals();
+    let mut interrupted = None;
+    loop {
+        // c:Src/jobs.c:651-652 — the `dotrap(SIGCHLD)` update_job owes for a
+        // child that is not `thisjob`, run now that JOBTAB is unlocked.
+        for _ in 0..crate::ported::jobs::CHLD_TRAP_PENDING.swap(0, std::sync::atomic::Ordering::SeqCst) {
+            crate::ported::signals::dotrap(libc::SIGCHLD);
+        }
+        let next_pid = {
+            let tab = table.lock().expect("jobtab poisoned");
+            match tab.get(p) {
+                Some(j) if (j.stat & stat::INUSE) != 0 && !j.is_done() => j
+                    .procs
+                    .iter()
+                    .chain(j.auxprocs.iter())
+                    .find(|pr| pr.status == SP_RUNNING)
+                    .map(|pr| pr.pid),
+                _ => None,
+            }
+        };
+        let pid = match next_pid {
+            Some(pid) => pid,
+            None => break,
+        };
+        let mut status: libc::c_int = 0;
+        // c:1710 — the same EINTR retry as the bare-`wait` loop
+        // above: C's `zwaitjob` goes round its
+        // `signal_suspend(SIGCHLD, …)` loop again when a signal
+        // lands, so the shell's own reaper must not end this
+        // wait with the job still running.
+        let mut r;
+        loop {
+            crate::ported::signals::last_signal.store(-1, Ordering::Relaxed); // c:1657
+            r = unsafe { libc::waitpid(pid, &mut status, 0) };
+            if r != -1
+                || std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR)
+            {
+                break;
+            }
+            // c:1711-1712 — `if (last_signal != SIGCHLD && wait_cmd &&
+            // last_signal >= 0 && (sigtrapped[last_signal] & ZSIG_TRAPPED))`.
+            // The trap has already run: the handler dispatched it while
+            // queueing was off.
+            let ls = crate::ported::signals::last_signal.load(Ordering::Relaxed);
+            if ls != libc::SIGCHLD
+                && ls >= 0
+                && (crate::ported::signals::sigtrapped
+                    .lock()
+                    .ok()
+                    .and_then(|g| g.get(ls as usize).copied())
+                    .unwrap_or(0)
+                    & crate::ported::zsh_h::ZSIG_TRAPPED)
+                    != 0
+            {
+                interrupted = Some(128 + ls); // c:1716 `return 128 + last_signal`
+                break;
+            }
+        }
+        if interrupted.is_some() {
+            break; // c:1714-1716 "builtin wait interrupted by trapped signal"
+        }
+        let mut tab = table.lock().expect("jobtab poisoned");
+        if r == pid {
+            update_bg_job(&mut tab, pid, status);
+        } else if let Some(reaped) = crate::reaped_status::take(pid) {
+            // ECHILD because the SIGCHLD reaper collected this
+            // child first. It records the raw wait status
+            // (`extensions/reaped_status.rs`), so the job entry
+            // still gets the status C would have put there
+            // through `update_process` (c:Src/jobs.c:366-388)
+            // instead of the flat 0 below.
+            update_bg_job(&mut tab, pid, reaped);
+        } else {
+            // Gone, and nothing on record for it; mark via
+            // update_job so the loop terminates.
+            let mut marked = false;
+            if let Some(j) = tab.get_mut(p) {
+                for pr in j.procs.iter_mut().chain(j.auxprocs.iter_mut()) {
+                    if pr.pid == pid && pr.status == SP_RUNNING {
+                        pr.status = 0;
+                    }
+                }
+                marked = true;
+            }
+            if marked {
+                update_job(&mut tab, p);
+            }
+        }
+    }
+    // c:Src/jobs.c:651-652 — the `dotrap(SIGCHLD)` update_job owes for a
+    // child that is not `thisjob`, run now that JOBTAB is unlocked.
+    for _ in 0..crate::ported::jobs::CHLD_TRAP_PENDING.swap(0, std::sync::atomic::Ordering::SeqCst) {
+        crate::ported::signals::dotrap(libc::SIGCHLD);
+    }
+    // c:Src/jobs.c:658-678 — the trapped SIGINT/SIGQUIT pseudo-delivery
+    // update_job parked in PSEUDO_SIG_TRAP_PENDING.
+    let pseudo = PSEUDO_SIG_TRAP_PENDING.swap(0, Ordering::SeqCst);
+    if pseudo != 0 {
+        crate::ported::signals::dotrap(pseudo); // c:663
+        if crate::ported::utils::errflag.load(Ordering::Relaxed) != 0 {
+            crate::ported::builtin::BREAKS.store(
+                crate::ported::builtin::LOOPS.load(Ordering::Relaxed),
+                Ordering::Relaxed,
+            ); // c:671-672
+        }
+        check_cursh_sig(&table.lock().expect("jobtab poisoned"), pseudo); // c:677
+    }
+    crate::ported::signals_h::restore_queue_signals(q); // c:1715 / c:1744
+    if let Some(st) = interrupted {
+        // c:2699 — `retval = zwaitjob(job, 1)` is 128 + last_signal and
+        // non-zero, so lastval2 is not consulted; the job stays in the
+        // table, still running.
+        return Err(st);
+    }
+    // c:2656-2657 — `if (!retval) retval = lastval2;`
+    let status = LASTVAL2.load(Ordering::SeqCst);
+    // c:1350-1363 via the suspended-handler printjob — the
+    // finished entry leaves the table before wait returns
+    // (zsh: a second `wait %1` errors "no such job").
+    if let Ok(mut tab) = table.lock() {
+        crate::exec_jobs::printjob_delete_tail(&mut tab, p, p, 1);
+    }
+    Ok(status)
+}
+

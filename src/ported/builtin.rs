@@ -479,6 +479,12 @@ pub fn execbuiltin(
                 optstr_bytes = o.to_vec();
             }
         }
+        // !!! DROP-IN GATE (no C counterpart) !!! bash, /bin/sh, ksh93 and mksh
+        // accept fewer `read` / `cd` letters than zsh (`read -q`, `cd -q` are
+        // usage errors there); keep only the measured set.
+        if let Some(letters) = crate::dash_mode::dropin_option_letters(&name) {
+            optstr_bytes = crate::dash_mode::keep_option_letters(&optstr_bytes, letters);
+        }
         // !!! BASH-ONLY (no C counterpart) !!! bash's own option letters.
         if crate::dash_mode::bash_mode() {
             match name.as_str() {
@@ -498,6 +504,12 @@ pub fn execbuiltin(
             optstr_bytes.push(b'e');
         }
         let mut skipinvalid = (flags & BINF_SKIPINVALID as i32) != 0;
+        // !!! DROP-IN GATE (no C counterpart) !!! zsh's cd passes an unknown option
+        // through as the directory (`cd -foo`); bash, /bin/sh, ksh93 and mksh report
+        // it as a usage error, so with their letter set in force nothing is skipped.
+        if skipinvalid && name == "cd" && crate::dash_mode::dropin_option_letters("cd").is_some() {
+            skipinvalid = false;
+        }
         // c:297 — `char *arg = *argv;`
         loop {
             // c:300-303 — outer arg-by-arg loop guard:
@@ -707,10 +719,14 @@ pub fn execbuiltin(
                 // `read -q`, `umask -q`, `hash -q`, `ulimit -q` all measured on
                 // ksh93u+m 1.0.10), and so does bash 3.2's `/bin/sh` for `read`,
                 // `umask` and `hash`. mksh is 2 for `read` and 1 elsewhere.
+                // bash 3.2's `cd` alone answers a bad option with 1 (`cd -q` measured).
+                if crate::dash_mode::sh_mode() && name == "cd" {
+                    return 1;
+                }
                 if crate::dash_mode::ksh93_mode() || crate::dash_mode::sh_mode() {
                     return 2;
                 }
-                if name == "read" && crate::dash_mode::korn_mode() {
+                if (name == "read" || name == "cd") && crate::dash_mode::korn_mode() {
                     return 2;
                 }
                 return 1; // c:393
@@ -3057,7 +3073,13 @@ pub fn cd_new_pwd(func: i32, _dir: usize, quiet: i32) {
             // c:1248-1251 — cd echoes the resolved directory (set via
             // doprintdir by `cd -`, CDPATH, autocd, CDABLEVARS).
             let pwd = getsparam("PWD").unwrap_or_default(); // C global `pwd`
-            println!("{}", fprintdir(&pwd)); // c:1249-1250
+            // !!! DROP-IN GATE (no C counterpart) !!! bash, /bin/sh, ksh93, mksh and
+            // dash print the directory as is; zsh's fprintdir abbreviates `~`.
+            if crate::dash_mode::bash_mode() || crate::dash_mode::posix_faithful() {
+                println!("{pwd}");
+            } else {
+                println!("{}", fprintdir(&pwd)); // c:1249-1250
+            }
         }
     }
 
@@ -16655,11 +16677,13 @@ pub fn eval(argv: &[String]) -> i32 {
                 crate::ported::utils::zerr("job table full or recursion limit exceeded");
                 LASTVAL.store(1, Relaxed);
             } else {
-                // c:6209 — `execode(prog, 1, 0, "eval")`. The `"eval"`
-                // frame is pushed by the live BUILTIN_EVAL path
-                // (fusevm_bridge.rs, `EvalContextFrame::push("eval")`)
-                // that `execute_script_zsh_pipeline` routes through;
-                // pushing it here as well would double it.
+                // c:6209 — `execode(prog, 1, 0, "eval")`: execode appends
+                // "eval" to zsh_eval_context for the body (c:Src/exec.c:1319).
+                // `execute_script_zsh_pipeline` runs the text directly and
+                // pushes no frame, so this path (`builtin eval`, `$x` naming
+                // eval, and `autoload -X` via eval_autoload, c:3053) must push
+                // it; only the BUILTIN_EVAL opcode (fusevm_bridge.rs) has its own.
+                let _eval_ctx = crate::ported::exec::EvalContextFrame::push("eval");
                 let _ = crate::ported::exec::execute_script_zsh_pipeline(&joined);
             }
             crate::vm_helper::EVAL_RECURSION_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));

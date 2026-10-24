@@ -1633,6 +1633,10 @@ pub fn zshrs_main() {
             // none, ksh93 defines 19 and mksh 11; zsh's two (`run-help`,
             // `which-command`) belong to none of them.
             zsh::emulation_startup::install_default_aliases();
+            // bash, /bin/sh, ksh93 and mksh: a zshrs builtin the reference cannot
+            // resolve (`print` in bash, `declare` in ksh93) is "command not found".
+            // After set_personality, which raises the bash/sh mode flags this reads.
+            zsh::extensions::dash_mode::hide_builtins_the_reference_lacks();
         }
     }
 

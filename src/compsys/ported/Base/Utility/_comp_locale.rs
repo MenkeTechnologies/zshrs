@@ -60,9 +60,46 @@ pub fn _comp_locale() -> i32 {
 mod tests {
     use super::*;
 
+    /// `_comp_locale` exports into the process environment, as C's does into
+    /// its subshell. A test that left `LANG=C` behind changed the collation of
+    /// every later `setlocale(LC_ALL, "")` in the binary (each executor init
+    /// runs one), so an unrelated sort test saw `C` order half-way through.
+    /// Put every variable the call can touch back on drop.
+    struct LocaleEnv(Vec<(String, Option<String>)>);
+
+    impl LocaleEnv {
+        fn save() -> Self {
+            let mut saved: Vec<(String, Option<String>)> = env::vars()
+                .filter(|(k, _)| k.starts_with("LC_"))
+                .map(|(k, v)| (k, Some(v)))
+                .collect();
+            for k in ["LANG", "LC_ALL", "LC_CTYPE"] {
+                if !saved.iter().any(|(s, _)| s == k) {
+                    saved.push((k.to_string(), env::var(k).ok()));
+                }
+            }
+            LocaleEnv(saved)
+        }
+    }
+
+    impl Drop for LocaleEnv {
+        fn drop(&mut self) {
+            for (k, _) in env::vars().filter(|(k, _)| k.starts_with("LC_")) {
+                env::remove_var(k);
+            }
+            for (k, v) in &self.0 {
+                match v {
+                    Some(v) => env::set_var(k, v),
+                    None => env::remove_var(k),
+                }
+            }
+        }
+    }
+
     #[test]
     fn sets_lang_to_c() {
         let _g = crate::test_util::global_state_lock();
+        let _env = LocaleEnv::save();
         env::set_var("LANG", "en_US.UTF-8");
         let _ = _comp_locale();
         assert_eq!(env::var("LANG").as_deref(), Ok("C"));
@@ -71,6 +108,7 @@ mod tests {
     #[test]
     fn preserves_lc_ctype_from_pre_existing_var() {
         let _g = crate::test_util::global_state_lock();
+        let _env = LocaleEnv::save();
         env::set_var("LC_CTYPE", "en_US.UTF-8");
         env::remove_var("LC_ALL");
         let _ = _comp_locale();

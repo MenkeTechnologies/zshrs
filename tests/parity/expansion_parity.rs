@@ -201,6 +201,16 @@ mod alternate_word_split_flags {
         assert_parity(r#"x=1; print -rl -- ${=x+a b} ${=x:+c d} ${x+e f}"#);
     }
 
+    /// c:Src/subst.c:4398-4438 — a quoted `"$@"` element that is empty becomes
+    /// `nulstring` in the splice, so the operand's own prefork (c:3226 → c:625,
+    /// c:183-186) keeps it: the portable `${1+"$@"}` forwards `-n "" x` intact.
+    #[test]
+    fn alternate_word_keeps_empty_quoted_positionals() {
+        assert_parity(
+            r#"f() { printf "[%s]" ${1+"$@"} ${1:+"$@"} ${u-"$@"} ${1+x"$@"y}; echo; }; f -n "" "" x"#,
+        );
+    }
+
     /// c:Src/subst.c:3207-3228 — the default/alternate/assign word reaches
     /// multsub with its lexer tokens, so a quoted span is one node of the
     /// forced split and a tilde in `:=` still expands.

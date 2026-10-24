@@ -918,7 +918,7 @@ pub struct ShellExecutor {
     /// declares it must never open one.
     pub history: std::cell::OnceCell<Option<HistoryEngine>>,
     pub(crate) process_sub_counter: u32,
-    pub completions: HashMap<String, CompSpec>, // command -> completion spec
+    pub completions: crate::bash_complete::ProgcompTable, // command -> completion spec, in bash hash order
     pub zstyles: Vec<zstyle_entry>,             // zstyle configurations
     /// Current function scope depth for `local` tracking.
     pub local_scope_depth: usize,
@@ -2396,7 +2396,7 @@ impl ShellExecutor {
             // Worker: no interactive history engine, ever — a pre-filled
             // cell so `history()` cannot open one from a pool thread.
             history: std::cell::OnceCell::from(None),
-            completions: HashMap::new(),
+            completions: Default::default(),
             process_sub_counter: 0,
             zstyles: Vec::new(),
             local_scope_depth: 0,
@@ -3226,7 +3226,7 @@ impl ShellExecutor {
             jobs: JobTable::new(),
             fpath,
             history,
-            completions: HashMap::new(),
+            completions: Default::default(),
             process_sub_counter: 0,
             zstyles: Vec::new(),
             local_scope_depth: 0,
@@ -6718,7 +6718,14 @@ impl ShellExecutor {
         // this, `zmodload -ab zsh/bogus mybltn; mybltn` skipped the
         // C autoload-fire entirely (PATH miss → 127 instead of the
         // load_module diagnostic → 1).
-        if !cmd.contains('/') {
+        //
+        // c:Src/exec.c:3275-3278 — `command NAME` without POSIX_BUILTINS
+        // clears `hn` before the builtin is ever resolved, autoload stub or
+        // not, so `zmodload -ab zsh/files mv; command mv -v a b` runs
+        // /bin/mv. The `command` handler marks that dispatch forced-external.
+        let builtin_skipped = crate::native_cmds::is_forced_external()
+            && !crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXBUILTINS);
+        if !cmd.contains('/') && !builtin_skipped {
             if let Some(rc) = crate::ported::exec::resolvebuiltin(cmd) {
                 if rc != 0 {
                     return Ok(1);
@@ -6947,7 +6954,19 @@ impl ShellExecutor {
             && self.subshell_snapshots.is_empty()
             && crate::exec_jobs::NOT_JOB_LEADER.with(|d| d.get()) == 0
         {
-            let words: Vec<String> = std::iter::once(cmd.to_string()).chain(args.iter().cloned()).collect();
+            // execcmd_exec resolves the head again. For `command NAME` C's
+            // args still start with the `command` word, whose BINF_COMMAND
+            // skips the shfunctab lookup (c:Src/exec.c:3093), so the `command`
+            // handler's NAME must keep it: `rm() { command rm -v "$@" }` called
+            // itself under MONITOR. `--` keeps a `-`-led NAME from reading as an
+            // option (c:3176-3177).
+            let prefix: &[&str] = if crate::native_cmds::is_forced_external() { &["command", "--"] } else { &[] };
+            let words: Vec<String> = prefix
+                .iter()
+                .map(|w| w.to_string())
+                .chain(std::iter::once(cmd.to_string()))
+                .chain(args.iter().cloned())
+                .collect();
             return Ok(crate::fusevm_bridge::execcmd_simple_job(words, false, job_text));
         }
 
@@ -9653,6 +9672,27 @@ thread_local! {
 static MATERIALIZED_MODULE_PARAMS: std::sync::OnceLock<Mutex<HashSet<String>>> =
     std::sync::OnceLock::new();
 
+/// Whether a zsh/datetime special (`EPOCHSECONDS`, `EPOCHREALTIME`,
+/// `epochtime`) is bound right now: the module is loaded AND that name's
+/// `p:` feature is on.
+///
+/// !!! RUST-ONLY !!! C answers this with the paramtab node itself:
+/// `setparamdefs` (c:Src/module.c:1169-1190) adds the special when the
+/// feature is enabled and deletes it when disabled, recording the state in
+/// the patab row's `pm`. zshrs's datetime getters are hard-wired, so they
+/// consult that `pm` here; `zmodload -F zsh/datetime -p:EPOCHSECONDS`
+/// leaves the name unset as in zsh.
+pub fn datetime_param_bound(name: &str) -> bool {
+    crate::ported::module::MODULESTAB
+        .lock()
+        .map(|t| t.is_loaded("zsh/datetime"))
+        .unwrap_or(false)
+        && crate::ported::modules::datetime::PATAB
+            .lock()
+            .map(|t| t.iter().any(|d| d.name == name && d.pm.is_some()))
+            .unwrap_or(false)
+}
+
 /// Record that `name` was read/written, so `$parameters` stops reporting it
 /// as an unmaterialized autoload stub. See [`MATERIALIZED_MODULE_PARAMS`].
 pub fn mark_module_param_used(name: &str) {
@@ -10432,15 +10472,27 @@ pub const AUTOLOAD_PARAMS: &[(&str, &str)] = &[
 /// Autoload stubs whose owning module is NOT loaded — the rows zsh's
 /// `typeset` listings print as `undefined NAME` (printparamnode's
 /// PM_AUTOLOAD pmtypes row, Src/params.c:6011 + the PM_AUTOLOAD
-/// NAMEONLY arm at Src/params.c:6146-6155). Once a module loads, its
-/// stubs drop out and the real params list instead.
+/// NAMEONLY arm at Src/params.c:6146-6155). A stub stays until its OWN
+/// feature is enabled, not until its module boots: `loadparamnode`
+/// (Src/params.c:563-567) calls `ensurefeature(mn, "p:", nam)`
+/// (Src/module.c:3419-3432), which hands `require_module` the single
+/// feature `p:NAME`, so `setparamdefs` (Src/module.c:1169-1196) replaces
+/// only that stub and every sibling `add_autoparam` planted
+/// (Src/module.c:1202-1223) keeps PM_AUTOLOAD. compinit's `: $funcstack`
+/// (Completion/compinit:179) therefore leaves `undefined jobdirs` etc.
+/// in zsh's `typeset +` although zsh/parameter has booted.
 pub fn autoload_param_stubs() -> Vec<(&'static str, &'static str)> {
     use crate::ported::zsh_h::{MOD_INIT_B, MOD_UNLOAD};
     let tab = crate::ported::module::MODULESTAB.lock().unwrap();
     AUTOLOAD_PARAMS
         .iter()
         .copied()
-        .filter(|(_, m)| {
+        .filter(|(p, m)| {
+            // c:Src/module.c:1169-1196 — booted, but this feature was never
+            // enabled: the add_autoparam stub is still the paramtab node.
+            if module_param_is_autoload_stub(p) {
+                return true;
+            }
             // "Boot ran" is MOD_INIT_B && !MOD_UNLOAD (the criterion
             // printmodulenode uses, src/ported/module.rs:246 — C's
             // `m->u.handle` union check at Src/module.c:218-241).

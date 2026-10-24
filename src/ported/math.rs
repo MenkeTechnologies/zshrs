@@ -3436,7 +3436,23 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
             // M_LASTMATHVAL is NOT part of save_state, so the body's last
             // `(( ))` result survives the restore.
             let saved = save_state();
+            // !!! RUST-ONLY !!! The body's commands are not inside the quotes of
+            // the word whose arithmetic called it, as at the `$( … )` boundary.
+            // C's quoting lives in the tokens and never reaches the function;
+            // zshrs carries it in `in_dq_context` / `SUBEXP_SCALAR_CTX`, so
+            // `"$((f()))"` and `x=${$((f()))}` ran `f` with `$arr` joined into
+            // one word. powerlevel10k's prompt calls its `functions -M`
+            // `_p9k_on_expand` that way, and `for pat idx var in
+            // $_p9k_show_on_command` then passed an empty index on.
+            let saved_dq = crate::fusevm_bridge::try_with_executor(|exec| {
+                std::mem::replace(&mut exec.in_dq_context, 0)
+            });
+            let saved_subexp = crate::ported::subst::SUBEXP_SCALAR_CTX.with(|c| c.replace(0));
             let _ = crate::ported::exec::doshfunc(&mut shfunc, largs, true, body_runner);
+            crate::ported::subst::SUBEXP_SCALAR_CTX.with(|c| c.set(saved_subexp));
+            if let Some(dq) = saved_dq {
+                crate::fusevm_bridge::try_with_executor(|exec| exec.in_dq_context = dq);
+            }
             restore_state(saved);
             // c:1115 — `return lastmathval`. The body's last arithmetic
             // evaluation (e.g. `(( REPLY = $1 + 2 ))`) is the function's value.

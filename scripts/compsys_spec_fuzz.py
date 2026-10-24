@@ -858,10 +858,14 @@ def printable_bytes(raw):
 
 
 def stream_diff(ref, test, max_lines=30):
+    from parity_corpus import bounded_token_opcodes  # shared with comptab_parity
     a, b = tokenize_stream(ref), tokenize_stream(test)
-    sm = difflib.SequenceMatcher(None, a, b, autojunk=False)
+    ops, coarse = bounded_token_opcodes(a, b)
     lines = []
-    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+    if coarse:
+        lines.append("  (streams too large to align token by token: %d vs %d tokens; "
+                     "showing the first divergent span)" % (len(a), len(b)))
+    for tag, i1, i2, j1, j2 in ops:
         if tag == "equal":
             continue
         if len(lines) >= max_lines:

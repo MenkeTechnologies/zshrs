@@ -485,7 +485,11 @@ fn emulate_option_is_zsh_running_emulate() {
 #[test]
 fn inherited_sig_ign_follows_each_reference_shell() {
     let mut legs = targets();
-    legs.push(("--sh", Path::new("/bin/sh").exists().then(|| "/bin/sh".to_string()), "sh"));
+    // `--sh` is macOS's bash-3.2 `/bin/sh`; where `/bin/sh` is dash (Debian),
+    // dash's answer is the `--dash` leg's, as in tests/emulation_parity.rs.
+    let sh_is_dash = std::fs::canonicalize("/bin/sh")
+        .is_ok_and(|p| p.file_name().is_some_and(|n| n == "dash"));
+    legs.push(("--sh", (Path::new("/bin/sh").exists() && !sh_is_dash).then(|| "/bin/sh".to_string()), "sh"));
     let zbin = zshrs_bin();
     let z = zbin.to_str().expect("zshrs path is UTF-8");
     let ignoring = |argv: &[&str], script: &str| -> Out {

@@ -19,6 +19,376 @@ CI green pending the underlying fix.
 
 ---
 
+## #1207 — `bindkey` vanished after any `zle` call — fixed
+
+**Status:** `fixed` 2026-10-24.
+
+```
+$ zsh   -fc 'zle -l >/dev/null; bindkey x'   → "x" self-insert
+$ zshrs -fc 'zle -l >/dev/null; bindkey x'   → command not found: bindkey  ✗
+```
+
+Autoloading `zle` loads zsh/zle with only `b:zle` on. C's `setbuiltins`
+skips a feature that was never added (c:Src/module.c:519-520), so the other
+zsh/zle builtins keep their autoload stubs. zshrs marked every off `b:`
+feature as deleted (from 847960812a), which broke autopair's init.
+`setfeatureenables` now deletes only on an added-to-off transition, and
+`enables_module` deletes a never-added builtin only when no autoload stub holds
+its name, so `zmodload -F zsh/files b:zf_ln` still leaves `mv` external.
+Pinned by `bugs_md_regression::zle_autoload_keeps_bindkey_stub` and
+`bug636_autopair_pair_lookup_and_binding`.
+
+---
+
+## #1206 — `[ -o \> -a ]` is "unknown condition: -o" — port-bug
+
+**Status:** `port-bug`, found 2026-10-24 running Test/C02cond.ztst under
+zshrs ("string comparison with strings that look like operators").
+
+```
+$ zsh   -fc '[ -o \> -a ]; print $?'   → too many arguments / 2   (5.9.2; the dev tree expects 0)
+$ zshrs -fc '[ -o \> -a ]; print $?'   → unknown condition: -o / 2   ✗
+```
+
+With three arguments and `>` second, the dev tree's `par_cond_2`
+(c:Src/parse.c:2496-2512) parses a binary string comparison of `-o` and `-a`.
+5.9.2 fails the test too; which upstream change fixed it was not traced.
+Other 3- and 4-argument `[` forms (`[ ! x = y ]`, `[ -a = -a ]`,
+`[ -z -a -z ]`, `[ "(" -n x ")" ]`, …) match 5.9.2.
+
+---
+
+## #1205 — `unsetopt multibyte`: patterns and `${…}` substitutions still worked in characters — fixed
+
+**Status:** `fixed` 2026-10-23.
+
+```
+$ zsh   -fc "x='aé漢z'; unsetopt multibyte; print -r -- \${x//?/.}"              → .......
+$ zshrs -fc "x='aé漢z'; unsetopt multibyte; print -r -- \${x//?/.}"              → ....      ✗
+$ zsh   -fc "x='aé漢z'; unsetopt multibyte; print -r -- \${x#a?}" | od -An -tx1  → a9 e6 bc a2 7a 0a
+$ zshrs -fc "x='aé漢z'; unsetopt multibyte; print -r -- \${x#a?}"                → panic: not a char boundary  ✗
+```
+
+Without MULTIBYTE zsh matches raw BYTES. The matcher steps one byte
+(`charnext`, c:Src/pattern.c:1946), the substitution walkers step one byte
+(`MB_METACHARINC`, c:Src/glob.c:2958), and a POSIX class tests the byte with
+libc `<ctype.h>` (`patmatchrange`, c:Src/pattern.c:3886-3939). zshrs had
+three gaps:
+
+- `patcompile` forced GF_MULTIBYTE on, against c:572-575.
+- The single-byte class test used `is_ascii_*`, which never matches a high
+  byte. macOS classifies 0x80-0xff of a UTF-8 locale as Latin-1, so
+  `[[:alpha:]]` matches 0xc3 there; the answer is the platform C library's.
+- The six `paramsubst` walkers (`//`, `/`, and the four `#`/`%` strip arms)
+  stepped Rust `char`s.
+
+Once the option gate was honoured, the `#`, `##` and `(M)` arms panicked
+slicing a `&str` inside a character.
+
+**Fix.** `src/byte_units.rs` (Rust-only) spells every non-ASCII byte as one
+`Meta` pair, in the pattern (`patcompile`) and in the subject (`pattryrefs`
+and the walkers). The matcher already reads a pair as one raw byte. Each
+unit boundary is then a char boundary, and results go back through
+`decode_script_bytes`. Other changes:
+
+- `charsub` counts unmetafied bytes.
+- `$MATCH` and `$match` come back in the ordinary spelling.
+- `(#u)` / `(#U)` now toggle the hoisted flag too.
+
+`parity-fuzz --mode unicode --count 1000`: 191 → 10, against both 5.9.2 and
+the dev tree. The 10 left are two upstream defects:
+
+- `${(ml:8::.:)j}`: zsh reads out of bounds (see `.github/workflows/ci.yml`).
+- `${(L)/(U)/(C)j}` on CJK text: zshrs emits zsh's bytes, but zsh leaks a
+  raw 0x97 (`Quest`) and errors `no matches found`.
+
+Pinned by `bugs_md_regression::nomultibyte_substitutions_walk_bytes`.
+
+---
+
+## #1204 — bare `$epochtime` expanded to nothing — fixed
+
+**Status:** `fixed` 2026-10-24 (found 2026-10-23 while fixing #1203).
+
+```
+$ zsh   -fc 'zmodload zsh/datetime; a=($epochtime); print $#a "[$epochtime]"'   → 2 [1792762300 692555000]
+$ zshrs -fc 'zmodload zsh/datetime; a=($epochtime); print $#a "[$epochtime]"'   → 0 []                      ✗
+```
+
+`${epochtime[@]}`, `${#epochtime}` and `$epochtime[1]` are right; only the
+bare and double-quoted forms come back empty, so the manual's own idiom
+`for secs nsecs in $epochtime` (Doc/Zsh/mod_datetime.yo) runs zero times.
+c:Src/Modules/datetime.c:256 makes `epochtime` a PM_ARRAY special whose
+`getcurrenttime` getfn serves every read; the bare-name splice path does not
+reach `arrays_get`'s `epochtime` arm. Present before #1203.
+
+**Fix.** The value lives behind the param's own vtable, as in C. The
+`epochtime` patab row carries a ported `epochtime_gsu`
+(c:Src/Modules/datetime.c:248-249), and `addparamdef` now ports its PM_ARRAY
+arm (c:Src/module.c:1104-1107), so `pm->gsu.a` is set on the live node.
+`getaparam` already dispatches a non-`arrgetfn` `gsu.a` (c:Src/params.c:3107),
+which every bare, quoted and scalar-assignment read reaches. The other module
+special arrays (`funcstack`, `funcfiletrace`, `functrace`, `dirstack`,
+`jobstates`, `aliases`, `commands`, `parameters`, `errnos`, `signals`,
+`keymaps`, `reswords`) were checked bare against 5.9.2 and already matched.
+Pinned by `bugs_md_regression::epochtime_bare_reads_call_the_array_getfn`.
+
+---
+
+## #1203 — a module feature turned off with `zmodload -F MOD -b:NAME` / `-p:NAME` stayed callable — fixed
+
+**Status:** `fixed` 2026-10-23.
+
+```
+$ zsh   -fc 'zmodload zsh/datetime; zmodload -F zsh/datetime -b:strftime; strftime %Y 0; print $?'   → command not found: strftime / 127
+$ zshrs -fc 'zmodload zsh/datetime; zmodload -F zsh/datetime -b:strftime; strftime %Y 0; print $?'   → 1969 / 0     ✗
+$ zsh   -fc 'zmodload zsh/datetime; zmodload -F zsh/datetime -p:EPOCHSECONDS; print ${EPOCHSECONDS:-unset}'   → unset
+$ zshrs -fc 'zmodload zsh/datetime; zmodload -F zsh/datetime -p:EPOCHSECONDS; print ${EPOCHSECONDS:-unset}'   → 1792761433     ✗
+```
+
+`setbuiltins` (c:Src/module.c:501-530) deletes a disabled builtin's node from
+`builtintab` while the module stays loaded, and `setparamdefs` (c:1169-1190)
+deletes a disabled special. zshrs recorded the builtin half in
+`DISABLED_MODULE_BUILTINS`, but only `whence` / `$builtins` read it:
+
+- dispatch only consulted it for zsh/files names, so `strftime`, `zstat`,
+  `zformat`, … still ran after `-b:`;
+- the extension-builtin check (the default-mode posture that exposes every
+  statically linked module builtin) answered `builtin` for the name anyway;
+- `builtin NAME` found it in the static table;
+- an autoload builtin (`zformat`, `zstyle`, Src/init.c:1708) kept its ledger
+  stub, so the next call ran `resolvebuiltin` (c:Src/exec.c:2700) and turned
+  the feature back on;
+- a module first loaded with the feature off (`zmodload -F zsh/datetime
+  -b:strftime`) never entered the set, because c:518-519 skips a node that was
+  never BINF_ADDED;
+- the datetime specials only checked that the module was loaded, never the
+  patab row's `pm`, and bare `${+epochtime}` was answered without any gate.
+
+**Fix.** `setbuiltins` records the off state before its BINF_ADDED skips; one
+predicate (`module_builtin_runs_from_path`) sends a disabled module builtin to
+the PATH search on every dispatch route; `is_extension_builtin`,
+`builtin_prefix_finds`, the `builtin NAME` arm and `resolvebuiltin` treat a
+disabled name as absent; `EPOCHSECONDS` / `EPOCHREALTIME` / `epochtime` are
+bound only while their own `p:` feature is on. V04features.ztst "Enabling and
+disabling of builtins as features" now passes.
+
+---
+
+## #1202 — bare `wait` drained `waitpid(-1)` and `wait` stopped at a trapped signal — fixed
+
+**Symptom.** CI's ubuntu `Test` job once hung in `prompt_returns_after_command`
+after `for i in {1..300}; do /usr/bin/true & done; wait`: every `[N] done`
+notice printed and the prompt never came back. Not reproduced since, and not
+on macOS.
+
+**Cause.** `wait` with no arguments was ported as a `waitpid(-1)` drain ending
+on ECHILD. C waits per job (`for (job = 0; job <= maxjob; job++) … retval =
+zwaitjob(job, 1)`, c:Src/jobs.c:2538-2542), so it never blocks on a child that
+is not a job of the shell; the drain blocks on any such child until it exits.
+The jobspec form had a second deviation: a trapped signal that interrupted the
+wait ended the whole `wait %1 %2` with 128+signal, where C's loop goes on to
+the next jobspec and its status overwrites it (zsh 5.9.2: `wait %1 %2` is 0
+when USR1 interrupts %1 and %2 finishes; so is the bare `wait`).
+
+**Fix.** The per-job body is one function, `exec_jobs::wait_for_job` (the
+`BIN_WAIT` arm of bin_fg: proc-by-proc `waitpid`, the reaper's recorded
+status on ECHILD, the CHLD and pseudo-signal trap deliveries, the done-delete
+tail). The bare `wait` runs it over the table's live, printable jobs other
+than `thisjob`; both forms continue after an interrupted job. A 14-row
+differential against zsh (statuses, 300 jobs, `wait $!`, interrupted waits,
+`wait` in a function and in `$(…)`) matches.
+
+## #1201 — the Linux emulation matrix diverged on host-specific answers: x87 `%a`, ksh93 long-double digits and casts, Debian's dash `\e` and mksh build, an inherited `SIG_IGN` armed over, and `print` split across two writes — fixed
+
+**Symptom.** CI's ubuntu `Emulation parity` job failed 7 matrix cases and the
+ksh93 float probe after the reference shells were pinned to the same releases
+macOS uses (bash 5.3.20, ksh93u+m 1.0.10); every one passed on macOS with the
+same binaries. The `Test (ubuntu)` job also failed the inherited-`SIG_IGN`
+trap parity and two multios rows (`print x >&1 > f | cat` came out `xx\n\n`).
+
+**Causes, each verified against the reference source or the installed shell.**
+
+- bash formats `%a` with `%La` (printf.def:208-213), and glibc prints an x87
+  long double from its explicit 64-bit mantissa: leading nibble `8`..`f`,
+  exponent three lower (`sysdeps/ieee754/ldbl-96/printf_fphex.c`), so
+  `printf '%a' 1` is `0x8p-3` on x86 Linux. zshrs printed the double layout.
+- ksh93 prints floats with `%.*Lg` and `LDBL_DIG` (macro.c:2190): 18 digits
+  on x86_64, 15 on Apple arm64 (long double is double), 33 on aarch64 Linux.
+  zshrs hardcoded 15. Its `%a` precision is `2*(sizeof(Sfdouble_t)-2)`
+  (sfio/sfvprintf.c:1175-1178): 28 digits with a 16-byte long double, 12 with
+  an 8-byte one; zshrs hardcoded 12.
+- ksh93 decides integer-vs-float output by `(Sflong_t)num != num`
+  (macro.c:2188); that C cast is the host CPU's, which `zlong_cast` already
+  models for zsh. `ksh93_overflow!` used Rust's saturating `as`, so `2**63`
+  printed `9223372036854775807` where x86 ksh prints `9.22337203685477581e+18`.
+- ksh93's integer `/` and `%` have no `-1` guard (streval.c:346, :361); on x86
+  `INT64_MIN / -1` traps and ksh dies of SIGFPE with no output. zshrs wrapped.
+- Ubuntu's dash 0.5.12-6ubuntu5 carries
+  `0008-Support-e-in-echo-and-printf-builtins.diff` (`case 'e'` in the shared
+  `conv_escape`), and upstream dash has `\e` after 0.5.12; Apple's `/bin/dash`
+  prints `\e` as two characters. zshrs always printed two.
+- Ubuntu's `mksh 59c-37` is R59c plus an upstream snapshot to 2025/12
+  (`debian-changes` removes `{Tbcat, c_cat}`) built with
+  `-DMKSH_EARLY_LOCALE_TRACKING` (debian/meat:457), so `cat` is external
+  (`hash` lists it) and `utf8-mode` follows a UTF-8 locale in a `-c` shell
+  (`x=héllo; ${#x}` is 5). zshrs modelled Homebrew's R59c: `cat` builtin,
+  bytes.
+- `init_dropin_signals` armed ksh93's terminating-signal handler over an
+  inherited `SIG_IGN`; ksh93's `sh_sigtrap` keeps the ignore and marks the
+  signal `SH_SIGOFF` (fault.c:289-293). So `trap '' USR1; exec zshrs --ksh -c
+  'trap : USR1; kill -USR1 $$; echo alive'` ran the EXIT-trap exit (138 on
+  Linux, 158 on macOS) instead of printing `alive`.
+- `fwrite_stdout` issued one write(2) per piece, so `print x` was `x` then
+  `\n`; a multios tee that woke between them relayed `x` to every target
+  first. C's stdio buffer delivers `x\n` in one write.
+
+- bash's `$GROUPS` holds at least the primary gid when getgroups(2) returns
+  no groups (general.c:1295-1301); root in a Debian container got an empty
+  array from `--bash`.
+
+**Fix.** `dash_mode` gains the host constants `SIZEOF_LONG_DOUBLE`,
+`LDBL_DIG`, `LONG_DOUBLE_HEX_X87` and a `HexFloatStyle` for `hex_float`
+(glibc's half-to-even rounding and leading-digit carry included);
+`ksh93_overflow!` casts through `zlong_from_double`; `ksh93_int_divide_traps`
+raises SIGFPE on x86; `dash_decodes_esc`, `mksh_has_cat_builtin` and
+`mksh_utf8_mode` gate the Linux answers (the `set -o` listing computes
+`utf8-mode` from the same predicate); the drop-in signal arming skips a signal
+that is currently ignored; `fwrite_stdout` and `print -u` write one buffer.
+
+**Follow-up: the arithmetic itself.** ksh93 computes in the host's long
+double, so on x86_64 `print $((1.0/3))` is `0.333333333333333333` (an 80-bit
+quotient) where f64 arithmetic gives `0.333333333333333315` at 18 digits, and
+`INT64_MAX + 1000` is the exact `9.22337203685477681e+18`, not the double's
+`...786e+18`. `src/extensions/ksh_long_double.rs` now evaluates ksh93's
+`+ - * /`, unary minus, comparisons and constants in a software long double of
+`LDBL_MANT_DIG` bits (64 x87, 113 binary128, 53 where long double is double):
+exact `BigUint` arithmetic rounded once, half to even. The value rides in the
+`mnumber` through a per-evaluation arena — `l` is the C union's dead half when
+`type_` is `MN_FLOAT`, so it carries the arena handle while `d` keeps the f64
+rounding for every other reader — and `arithsubst` prints the result as
+macro.c:2188-2193 does: the integer when the host cast round-trips, `%Lg` for
+zero, else `%.*Lg` with `LDBL_DIG`. `pow` and the math functions stay in
+double, as ksh93's own calls do (`2**0.5` prints the double's digits on every
+host). Subnormals flush to zero on parse and on every result, as ksh93's do
+(`$((1e-310))` and `$((2.2e-308 / 4))` print `0`, `$((-1e-320))` prints `-0`).
+Variables still store a double: `float x=$((1.0/3)); print $x` prints through
+`typeset -F`'s precision, where ksh keeps the long double.
+
+Found on the way and fixed too: ksh93's `print` rejects a dash-digit word
+(`print -9 x` is "-9: unknown option", 2) where zsh's option parser passes it
+through as an operand; and ksh93 (every builtin) and bash 3.2's `/bin/sh`
+(`read`, `umask`, `hash`) report a bad option with status 2 where zsh uses 1.
+Followed up in the same session: `read` and `cd` carry each drop-in's measured
+option letters (`dropin_option_letters`; `read -q` and `cd -q` are usage errors
+in bash, /bin/sh, ksh93, mksh and dash, with the status each reports), `cd`
+no longer passes an unknown option through as a directory there, `cd -` prints
+the directory unabbreviated as every one of them does, and a zshrs builtin the
+reference shell cannot resolve at all (`print`, `setopt`, `float`, `integer` in
+bash; `declare`, `local` in ksh93; `float`, `disown` in mksh) is hidden at
+startup — builtin and typeset reserved word both — so it is "command not
+found" (127), as `--dash` already did (`hide_builtins_the_reference_lacks`,
+lists measured with `command -V`). Still open: bash 3.2 (`/bin/sh`) does not
+import `OLDPWD` from the environment, so its `cd -` fails where zshrs's
+succeeds, and its `typeset -p` quotes an array as one word.
+
+## #1200 — `--mksh` / `--pdksh`: glob results came back in locale order — fixed
+
+**Status:** `fixed` 2026-10-23.
+
+```
+$ LC_ALL=en_US.UTF-8 mksh -c 'echo *'            → CREATORS.md Zed apple bench
+$ LC_ALL=en_US.UTF-8 zshrs --mksh -c 'echo *'    → apple bench CREATORS.md Zed     ✗
+$ LC_ALL=en_US.UTF-8 bash -c 'echo *'            → apple bench CREATORS.md Zed     (bash and ksh93 collate)
+```
+
+mksh sorts expanded pathnames with `strcmp`, as pdksh did, and dash does the
+same. `zstrcmp` already returned the byte comparison for dash; the pdksh family
+now takes that branch too. Found by `parity-fuzz --shell mksh --mode expand`
+(6 divergences, now 0). Pinned by `ksh_mode::pdksh_family_sorts_glob_results_bytewise`.
+
+---
+
+## #1199 — `--bash`: `complete` drops `-D` / `-E` specs and prints names unquoted — fixed (builtin); interactive use open
+
+**Status:** `fixed` 2026-10-24 for the builtin; found 2026-10-22 while verifying #1198.
+
+**Fix.** `builtin_complete` is now a port of `complete.def`:
+
+- `build_actions` takes the full option string. `-D` / `-E` / `-I` store
+  their specs under the `_DefaultCmD_` / `_EmptycmD_` / `_InitialWorD_` keys.
+- `-o` and `-X` values are kept.
+- `print_one_completion` writes the bash form, quoting names with
+  `sh_contains_shell_metas` and `sh_single_quote`.
+- `bash_complete::ProgcompTable` reproduces `prog_completes`
+  (hashlib.c: FNV-1 hash, 512 buckets, grows by 4, head insertion), so
+  `complete -p` lists specs in bash's order.
+
+After sourcing Debian's `bash_completion`, `complete -p` matches bash 5.3
+line for line (121 specs, `-D` loader included). Pinned by
+`bugs_md_regression::bash_complete_prints_like_complete_def`.
+
+**Still open:** nothing in zshrs's `--bash -i` line editor consults these
+specs yet, so the `-D` loader is registered but never run on TAB.
+
+**Original report:**
+
+```
+$ bash -c 'f(){ :; }; complete -D -F f; complete -E -F f; complete -F f ""; complete -F f "a b"; complete -p'
+complete -F f -D
+complete -F f 'a b'
+complete -F f -E
+complete -F f ''
+$ zshrs --bash -c '…same…'
+complete -F f                                                               ✗
+complete -F f a b                                                           ✗
+$ zshrs --bash -c 'f(){ :; }; complete -D -F f; complete -p -D'
+zshrs:complete:1: -D: no completion specification                           ✗
+```
+
+`builtin_complete` (`src/extensions/ext_builtins.rs`) is a small stand-in, not a
+port of bash's `builtins/complete.def`. It treats `-D` (default spec) and `-E`
+(empty-line spec) as unknown flags, prints names without quoting, and drops
+the `-o`, `-X`, `-G`, `-P` and `-S` values from `-p` output. bash-completion
+registers its on-demand loader with `complete -D -F _comp_complete_load`
+(bash_completion:3377), so in `zshrs --bash -i` the completions for commands
+not sourced at startup are never loaded. Fix: port `complete.def`'s option table
+and `print_one_completion`, including the `-D` / `-E` / `-I` pseudo-commands.
+
+---
+
+## #1198 — `--bash` on Debian: every interactive start printed a `bash_completion` parse error — fixed
+
+**Status:** `fixed` 2026-10-22.
+
+```
+$ zshrs --bash -i          (Debian 13, bash-completion 2.16 installed)
+/usr/share/bash-completion/bash_completion:1605: parse error near `<'       ✗
+$ bash -c '[[ x =~ ^([^=<{().[]|\.[A-Za-z0-9])+=? ]] && echo m'           → m
+$ zshrs --bash -c '…same…'                     → parse error near `<'       ✗
+$ zshrs --bash -c '[[ a() =~ a() ]]'           → parse error near `()'      ✗
+$ zsh -fc '[[ a =~ ^([^<]) ]]'                 → parse error near `<'       (zsh rejects it too)
+```
+
+`/etc/profile.d/bash_completion.sh` sources
+`/usr/share/bash-completion/bash_completion` in every interactive shell, and its
+`_comp_compgen_help__parse` has `[[ $option =~ ^([^=<{().[]|\.[A-Za-z0-9])+=? ]]`.
+bash reads a parenthesised group inside a `[[ ]]` operand with
+`parse_matched_pair`, so the `<` and the empty `()` in it are word text. zshrs
+followed zsh's lexer: it ended the word at the `<` (redirection), and once that
+was fixed it split the `()` off as a function-definition token. The parse error
+dropped the rest of the file, so only 16 completions loaded where bash loads 121.
+
+Both `gettokstr` arms that end a word on `<` / `>` now keep the character when
+the paren depth is above zero on the right of a `[[ ]]` operator in `--bash`.
+The `name()` split is skipped in the same position. Outside a group bash rejects
+a bare `<` too (`[[ a =~ ^[<] ]]`), and native mode still errors like zsh. After
+the fix, `zshrs --bash -i` on Debian starts silently and registers 120 of bash's
+121 completions (the missing one is the `complete -D` loader, #1199). Pinned by
+`bugs_md_regression::bash_cond_group_keeps_angle_brackets_and_empty_parens`.
+
+---
+
 ## #1197 — `${(@s:,:)${:-a,b,c}}` did not split: the nested body's commas became brace-expansion tokens — fixed
 
 **Status:** `fixed` 2026-10-22.
@@ -53,8 +423,9 @@ is left as the source bytes and collects no commas, while a group inside the
 body (`${:-a,{b,c}}` → `a b a c`) still expands and IGNORE_BRACES still turns it
 off. Pinned by `subst_split_join_parity::nested_subexp_comma_stays_literal`.
 
-Not touched: `${(s:,:)${:-\${a,b}}}` (an escaped `$` before the group) prints
-`${a` `b}` where zsh prints `$a $b`, on both the `(@)` and the plain route.
+The escaped-`$` group (`${(s:,:)${:-\${a,b}}}` → `$a $b`) was fixed
+alongside #633 (2026-10-22): the adapter now reads a `Bnull` before `$` as
+the quote it is and accepts braces already lexed as Inbrace/Outbrace.
 
 ---
 
@@ -7540,9 +7911,25 @@ zsh; only the direct-subscript-on-name form diverges.
 
 ---
 
-## #633 — `(s)`/`(f)` split flag on a default-word subexp `${(s:-:)${:-a-b-c}}` splits when zsh doesn't
+## #633 — `(s)`/`(f)` split flag on a default-word subexp `${(s:-:)${:-a-b-c}}` splits when zsh doesn't — fixed
 
-**Status:** `port-bug` (exotic; deferred — subtle subexp-type semantics)
+**Status:** `fixed` 2026-10-22.
+
+**Resolution:** the mechanism is lexer tokens, not subexp type. The `-` of a
+default word inside `${…}` is the Dash token (c:Src/lex.c:1390-1400), and
+multsub (c:Src/subst.c:2682) hands the inner value back still tokenized; the
+split at c:3913-3932 is a byte compare, so `(s:-:)` never matches. A parameter
+value carries no tokens and splits; a quoted default word (`"a-b-c"`) has its
+`-` ASCII and splits. The plain route already behaved; the `(@)` route
+(`${(@s:-:)${:-a-b-c}}`) split because `strip_brace_wrap_for_bridge` in
+`src/extensions/compile_zsh.rs` untokenized the body before BUILTIN_BRIDGE_BRACE_ARRAY
+handed it to paramsubst. It now passes the lexer tokens through. A pattern
+operator untokenizes the value before matching (c:3440 / c:3458), so
+`${(s:-:)${:-a-b-c}#a}` is `b c` and `${(s:-:)${:-a-b-c}:#x}` is `a b c`;
+paramsubst now does that once before the `#`/`%`/`/`/`:#`/`:/` arms. Pinned by
+`subst_split_join_parity::nested_subexp_tokens_survive_at_route`.
+
+Original report:
 
 The `(s)` split flag splits a nested *parameter-reference* subexp but
 NOT a nested *default-word* (`${:-word}`) subexp:
@@ -59704,7 +60091,6 @@ shells and
 `tests/bugs_md_regression.rs::bug1132_unset_argv_clears_the_positional_vector`
 covers it.
 
-
 ### Suite state for #1133 + the #1132 residual
 
 Both changes measured together on one pinned, `codesign -f -s -`'d copy of
@@ -61895,83 +62281,3 @@ zshrs   3
 `pm.u_val` instead of dispatching `pm->gsu.i->setfn` (c:Src/params.c:2874), so
 the limit never applies.
 
-## #1190 — the Linux emulation matrix diverged on host-specific answers: x87 `%a`, ksh93 long-double digits and casts, Debian's dash `\e` and mksh build, an inherited `SIG_IGN` armed over, and `print` split across two writes — fixed
-
-**Symptom.** CI's ubuntu `Emulation parity` job failed 7 matrix cases and the
-ksh93 float probe after the reference shells were pinned to the same releases
-macOS uses (bash 5.3.20, ksh93u+m 1.0.10); every one passed on macOS with the
-same binaries. The `Test (ubuntu)` job also failed the inherited-`SIG_IGN`
-trap parity and two multios rows (`print x >&1 > f | cat` came out `xx\n\n`).
-
-**Causes, each verified against the reference source or the installed shell.**
-
-- bash formats `%a` with `%La` (printf.def:208-213), and glibc prints an x87
-  long double from its explicit 64-bit mantissa: leading nibble `8`..`f`,
-  exponent three lower (`sysdeps/ieee754/ldbl-96/printf_fphex.c`), so
-  `printf '%a' 1` is `0x8p-3` on x86 Linux. zshrs printed the double layout.
-- ksh93 prints floats with `%.*Lg` and `LDBL_DIG` (macro.c:2190): 18 digits
-  on x86_64, 15 on Apple arm64 (long double is double), 33 on aarch64 Linux.
-  zshrs hardcoded 15. Its `%a` precision is `2*(sizeof(Sfdouble_t)-2)`
-  (sfio/sfvprintf.c:1175-1178): 28 digits with a 16-byte long double, 12 with
-  an 8-byte one; zshrs hardcoded 12.
-- ksh93 decides integer-vs-float output by `(Sflong_t)num != num`
-  (macro.c:2188); that C cast is the host CPU's, which `zlong_cast` already
-  models for zsh. `ksh93_overflow!` used Rust's saturating `as`, so `2**63`
-  printed `9223372036854775807` where x86 ksh prints `9.22337203685477581e+18`.
-- ksh93's integer `/` and `%` have no `-1` guard (streval.c:346, :361); on x86
-  `INT64_MIN / -1` traps and ksh dies of SIGFPE with no output. zshrs wrapped.
-- Ubuntu's dash 0.5.12-6ubuntu5 carries
-  `0008-Support-e-in-echo-and-printf-builtins.diff` (`case 'e'` in the shared
-  `conv_escape`), and upstream dash has `\e` after 0.5.12; Apple's `/bin/dash`
-  prints `\e` as two characters. zshrs always printed two.
-- Ubuntu's `mksh 59c-37` is R59c plus an upstream snapshot to 2025/12
-  (`debian-changes` removes `{Tbcat, c_cat}`) built with
-  `-DMKSH_EARLY_LOCALE_TRACKING` (debian/meat:457), so `cat` is external
-  (`hash` lists it) and `utf8-mode` follows a UTF-8 locale in a `-c` shell
-  (`x=héllo; ${#x}` is 5). zshrs modelled Homebrew's R59c: `cat` builtin,
-  bytes.
-- `init_dropin_signals` armed ksh93's terminating-signal handler over an
-  inherited `SIG_IGN`; ksh93's `sh_sigtrap` keeps the ignore and marks the
-  signal `SH_SIGOFF` (fault.c:289-293). So `trap '' USR1; exec zshrs --ksh -c
-  'trap : USR1; kill -USR1 $$; echo alive'` ran the EXIT-trap exit (138 on
-  Linux, 158 on macOS) instead of printing `alive`.
-- `fwrite_stdout` issued one write(2) per piece, so `print x` was `x` then
-  `\n`; a multios tee that woke between them relayed `x` to every target
-  first. C's stdio buffer delivers `x\n` in one write.
-
-**Fix.** `dash_mode` gains the host constants `SIZEOF_LONG_DOUBLE`,
-`LDBL_DIG`, `LONG_DOUBLE_HEX_X87` and a `HexFloatStyle` for `hex_float`
-(glibc's half-to-even rounding and leading-digit carry included);
-`ksh93_overflow!` casts through `zlong_from_double`; `ksh93_int_divide_traps`
-raises SIGFPE on x86; `dash_decodes_esc`, `mksh_has_cat_builtin` and
-`mksh_utf8_mode` gate the Linux answers (the `set -o` listing computes
-`utf8-mode` from the same predicate); the drop-in signal arming skips a signal
-that is currently ignored; `fwrite_stdout` and `print -u` write one buffer.
-
-**Follow-up: the arithmetic itself.** ksh93 computes in the host's long
-double, so on x86_64 `print $((1.0/3))` is `0.333333333333333333` (an 80-bit
-quotient) where f64 arithmetic gives `0.333333333333333315` at 18 digits, and
-`INT64_MAX + 1000` is the exact `9.22337203685477681e+18`, not the double's
-`...786e+18`. `src/extensions/ksh_long_double.rs` now evaluates ksh93's
-`+ - * /`, unary minus, comparisons and constants in a software long double of
-`LDBL_MANT_DIG` bits (64 x87, 113 binary128, 53 where long double is double):
-exact `BigUint` arithmetic rounded once, half to even. The value rides in the
-`mnumber` through a per-evaluation arena — `l` is the C union's dead half when
-`type_` is `MN_FLOAT`, so it carries the arena handle while `d` keeps the f64
-rounding for every other reader — and `arithsubst` prints the result as
-macro.c:2188-2193 does: the integer when the host cast round-trips, `%Lg` for
-zero, else `%.*Lg` with `LDBL_DIG`. `pow` and the math functions stay in
-double, as ksh93's own calls do (`2**0.5` prints the double's digits on every
-host). Subnormals flush to zero on parse and on every result, as ksh93's do
-(`$((1e-310))` and `$((2.2e-308 / 4))` print `0`, `$((-1e-320))` prints `-0`).
-Variables still store a double: `float x=$((1.0/3)); print $x` prints through
-`typeset -F`'s precision, where ksh keeps the long double.
-
-Found on the way and fixed too: ksh93's `print` rejects a dash-digit word
-(`print -9 x` is "-9: unknown option", 2) where zsh's option parser passes it
-through as an operand; and ksh93 (every builtin) and bash 3.2's `/bin/sh`
-(`read`, `umask`, `hash`) report a bad option with status 2 where zsh uses 1.
-Still open in the same family: zsh-only option letters the drop-ins accept
-(`read -q`, `cd -q` are usage errors in bash, ksh93, mksh and dash), which
-needs per-shell option sets like `dash_builtin_optstr` for the other shells;
-and `--sh` answering `print` where bash 3.2 has no such command (127).

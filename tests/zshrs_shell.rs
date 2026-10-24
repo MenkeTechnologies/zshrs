@@ -288,9 +288,9 @@ fn test_compgen_A_takes_an_action_name() {
 #[test]
 fn test_complete_o_value_is_not_stored_as_a_command() {
     // `-o default` takes a value; it used to be registered as a command
-    // named `default`.
+    // named `default`. bash 5.3 prints the stored option back.
     let (_, output, _) = run_zshrs("complete -o default -A builtin mycmd; complete");
-    assert_eq!(output.trim(), "complete -b mycmd", "got: {output}");
+    assert_eq!(output.trim(), "complete -o default -b mycmd", "got: {output}");
 }
 
 // ---------------------------------------------------------------------------
@@ -17491,4 +17491,128 @@ fn emulate_may_follow_the_zsh_mode_flag() {
     let (status, _, err) = run_zshrs_with_args(&["-f", "--emulate", "sh", "-c", "echo x"]);
     assert_eq!(status, 1);
     assert!(err.contains("--emulate: must precede other options"), "got: {err}");
+}
+
+/// A `functions -M` function runs as a fresh command context even when the
+/// arithmetic that calls it sits inside double quotes or an assignment:
+/// `$arr` in its body is still an array. powerlevel10k's prompt calls
+/// `$((_p9k_on_expand()))` from prompt expansion, and the leaked quoting
+/// joined `$_p9k_show_on_command` into one word, so its
+/// `for pat idx var in …` loop passed an empty index on
+/// ("_p9k_display_segment:1: bad math expression: empty string").
+#[test]
+fn math_function_body_is_not_inside_the_callers_quotes() {
+    let code = r#"typeset -ga S; S=(a b)
+f() { local -a w; w=($S); local n=0 p; for p in $S; do (( n++ )); done; print -r -- "w=$#w n=$n"; }
+functions -M f
+x=${$((f()))}
+: "$((f()))"
+print -r -- "<${S}> $((f())) <${S[@]}>""#;
+    let (rc, out, err) = run_zshrs_with_args(&["-f", "-c", code]);
+    assert_eq!(rc, 0, "stderr: {err}");
+    assert_eq!(out, "w=2 n=2\nw=2 n=2\nw=2 n=2\n<a b> 1 <a b>\n", "stderr: {err}");
+}
+
+/// c:Src/module.c:524 — a `b:` feature left off by `zmodload -F` is not in
+/// `builtintab`, so the name is the PATH command. `zmodload -F zsh/files
+/// b:zf_ln` used to leave every other zsh/files builtin callable: a bare
+/// `mv -v a b` ran the builtin ("bad option: -v") where zsh runs /bin/mv.
+#[test]
+fn zmodload_feature_subset_leaves_the_other_files_builtins_external() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let code = format!(
+        "cd {} || exit 9
+zmodload -F zsh/files b:zf_ln
+: > a; mv -v a b >/dev/null; print -r -- rc=$? ${{+builtins[mv]}}
+zmodload -F zsh/files +b:mv
+: > c; mv -v c d 2>/dev/null; print -r -- rc=$? ${{+builtins[mv]}}",
+        dir.path().display()
+    );
+    let (rc, out, err) = run_zshrs_with_args(&["-f", "-c", &code]);
+    assert_eq!(rc, 0, "stderr: {err}");
+    assert_eq!(out, "rc=0 0\nrc=1 1\n", "stderr: {err}");
+}
+
+/// c:Src/exec.c:3275-3278 — `command NAME` without POSIX_BUILTINS never
+/// resolves a builtin, an autoload stub (`zmodload -ab`) included, so a
+/// `mv() { command mv -v "$@" }` wrapper reaches /bin/mv.
+#[test]
+fn command_skips_an_autoloaded_module_builtin() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let code = format!(
+        "cd {} || exit 9
+zmodload -ab zsh/files mv
+: > a; command mv -v a b >/dev/null; print -r -- rc=$?
+setopt posixbuiltins
+: > c; command mv -v c d 2>/dev/null; print -r -- rc=$?",
+        dir.path().display()
+    );
+    let (rc, out, err) = run_zshrs_with_args(&["-f", "-c", &code]);
+    assert_eq!(rc, 0, "stderr: {err}");
+    assert_eq!(out, "rc=0\nrc=1\n", "stderr: {err}");
+}
+
+/// c:Src/module.c:521 — `zmodload -F MOD -b:NAME` deletes NAME from
+/// `builtintab` while MOD stays loaded, so a bare NAME is a PATH miss (127),
+/// `builtin NAME` is "no such builtin" (1) and `$builtins` drops it; `+b:`
+/// brings it back. zshrs ran bin_strftime through all three.
+#[test]
+fn disabled_module_builtin_feature_leaves_builtintab() {
+    let code = "zmodload zsh/datetime
+zmodload -F zsh/datetime -b:strftime
+strftime %Y 0 2>/dev/null; print -r -- rc=$? ${+builtins[strftime]}
+builtin strftime %Y 0 2>/dev/null; print -r -- rc=$?
+zmodload -F zsh/datetime +b:strftime
+strftime -s y %Y 86400; print -r -- rc=$? $y";
+    let (rc, out, err) = run_zshrs_with_args(&["-f", "-c", code]);
+    assert_eq!(rc, 0, "stderr: {err}");
+    assert_eq!(out, "rc=127 0\nrc=1\nrc=0 1970\n", "stderr: {err}");
+    assert!(err.contains("no such builtin: strftime"), "stderr: {err}");
+}
+
+/// A module first loaded WITH the feature off (`zmodload -F zsh/datetime
+/// -b:strftime`) never adds the builtin: C's setbuiltins skips a node that
+/// was never BINF_ADDED (c:Src/module.c:518-519), but it is just as absent
+/// from builtintab.
+#[test]
+fn module_loaded_with_builtin_feature_off_never_adds_it() {
+    let (rc, out, err) = run_zshrs_with_args(&[
+        "-f",
+        "-c",
+        "zmodload -F zsh/datetime -b:strftime; strftime %Y 0 2>/dev/null; print -r -- rc=$?; whence -w strftime; print -r -- w=$?",
+    ]);
+    assert_eq!(rc, 0, "stderr: {err}");
+    assert_eq!(out, "rc=127\nstrftime: none\nw=1\n", "stderr: {err}");
+}
+
+/// An autoload builtin (zsh/zutil's `zformat`, Src/init.c:1708) switched off
+/// with `-b:` must not demand-load itself back on the next call: the delete
+/// removed the stub node, so there is nothing for resolvebuiltin
+/// (c:Src/exec.c:2700) to fire. zshrs's ledger kept the stub and the second
+/// call re-enabled the feature.
+#[test]
+fn disabled_autoload_builtin_does_not_reload_itself() {
+    let code = "zmodload zsh/zutil
+zmodload -F zsh/zutil -b:zformat
+zformat -f x %a a:1 2>/dev/null; print -r -- rc=$?
+zformat -f x %a a:1 2>/dev/null; print -r -- rc=$?
+zmodload -F zsh/zutil +b:zformat
+zformat -f x %a a:1; print -r -- rc=$? $x";
+    let (rc, out, err) = run_zshrs_with_args(&["-f", "-c", code]);
+    assert_eq!(rc, 0, "stderr: {err}");
+    assert_eq!(out, "rc=127\nrc=127\nrc=0 1\n", "stderr: {err}");
+}
+
+/// c:Src/module.c:1169-1190 setparamdefs — a `p:` feature turned off on a
+/// loaded zsh/datetime removes that special only; the sibling stays bound.
+#[test]
+fn disabled_datetime_param_feature_unsets_only_that_special() {
+    let code = "zmodload zsh/datetime
+zmodload -F zsh/datetime -p:EPOCHSECONDS -p:epochtime
+print -r -- ${+EPOCHSECONDS} ${+epochtime} ${+EPOCHREALTIME} ${EPOCHSECONDS:-unset}
+zmodload -F zsh/datetime +p:EPOCHSECONDS +p:epochtime
+print -r -- ${+EPOCHSECONDS} ${#epochtime}";
+    let (rc, out, err) = run_zshrs_with_args(&["-f", "-c", code]);
+    assert_eq!(rc, 0, "stderr: {err}");
+    assert_eq!(out, "0 0 1 unset\n1 2\n", "stderr: {err}");
 }

@@ -2745,134 +2745,231 @@ impl ShellExecutor {
         out
     }
 
-    /// Define completion spec for a command
+    /// bash `complete` (builtins/complete.def `complete_builtin`): add,
+    /// remove and print programmable-completion specs.
     pub(crate) fn builtin_complete(&mut self, args: &[String]) -> i32 {
-        // `complete -p [NAME...]`: print the specs (all, or only the named
-        // commands; a name with no spec is an error, status 1).
-        let print_only: Option<&[String]> = (args.first().map(String::as_str) == Some("-p")).then(|| &args[1..]);
-        if args.is_empty() || print_only.is_some() {
-            // List all completion specs, sorted by command name so
-            // 'complete' (no args) outputs deterministically.
-            let wanted = print_only.unwrap_or(&[]);
-            let mut rc = 0;
-            for w in wanted {
-                if !self.completions.contains_key(w) {
-                    eprintln!("zshrs:complete:1: {w}: no completion specification");
-                    rc = 1;
+        use crate::bash_complete::{CompSpec, COMPACTS, COMPOPTS, DEFAULTCMD, EMPTYCMD, INITIALWORD};
+        const USAGE: &str = "complete: usage: complete [-abcdefgjksuv] [-pr] [-DEI] [-o option] [-A action] [-G globpat] [-W wordlist] [-F function] [-C command] [-X filterpat] [-P prefix] [-S suffix] [name ...]";
+        let err = |msg: &str| eprintln!("zshrs:complete:1: {msg}");
+        // lib/sh/shquote.c `sh_single_quote`, whose lone `'` is `\'`.
+        let quote = |s: &str| -> String {
+            if s == "'" {
+                "\\'".to_string()
+            } else {
+                crate::dash_mode::bash_single_quote(s)
+            }
+        };
+        // lib/sh/shquote.c:376 `sh_contains_shell_metas`.
+        let metas = |s: &str| -> bool {
+            let b = s.as_bytes();
+            b.iter().enumerate().any(|(i, &c)| match c {
+                b' ' | b'\t' | b'\n' | b'\'' | b'"' | b'\\' | b'|' | b'&' | b';' | b'(' | b')' | b'<'
+                | b'>' | b'!' | b'{' | b'}' | b'*' | b'[' | b'?' | b']' | b'^' | b'$' | b'`' => true,
+                b'~' => i == 0 || b[i - 1] == b'=' || b[i - 1] == b':',
+                b'#' => i == 0,
+                _ => false,
+            })
+        };
+        // complete.def `print_one_completion`.
+        let print_one = |cmd: &str, cs: &CompSpec| {
+            let mut out = String::from("complete ");
+            for o in COMPOPTS.iter().filter(|o| cs.options.iter().any(|x| x == *o)) {
+                out.push_str(&format!("-o {o} ")); // print_compoptions
+            }
+            // print_compactions: the letter actions first, then `-A name`.
+            for (_, letter) in COMPACTS.iter().filter(|(n, l)| *l != 0 && cs.actions.iter().any(|x| x == n)) {
+                out.push_str(&format!("-{} ", *letter as char));
+            }
+            for (name, _) in COMPACTS.iter().filter(|(n, l)| *l == 0 && cs.actions.iter().any(|x| x == n)) {
+                out.push_str(&format!("-A {name} "));
+            }
+            for (arg, flag) in [
+                (&cs.globpat, "-G"),
+                (&cs.wordlist, "-W"),
+                (&cs.prefix, "-P"),
+                (&cs.suffix, "-S"),
+                (&cs.filterpat, "-X"),
+                (&cs.command, "-C"),
+            ] {
+                if let Some(a) = arg {
+                    out.push_str(&format!("{flag} {} ", quote(a))); // print_arg(…, 1)
                 }
             }
-            let mut cmds: Vec<&String> = self.completions.keys().filter(|k| wanted.is_empty() || wanted.contains(*k)).collect();
-            cmds.sort();
-            for cmd in cmds {
-                let spec = self.completions.get(cmd).unwrap();
-                let mut parts = vec!["complete".to_string()];
-                for action in &spec.actions {
-                    parts.push(format!("-{}", action));
-                }
-                if let Some(ref w) = spec.wordlist {
-                    parts.push("-W".to_string());
-                    parts.push(format!("'{}'", w));
-                }
-                if let Some(ref f) = spec.function {
-                    parts.push("-F".to_string());
-                    parts.push(f.clone());
-                }
-                if let Some(ref c) = spec.command {
-                    parts.push("-C".to_string());
-                    parts.push(c.clone());
-                }
-                parts.push(cmd.clone());
-                println!("{}", parts.join(" "));
+            if let Some(f) = &cs.function {
+                let f = if metas(f) { quote(f) } else { f.clone() };
+                out.push_str(&format!("-F {f} "));
             }
-            return rc;
+            // print_cmd_name
+            out.push_str(&match cmd {
+                DEFAULTCMD => "-D".to_string(),
+                EMPTYCMD => "-E".to_string(),
+                INITIALWORD => "-I".to_string(),
+                "" => "''".to_string(),
+                c if metas(c) => quote(c),
+                c => c.to_string(),
+            });
+            println!("{out}");
+        };
+        // complete.def:404-408 — `complete` alone prints every spec.
+        if args.is_empty() {
+            for (k, cs) in self.completions.walk() {
+                print_one(k, cs);
+            }
+            return 0;
         }
 
-        let mut spec = CompSpec::default();
-        let mut commands = Vec::new();
-        let mut i = 0;
-
+        // complete.def:200 `build_actions`: internal_getopt over
+        // "abcdefgjko:prsuvA:G:W:P:S:X:F:C:V:DEI" (bashgetopt.c:63).
+        let (mut pflag, mut rflag, mut dflag, mut eflag, mut iflag) = (false, false, false, false, false);
+        let mut cs = CompSpec::default();
+        let mut opt_given = false;
+        let mut i = 0usize;
         while i < args.len() {
-            match args[i].as_str() {
-                "-W" => {
-                    i += 1;
-                    if i < args.len() {
-                        spec.wordlist = Some(args[i].clone());
-                    }
+            let w = args[i].as_str();
+            // bashgetopt.c:37 NOTOPT, and `--` ends the options.
+            if !w.starts_with('-') || w == "-" {
+                break;
+            }
+            if w == "--" {
+                i += 1;
+                break;
+            }
+            let mut sp = 1;
+            while sp < w.len() {
+                let c = w.as_bytes()[sp] as char;
+                opt_given = true;
+                // `V` is in the getopt string but complete passes no
+                // VNAMEP, so it is rejected like an unknown letter.
+                if !"abcdefgjkoprsuvAGWPSXFCDEI".contains(c) || !c.is_ascii() {
+                    err(&format!("-{c}: invalid option"));
+                    eprintln!("{USAGE}");
+                    return 2;
                 }
-                "-F" => {
-                    i += 1;
-                    if i < args.len() {
-                        spec.function = Some(args[i].clone());
-                    }
-                }
-                "-C" => {
-                    i += 1;
-                    if i < args.len() {
-                        spec.command = Some(args[i].clone());
-                    }
-                }
-                "-G" => {
-                    i += 1;
-                    if i < args.len() {
-                        spec.globpat = Some(args[i].clone());
-                    }
-                }
-                "-P" => {
-                    i += 1;
-                    if i < args.len() {
-                        spec.prefix = Some(args[i].clone());
-                    }
-                }
-                "-S" => {
-                    i += 1;
-                    if i < args.len() {
-                        spec.suffix = Some(args[i].clone());
-                    }
-                }
-                "-a" => spec.actions.push("a".to_string()),
-                "-b" => spec.actions.push("b".to_string()),
-                "-c" => spec.actions.push("c".to_string()),
-                "-d" => spec.actions.push("d".to_string()),
-                "-e" => spec.actions.push("e".to_string()),
-                "-f" => spec.actions.push("f".to_string()),
-                "-j" => spec.actions.push("j".to_string()),
-                // `-A ACTION`: the long name of a letter action above.
-                "-A" => {
-                    i += 1;
-                    let letter = match args.get(i).map(String::as_str) {
-                        Some("alias") => Some("a"),
-                        Some("builtin") => Some("b"),
-                        Some("command") => Some("c"),
-                        Some("directory") => Some("d"),
-                        Some("export") => Some("e"),
-                        Some("file") => Some("f"),
-                        Some("job") => Some("j"),
-                        _ => None,
-                    };
-                    if let Some(l) = letter {
-                        spec.actions.push(l.to_string());
-                    }
-                }
-                // `-o COMP-OPTION` and `-X FILTERPAT` take a value this spec
-                // does not store. Consume it, or it becomes a command name.
-                "-o" | "-X" => i += 1,
-                "-r" => {
-                    // Remove completion spec
-                    i += 1;
-                    while i < args.len() {
-                        self.completions.remove(&args[i]);
+                let optarg = if "oAGWPSXFC".contains(c) {
+                    // bashgetopt.c:118-140 — `-oARG` or `-o ARG`.
+                    let a = if sp + 1 < w.len() {
+                        w[sp + 1..].to_string()
+                    } else if i + 1 < args.len() {
                         i += 1;
+                        args[i].clone()
+                    } else {
+                        err(&format!("-{c}: option requires an argument"));
+                        eprintln!("{USAGE}");
+                        return 2;
+                    };
+                    sp = w.len();
+                    Some(a)
+                } else {
+                    sp += 1;
+                    None
+                };
+                let mut act = |name: &str| {
+                    if !cs.actions.iter().any(|x| x == name) {
+                        cs.actions.push(name.to_string());
                     }
-                    return 0;
+                };
+                match (c, optarg) {
+                    ('p', _) => pflag = true,
+                    ('r', _) => rflag = true,
+                    ('D', _) => dflag = true,
+                    ('E', _) => eflag = true,
+                    ('I', _) => iflag = true,
+                    ('o', Some(a)) => {
+                        if !COMPOPTS.contains(&a.as_str()) {
+                            err(&format!("{a}: invalid option name"));
+                            return 2;
+                        }
+                        if !cs.options.contains(&a) {
+                            cs.options.push(a);
+                        }
+                    }
+                    ('A', Some(a)) => match COMPACTS.iter().find(|(n, _)| *n == a) {
+                        Some((n, _)) => act(n),
+                        None => {
+                            err(&format!("{a}: invalid action name"));
+                            return 2;
+                        }
+                    },
+                    ('F', Some(a)) => {
+                        // c:291-296 — check_identifier without posix mode
+                        // accepts any word; shell_break_chars still fail.
+                        if a.contains(|ch| "()<>;&| \t\n".contains(ch)) {
+                            err(&format!("`{a}': not a valid identifier"));
+                            return 2;
+                        }
+                        cs.function = Some(a);
+                    }
+                    ('G', a) => cs.globpat = a,
+                    ('W', a) => cs.wordlist = a,
+                    ('P', a) => cs.prefix = a,
+                    ('S', a) => cs.suffix = a,
+                    ('X', a) => cs.filterpat = a,
+                    ('C', a) => cs.command = a,
+                    (l, _) => {
+                        if let Some((n, _)) = COMPACTS.iter().find(|(_, x)| *x == l as u8) {
+                            act(n);
+                        }
+                    }
                 }
-                s if !s.starts_with('-') => commands.push(s.to_string()),
-                _ => {}
             }
             i += 1;
         }
-
-        for cmd in commands {
-            self.completions.insert(cmd, spec.clone());
+        let list = &args[i..];
+        // c:437-444 — -D takes precedence over -E, both over -I.
+        let wl: Option<String> = if dflag {
+            Some(DEFAULTCMD.to_string())
+        } else if eflag {
+            Some(EMPTYCMD.to_string())
+        } else if iflag {
+            Some(INITIALWORD.to_string())
+        } else {
+            None
+        };
+        let names: Vec<String> = match &wl {
+            Some(w) => vec![w.clone()],
+            None => list.to_vec(),
+        };
+        // c:447-460 — -p overrides everything else.
+        if pflag || (list.is_empty() && !opt_given) {
+            if names.is_empty() {
+                for (k, cs) in self.completions.walk() {
+                    print_one(k, cs);
+                }
+                return 0;
+            }
+            let mut ret = 0;
+            for n in &names {
+                match self.completions.get(n) {
+                    Some(cs) => print_one(n, cs),
+                    None => {
+                        err(&format!("{n}: no completion specification"));
+                        ret = 1;
+                    }
+                }
+            }
+            return ret;
+        }
+        // c:463-477 — then -r.
+        if rflag {
+            if names.is_empty() {
+                self.completions.flush();
+                return 0;
+            }
+            let mut ret = 0;
+            for n in &names {
+                if !self.completions.remove(n) {
+                    err(&format!("{n}: no completion specification"));
+                    ret = 1;
+                }
+            }
+            return ret;
+        }
+        if names.is_empty() {
+            eprintln!("{USAGE}"); // c:479-483
+            return 2;
+        }
+        for n in &names {
+            self.completions.insert(n, cs.clone());
         }
         0
     }
@@ -11796,7 +11893,16 @@ pub fn extension_builtin_defs() -> impl Iterator<Item = &'static crate::ported::
 ///  * commands a cdylib registered through `znative load` / `zmodload -R`
 ///    (`extensions/plugin_host.rs`), which dispatch in-process by name.
 pub fn is_extension_builtin(name: &str) -> bool {
-    !is_undefined_contrib_function(name)
+    // c:Src/module.c:521 — a module builtin whose `b:` feature was turned
+    // off (`zmodload -F zsh/datetime -b:strftime`) has left builtintab, so
+    // the default-mode posture of exposing every statically linked module
+    // builtin must not bring it back.
+    let feature_off = crate::ported::module::DISABLED_MODULE_BUILTINS
+        .lock()
+        .map(|s| s.contains(name))
+        .unwrap_or(false);
+    !feature_off
+        && !is_undefined_contrib_function(name)
         && (fusevm::shell_builtins::is_builtin(name)
             || LOCAL_ONLY_BUILTINS.contains(&name)
             || crate::native_cmds::is_registered(name)

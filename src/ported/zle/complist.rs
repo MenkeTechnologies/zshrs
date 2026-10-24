@@ -5885,6 +5885,14 @@ pub fn domenuselect(
                     Some(&mut modell),
                     Some(&mut modelen),
                 );
+                // c:2785-2786 — "if we are completing a quoted word, by this
+                // point we've lost track of this, so put we back where it
+                // should be": `we = savecs;`. Without it the word end stayed
+                // where the nested completion left it (before the typed
+                // character), so the next selection move replaced only
+                // wb..old-we and kept the filter text: `echo "<TAB><TAB>s`
+                // then <Down> gave `echo "src/s` where zsh gives `echo "src/`.
+                crate::ported::zle::compcore::WE.store(savecs, Ordering::SeqCst); // c:2786
 
                 // zshrs bridge — `setmstatus` performs the same whole-line
                 // rewrite `set_zlemetaline` does (c:2228-2232), restoring
