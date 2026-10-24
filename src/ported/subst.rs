@@ -30247,6 +30247,13 @@ fn vars_get(name: &str) -> Option<String> {
 /// callbacks at read time without a backing Param, so the is-set
 /// check has to consult the same callback path.
 fn vars_contains(name: &str) -> bool {
+    // !!! DROP-IN GATE !!! `$!` before any background job (bash/dash/ksh/mksh).
+    if name == "!"
+        && crate::dash_mode::posix_faithful()
+        && crate::ported::modules::clone::lastpid.load(Ordering::Relaxed) == 0
+    {
+        return false;
+    }
     // c:Src/subst.c:3600 (`${+name}` chkset path) — C zsh's
     // `vunset = (!v || ...)` check at c:3193 treats PM_UNSET as
     // "not set" so `${+X}` returns 0. zshrs previously returned

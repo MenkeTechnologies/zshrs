@@ -6736,6 +6736,14 @@ pub fn getsparam(name: &str) -> Option<String> {
     if let Some(v) = lookup_special_var(name) {
         return Some(v);
     }
+    // !!! DROP-IN GATE !!! unset `$!` before any background job — see the
+    // `"!"` arm of lookup_special_var; the `!` node's stored 0 must not answer.
+    if name == "!"
+        && crate::dash_mode::posix_faithful()
+        && crate::ported::modules::clone::lastpid.load(Ordering::Relaxed) == 0
+    {
+        return None;
+    }
     // 1b. c:Src/params.c:570-575 — getparamnode resolves PM_NAMEREF
     //     chains before the value read (`pm = resolve_nameref(pm)`).
     //     Redirect the lookup to the resolved target.
@@ -18537,10 +18545,13 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
             // canonical store like the C getter does.
             let pid =
                 crate::ported::modules::clone::lastpid.load(std::sync::atomic::Ordering::Relaxed);
-            // bash, dash, ksh93 and mksh: `$!` is unset until a background job has been
-            // started (expands to ""); zsh's `lastpid` reads 0 there.
+            // !!! DROP-IN GATE !!! bash, dash, ksh93 and mksh: `$!` is UNSET until a
+            // background job has been started — `${!-none}` is `none` and `set -u;
+            // echo $!` is "parameter not set" in all of them; zsh's `lastpid` reads
+            // 0 there. (getsparam and subst's vars_contains apply the same test
+            // so the `!` node's stored 0 cannot answer either.)
             if pid == 0 && crate::dash_mode::posix_faithful() {
-                return Some(String::new());
+                return None;
             }
             Some(pid.to_string())
         }
