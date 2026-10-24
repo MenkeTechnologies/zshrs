@@ -22221,6 +22221,15 @@ impl fusevm::ShellHost for ZshrsHost {
             .and_then(|mut t| t.remove("EXIT"));
         let signal_exit = crate::ported::builtin::EXIT_PENDING_SIGNAL.swap(false, std::sync::atomic::Ordering::Relaxed);
         if let Some(body) = exit_trap_body {
+            // c:Src/builtin.c:6029 — zexit sets `lastval = exit_val` before
+            // dotrap(SIGEXIT), so the trap body's `$?` is the `exit N` status
+            // (`( trap 'echo $?' EXIT; exit 5 )` → 5).
+            if crate::ported::builtin::EXIT_PENDING.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+                crate::ported::builtin::LASTVAL.store(
+                    crate::ported::builtin::EXIT_VAL.load(std::sync::atomic::Ordering::Relaxed),
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+            }
             // Execute the trap body. Errors during trap execution
             // don't bubble — zsh ignores trap-body errors.
             with_executor(|exec| {

@@ -7755,6 +7755,11 @@ impl ShellExecutor {
                         if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
                             t.remove("EXIT");
                         }
+                        // c:Src/builtin.c:6029 — the child's zexit sets
+                        // `lastval = exit_val` before dotrap(SIGEXIT): the trap's
+                        // `$?` is the `exit N` status (`$(trap 'echo $?' EXIT;
+                        // exit 5)` → 5), else the body's last status.
+                        crate::ported::builtin::LASTVAL.store(inner_status, Relaxed);
                         let _ = crate::ported::exec::execute_script(&body);
                     }
                 }
@@ -7776,6 +7781,7 @@ impl ShellExecutor {
                         .unwrap_or(0);
                     let inherited = parent.get(exit_idx).copied().unwrap_or(0);
                     if live & func != 0 && inherited & func == 0 {
+                        crate::ported::builtin::LASTVAL.store(inner_status, Relaxed); // c:Src/builtin.c:6029
                         crate::ported::signals::intrap.fetch_add(1, Ordering::SeqCst); // c:1123
                         let _ = crate::ported::exec::execute_script("TRAPEXIT");
                         crate::ported::signals::intrap.fetch_sub(1, Ordering::SeqCst); // c:1236
