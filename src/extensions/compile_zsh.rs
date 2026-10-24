@@ -13287,11 +13287,37 @@ impl ZshCompiler {
         }
     }
 
+    /// `[[ s =~ re ]]` with `s` and `re` on the stack. zsh's (and every
+    /// non-bash way's) Op::RegexMatch; under --bash / --sh the bash form,
+    /// whose rejected regex is a non-fatal status 2.
+    ///
+    /// !!! BASH-MODE GATE (no C counterpart) !!!
+    fn emit_regex_match(&mut self) -> usize {
+        if crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode() {
+            self.builder
+                .emit(Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_COND_REGEX_SOFT2, 2), 0)
+        } else {
+            self.builder.emit(Op::RegexMatch, 0)
+        }
+    }
+
+    /// See BUILTIN_COND_SOFT2_CLEAR; emits nothing outside --bash / --sh.
+    fn emit_cond_soft2_clear(&mut self) {
+        if crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode() {
+            self.builder
+                .emit(Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_COND_SOFT2_CLEAR, 0), 0);
+            self.builder.emit(Op::Pop, 0);
+        }
+    }
+
     fn compile_cond_expr(&mut self, c: &crate::parse::ZshCond) {
         match c {
             ZshCond::Not(inner) => {
                 self.compile_cond_expr(inner);
                 self.builder.emit(Op::LogNot, 0);
+                // bash: `!` turns a failed regex's 2 into 0 (see
+                // BUILTIN_COND_REGEX_SOFT2).
+                self.emit_cond_soft2_clear();
             }
             ZshCond::And(a, b) => {
                 self.compile_cond_expr(a);
@@ -13304,6 +13330,8 @@ impl ZshCompiler {
                 self.compile_cond_expr(a);
                 let skip = self.builder.emit(Op::JumpIfTrueKeep(0), 0);
                 self.builder.emit(Op::Pop, 0);
+                // bash: the right side's status replaces a left-side 2.
+                self.emit_cond_soft2_clear();
                 self.compile_cond_expr(b);
                 self.builder.patch_jump(skip, self.builder.current_pos());
             }
@@ -13718,7 +13746,20 @@ impl ZshCompiler {
                 // literal regex) or already DQ-wrapped.
                 // c:Src/cond.c:525-535 `cond_str` — see compile_regex_operand.
                 self.compile_regex_operand(regex);
-                self.builder.emit(Op::RegexMatch, 0);
+                self.emit_regex_match();
+            }
+            // !!! BASH-MODE GATE (no C counterpart) !!! bash `[[ -R name ]]`
+            // (`name` is a set name reference). zsh has no `-R`, so the parser
+            // hands it over as a module condition (c:Src/parse.c:2632-2634
+            // par_cond_double: a `-X` outside "abcdefgknoprstuvwxzhLONGS" is COND_MOD).
+            ZshCond::ModCond(op, args)
+                if args.len() == 1
+                    && crate::dash_mode::bash_mode()
+                    && crate::lex::untokenize(op) == "-R" =>
+            {
+                self.compile_singsub_word_noglob(&args[0]);
+                self.builder
+                    .emit(Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_COND_NAMEREF, 1), 0);
             }
             ZshCond::ModCond(op, args) => {
                 // `[[ -prefix PAT ]]` etc. — completion/module condition
@@ -14084,14 +14125,15 @@ impl ZshCompiler {
     fn compile_regex_operand(&mut self, w: &str) {
         // !!! BASH-MODE (no C counterpart) !!! bash(1) `[[ ]]`: "Any part of the
         // pattern may be quoted to force the quoted portion to be matched as a
-        // string" — a quoted `.`/`+`/`(` is literal. Backslash-escape the regex
+        // string" — a quoted `.`/`+`/`(` is literal, in /bin/sh (bash 3.2) too.
+        // Backslash-escape the regex
         // metacharacters inside literal quoted spans (an expanded `"$v"` inside
         // a span is not reached: its value only exists at run time).
         // ksh93 keeps the backslash too (`[[ abc =~ a\.c ]]` is false) but a
         // quoted span stays a regex (`[[ abc =~ "a.c" ]]` is true).
         let escaped;
         let ksh93 = crate::dash_mode::ksh93_mode();
-        let w = if crate::dash_mode::bash_mode() || ksh93 {
+        let w = if crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode() || ksh93 {
             let mut out = String::with_capacity(w.len());
             let mut open: Option<char> = None;
             let mut it = w.chars().peekable();
@@ -14153,7 +14195,7 @@ impl ZshCompiler {
             // `=~` arrives via ZshCond::Binary not ZshCond::Regex (the
             // port uses Binary for everything by default). Route to
             // RegexMatch here.
-            "=~" => self.builder.emit(Op::RegexMatch, 0),
+            "=~" => self.emit_regex_match(),
             // `-regex-match` is the named-condition form provided by
             // the zsh/regex module (Src/Modules/regex.c:213). Direct
             // port of `zcond_regex_match(char **a, int id)` (regex.c:60-210): same

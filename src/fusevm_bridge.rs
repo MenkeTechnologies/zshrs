@@ -1075,6 +1075,47 @@ fn forked_child_exit(status: i32) -> ! {
     unsafe { libc::_exit(status) }
 }
 
+/// `[[ s =~ regex ]]` — the host's `regex_match`, shared with
+/// BUILTIN_COND_REGEX_SOFT2.
+fn cond_regex_match(s: &str, regex: &str) -> bool {
+    // c:Src/Modules/regex.c:54 `zcond_regex_match` — POSIX ERE
+    // matching + populate `$MATCH` / `$MBEGIN` / `$MEND` /
+    // `$match[]` / `$mbegin[]` / `$mend[]` (or `$BASH_REMATCH`
+    // under BASHREMATCH). Direct delegation to the canonical
+    // port at src/ported/modules/regex.rs:58.
+    //
+    // The bridge passthru path delivers TOKEN-form bytes here
+    // (Inbrack \u{e191}, Outbrack \u{e192}, Star \u{e187}, Quest
+    // \u{e186}, etc.) since the lexer tokenizes regex meta chars
+    // inside `[[ ]]`. The host regex engine expects ASCII, so
+    // untokenize the pattern (and subject, for safety) once at
+    // this boundary. zsh C reaches its POSIX-ERE engine through
+    // the same untokenize path inside zcond_regex_match.
+    let s_clean = crate::lex::untokenize(s);
+    let regex_clean = crate::lex::untokenize(regex);
+    // c:Src/cond.c:113-119 — WHICH engine `=~` uses is an option:
+    //
+    //   char *modname = isset(REMATCHPCRE) ? "zsh/pcre" : "zsh/regex";
+    //
+    // and the two speak different languages (POSIX ERE vs PCRE), so the
+    // option decides whether `\d` is a digit class or a literal `d`, and
+    // whether `(?<name>…)` compiles at all. This dispatch was missing:
+    // `=~` always used the regex module, so `setopt rematchpcre` silently
+    // did nothing.
+    if crate::ported::zsh_h::isset(crate::ported::zsh_h::REMATCHPCRE) {
+        // c:115 — "zsh/pcre" → the `-pcre-match` cond.
+        crate::ported::modules::pcre::cond_pcre_match(
+            &[s_clean, regex_clean],
+            crate::ported::modules::pcre::CPCRE_PLAIN,
+        ) != 0
+    } else {
+        // c:115 — "zsh/regex" → the `-regex-match` cond.
+        crate::ported::modules::regex::zcond_regex_match(
+            &[s_clean.as_str(), regex_clean.as_str()],
+            crate::ported::modules::regex::ZREGEX_EXTENDED,
+        ) != 0
+    }
+}
 
 /// Asked by paramsubst's `${name?msg}` arms before they take
 /// c:Src/subst.c:3375's `zexit(1)`: true when the expansion belongs to the
@@ -14090,6 +14131,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // soft failure. COND_BAD_PATTERN carries the 2 across the
     // Bool-shaped stack contract (so `!=`'s LogNot can't lose it).
     thread_local! {
+        /// BUILTIN_COND_REGEX_SOFT2's status 2, which (unlike
+        /// COND_BAD_PATTERN's) leaves errflag alone.
+        static COND_SOFT_TWO: std::cell::Cell<bool> =
+            const { std::cell::Cell::new(false) };
         static COND_BAD_PATTERN: std::cell::Cell<bool> =
             const { std::cell::Cell::new(false) };
     }
@@ -14257,6 +14302,55 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         COND_BAD_PATTERN.with(|c| c.set(true));
         Value::Bool(false)
     });
+    // !!! BASH-MODE (no C counterpart) !!! bash's `[[ s =~ re ]]` with a regex
+    // regcomp(3) rejects is status 2 and NOT an error that stops the script
+    // (execute_cmd.c execute_cond_node: sh_regmatch returns 2, which the `[[`
+    // returns as is; `!` maps it to 0 and `||` evaluates its right side). zsh's
+    // bad-pattern 2 aborts, hence a carrier of its own: COND_SOFT_TWO.
+    vm.register_builtin(BUILTIN_COND_REGEX_SOFT2, |vm, _argc| {
+        let regex = vm.pop().to_str();
+        let s = vm.pop().to_str();
+        COND_SOFT_TWO.with(|c| c.set(false));
+        let regex_clean = crate::lex::untokenize(&regex);
+        if let Some(msg) =
+            crate::extensions::c_locale::regcomp_error(&regex_clean, crate::dash_mode::nocasematch())
+        {
+            crate::ported::utils::zwarn(&format!(
+                "[[: invalid regular expression `{}': {}",
+                regex_clean, msg
+            ));
+            COND_SOFT_TWO.with(|c| c.set(true));
+            return Value::Bool(false);
+        }
+        Value::Bool(cond_regex_match(&s, &regex))
+    });
+    // The operand whose 2 COND_SOFT_TWO carries is no longer the `[[`'s
+    // result: a `!` negated it, or `||` went on to its right side.
+    vm.register_builtin(BUILTIN_COND_SOFT2_CLEAR, |_vm, _argc| {
+        COND_SOFT_TWO.with(|c| c.set(false));
+        Value::Status(0)
+    });
+    // !!! BASH-MODE (no C counterpart) !!! bash test.c `case 'R'`:
+    // `v = find_variable_noref (arg); v && invisible_p (v) == 0 &&
+    // var_isset (v) && nameref_p (v)` — the reference itself, not the
+    // variable it names, so `declare -n r=nope` is still true and a
+    // `declare -n r` with no value is false.
+    vm.register_builtin(BUILTIN_COND_NAMEREF, |vm, _argc| {
+        let name = vm.pop().to_str();
+        let is_set_ref = crate::ported::params::paramtab()
+            .read()
+            .ok()
+            .and_then(|t| {
+                t.get(&name).map(|p| {
+                    let f = p.node.flags as u32;
+                    (f & crate::ported::zsh_h::PM_NAMEREF) != 0
+                        && (f & crate::ported::zsh_h::PM_UNSET) == 0
+                        && p.u_str.as_deref().is_some_and(|s| !s.is_empty())
+                })
+            })
+            .unwrap_or(false);
+        Value::Bool(is_set_ref)
+    });
     vm.register_builtin(BUILTIN_COND_STATUS_FROM_BOOL, |vm, _argc| {
         // `${~pat}` / `${(P)~pat}` inside a `[[ … ]]` operand flips
         // GLOB_SUBST on via the tilde carrier so the pattern match sees
@@ -14294,7 +14388,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             with_executor(|exec| exec.set_last_status(2));
             return Value::Int(2); // c:Src/cond.c:316 `return 2;`
         }
-        let status: i32 = if ok { 0 } else { 1 };
+        let soft_two = COND_SOFT_TWO.with(|c| c.replace(false));
+        let status: i32 = if ok { 0 } else if soft_two { 2 } else { 1 };
         // c:Src/exec.c:5216 — `lastval = evalcond(...)`: the conditional's
         // result IS the command's lastval, and c:Src/cond.c's evalcond
         // never inspects errflag while evaluating. So when a `[[ … ]]`
@@ -19913,6 +20008,17 @@ pub const BUILTIN_COND_STRMATCH: u16 = 624;
 /// false→1, but 2 when COND_BAD_PATTERN was armed during this cond
 /// (covers `!=` where LogNot flips the Bool before status time).
 pub const BUILTIN_COND_STATUS_FROM_BOOL: u16 = 625;
+/// bash `[[ s =~ re ]]` (compiled under --bash / --sh only). Stack: [s, re]
+/// → Bool. A regex regcomp(3) rejects warns and pushes Bool(false) with
+/// COND_SOFT_TWO armed, so BUILTIN_COND_STATUS_FROM_BOOL reports 2 without
+/// raising errflag.
+pub const BUILTIN_COND_REGEX_SOFT2: u16 = 830;
+/// Disarms COND_SOFT_TWO: emitted (bash only) after a `[[ ! … ]]` negation
+/// and before the right side of `||`. Pushes Status(0).
+pub const BUILTIN_COND_SOFT2_CLEAR: u16 = 831;
+/// bash `[[ -R name ]]` (compiled under --bash only). Pops \[name\] → Bool:
+/// `name` is a name reference that has a value.
+pub const BUILTIN_COND_NAMEREF: u16 = 832;
 /// `[[ ]]` unknown condition. Pops \[op_name\], emits `zerr("unknown
 /// condition: %s")` and sets ERRFLAG_ERROR so the next BUILTIN_ERREXIT_CHECK
 /// (trigger 4) aborts the input — matching zsh's COND_MODI "unknown condition"
@@ -22646,43 +22752,7 @@ impl fusevm::ShellHost for ZshrsHost {
     }
 
     fn regex_match(&mut self, s: &str, regex: &str) -> bool {
-        // c:Src/Modules/regex.c:54 `zcond_regex_match` — POSIX ERE
-        // matching + populate `$MATCH` / `$MBEGIN` / `$MEND` /
-        // `$match[]` / `$mbegin[]` / `$mend[]` (or `$BASH_REMATCH`
-        // under BASHREMATCH). Direct delegation to the canonical
-        // port at src/ported/modules/regex.rs:58.
-        //
-        // The bridge passthru path delivers TOKEN-form bytes here
-        // (Inbrack \u{e191}, Outbrack \u{e192}, Star \u{e187}, Quest
-        // \u{e186}, etc.) since the lexer tokenizes regex meta chars
-        // inside `[[ ]]`. The host regex engine expects ASCII, so
-        // untokenize the pattern (and subject, for safety) once at
-        // this boundary. zsh C reaches its POSIX-ERE engine through
-        // the same untokenize path inside zcond_regex_match.
-        let s_clean = crate::lex::untokenize(s);
-        let regex_clean = crate::lex::untokenize(regex);
-        // c:Src/cond.c:113-119 — WHICH engine `=~` uses is an option:
-        //
-        //   char *modname = isset(REMATCHPCRE) ? "zsh/pcre" : "zsh/regex";
-        //
-        // and the two speak different languages (POSIX ERE vs PCRE), so the
-        // option decides whether `\d` is a digit class or a literal `d`, and
-        // whether `(?<name>…)` compiles at all. This dispatch was missing:
-        // `=~` always used the regex module, so `setopt rematchpcre` silently
-        // did nothing.
-        if crate::ported::zsh_h::isset(crate::ported::zsh_h::REMATCHPCRE) {
-            // c:115 — "zsh/pcre" → the `-pcre-match` cond.
-            crate::ported::modules::pcre::cond_pcre_match(
-                &[s_clean, regex_clean],
-                crate::ported::modules::pcre::CPCRE_PLAIN,
-            ) != 0
-        } else {
-            // c:115 — "zsh/regex" → the `-regex-match` cond.
-            crate::ported::modules::regex::zcond_regex_match(
-                &[s_clean.as_str(), regex_clean.as_str()],
-                crate::ported::modules::regex::ZREGEX_EXTENDED,
-            ) != 0
-        }
+        cond_regex_match(s, regex)
     }
 
     fn with_redirects_end(&mut self) {
