@@ -3523,33 +3523,113 @@ pub fn ksh93_char_step_range(body: &str) -> bool {
         && parts[2].parse::<i64>().is_ok()
 }
 
-/// mksh's quoting for `typeset -p` values: bare when every character is
-/// alphanumeric, non-ASCII or one of `_-./:,+@%^!{}~`; otherwise POSIX
-/// single quotes (`'\''` for an embedded quote); control characters switch to
-/// the `$'..'` form. Measured against mksh R59 over the ASCII punctuation set.
-pub fn mksh_quote(v: &str) -> String {
-    if v.chars().any(|c| c.is_ascii_control()) {
-        let mut out = String::from("$'");
-        for c in v.chars() {
-            match c {
-                '\n' => out.push_str("\\n"),
-                '\t' => out.push_str("\\t"),
-                '\r' => out.push_str("\\r"),
-                '\'' => out.push_str("\\'"),
-                '\\' => out.push_str("\\\\"),
-                c if c.is_ascii_control() => out.push_str(&format!("\\{:03o}", c as u32)),
-                c => out.push(c),
-            }
+/// mksh R59c `print_value_quoted()` (misc.c), the quoting behind `typeset -p`
+/// values and `${v@Q}`:
+///
+/// * empty → `''`;
+/// * no byte below 0x20 and none of `C_QUOTE` (`<>[]=#$?*&();|\'"`, backquote, tab,
+///   newline) or space → bare (DEL and bytes ≥ 0x80 count as plain);
+/// * no byte below 0x20 → single quotes, each `'` written `\'` OUTSIDE them
+///   (`it's` → `'it'\''s'`, `'q` → `\''q'`, `''` → `\'\'`);
+/// * otherwise `$'…'`: a valid 2- or 3-byte UTF-8 sequence (lead ≥ 0xC2, BMP
+///   up to U+FFFD) as `\uXXXX`, `\a \b \f \n \r \t \v`, ESC as `\E`, `\\`,
+///   and `'` plus every other non-printable byte as `\ooo`.
+///
+/// ```text
+/// mksh -c "x=\$'a\nb\tc\001d'; print -r -- \"\${x@Q}\""   → $'a\nb\tc\001d'
+/// mksh -c "x=\$'\xc3\xa9\n'; print -r -- \"\${x@Q}\""     → $'\u00E9\n'
+/// ```
+///
+/// No build or locale flag enters this path in R59c (the UTF-8 decode is
+/// unconditional), so the Homebrew R59c output is the reference.
+fn mksh_print_value_quoted(v: &str) -> String {
+    let s = v.as_bytes();
+    if s.is_empty() {
+        return "''".to_string();
+    }
+    // misc.c `C_QUOTE | C_SPC`.
+    let needs_quote = |c: u8| b"<>[]=`#\n\"'&();|*\\?$\t ".contains(&c);
+    let mut out = String::with_capacity(s.len() + 2);
+    if s.iter().all(|&c| c >= 32) {
+        if !s.iter().any(|&c| needs_quote(c)) {
+            return v.to_string();
         }
-        out.push('\'');
+        // The single-quote state machine.
+        let mut inquote = false;
+        for ch in v.chars() {
+            if ch == '\'' {
+                if inquote {
+                    out.push('\'');
+                    inquote = false;
+                }
+                out.push('\\');
+            } else if !inquote {
+                out.push('\'');
+                inquote = true;
+            }
+            out.push(ch);
+        }
+        if inquote {
+            out.push('\'');
+        }
         return out;
     }
-    let bare = |c: char| !c.is_ascii() || c.is_ascii_alphanumeric() || "_-./:,+@%^!{}~".contains(c);
-    if !v.is_empty() && v.chars().all(bare) {
-        v.to_string()
-    } else {
-        format!("'{}'", v.replace('\'', "'\\''"))
+    // expr.c `utf_mbtowc`, restricted to the BMP as mksh R59c is.
+    let utf_mbtowc = |p: &[u8]| -> Option<(u32, usize)> {
+        let lead = u32::from(p[0]);
+        let cont = |i: usize| p.get(i).map(|&b| u32::from(b)).filter(|b| b & 0xC0 == 0x80);
+        if lead < 0xE0 {
+            return Some((((lead & 0x1F) << 6) | (cont(1)? & 0x3F), 2));
+        }
+        let wc = ((lead & 0x0F) << 12) | ((cont(1)? & 0x3F) << 6) | (cont(2)? & 0x3F);
+        (0x0800..=0xFFFD).contains(&wc).then_some((wc, 3))
+    };
+    out.push_str("$'");
+    let mut i = 0;
+    while i < s.len() {
+        let c = s[i];
+        if (0xC2..0xF0).contains(&c) {
+            if let Some((wc, n)) = utf_mbtowc(&s[i..]) {
+                out.push_str(&format!("\\u{wc:04X}"));
+                i += n;
+                continue;
+            }
+        }
+        i += 1;
+        let letter = match c {
+            0x07 => Some('a'),
+            0x08 => Some('b'),
+            0x0C => Some('f'),
+            b'\n' => Some('n'),
+            b'\r' => Some('r'),
+            b'\t' => Some('t'),
+            0x0B => Some('v'),
+            0x1B => Some('E'),
+            b'\\' => Some('\\'),
+            _ => None,
+        };
+        match letter {
+            Some(l) => {
+                out.push('\\');
+                out.push(l);
+            }
+            None if c == b'\'' || !(0x20..0x7F).contains(&c) => out.push_str(&format!("\\{c:03o}")),
+            None => out.push(char::from(c)),
+        }
     }
+    out.push('\'');
+    out
+}
+
+/// mksh's quoting for `typeset -p` values; see [`mksh_print_value_quoted`].
+pub fn mksh_quote(v: &str) -> String {
+    mksh_print_value_quoted(v)
+}
+
+/// mksh `${v@Q}` — eval.c hands the value to the same `print_value_quoted`
+/// that `typeset -p` uses; see [`mksh_print_value_quoted`].
+pub fn mksh_at_q(v: &str) -> String {
+    mksh_print_value_quoted(v)
 }
 
 /// Lines of mksh's `typeset -p NAME` for a SET scalar or indexed array.
@@ -3605,16 +3685,6 @@ pub fn pdksh_typeset_p(
     vec![format!("{head} {name}={shown}")]
 }
 
-/// mksh `${v@Q}`: the `typeset -p` quoting, except a value holding control
-/// characters is wrapped in `$'..'` with its bytes left RAW (mksh R59 does not
-/// escape them there: a tab stays a tab, a newline stays a newline).
-pub fn mksh_at_q(v: &str) -> String {
-    if v.chars().any(|c| c.is_ascii_control()) {
-        format!("$'{}'", v.replace('\'', "\\'"))
-    } else {
-        mksh_quote(v)
-    }
-}
 
 /// `$KSH_VERSION` of the emulated Korn shell: ksh93u+m 1.0.10 for `--ksh`,
 /// mksh R59 for the pdksh line (the reference binaries this mode is measured
@@ -5041,5 +5111,27 @@ mod dropin_option_tests {
         assert_eq!(keep_option_letters(zsh_read, "adnprstuAN"), b"ad:nNprst:%u:A".to_vec());
         assert_eq!(keep_option_letters(b"qsPL", "eLP"), b"PL".to_vec());
         assert_eq!(keep_option_letters(b"qsPL", ""), Vec::<u8>::new());
+    }
+}
+
+#[cfg(test)]
+mod mksh_quote_tests {
+    use super::mksh_print_value_quoted as q;
+
+    /// Outputs measured with Homebrew mksh R59c, `print -r -- "${x@Q}"`.
+    #[test]
+    fn print_value_quoted_matches_mksh_r59c() {
+        assert_eq!(q(""), "''");
+        assert_eq!(q("~/x{y}"), "~/x{y}");
+        assert_eq!(q("\x7f"), "\x7f");
+        assert_eq!(q("a b"), "'a b'");
+        assert_eq!(q("a=b"), "'a=b'");
+        assert_eq!(q("it's"), r"'it'\''s'");
+        assert_eq!(q("'q"), r"\''q'");
+        assert_eq!(q("a''b"), r"'a'\'\''b'");
+        assert_eq!(q("a\nb\tc\x01d"), r"$'a\nb\tc\001d'");
+        assert_eq!(q("\x1b[1m\r\x0b\x0c\x07\x08"), r"$'\E[1m\r\v\f\a\b'");
+        assert_eq!(q("q\x01'\\"), r"$'q\001\047\\'");
+        assert_eq!(q("q\"\n"), r#"$'q"\n'"#);
     }
 }
