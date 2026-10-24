@@ -2994,11 +2994,25 @@ impl ZshCompiler {
             // builtintab lookup there. An expanded command word (`$cmd`) has
             // no compile-time literal; the empty name makes the bridge take
             // the save arm, which is the pre-existing behavior.
-            let cmd_name = crate::lex::untokenize(&simple.words[0]);
+            //
+            // c:Src/exec.c:3104-3187 — the precommand walk resolves `builtin
+            // NAME` to NAME's builtin before that decision; the bridge gets
+            // the resolved word plus a `builtin` marker.
+            let mut head = 0;
+            while head + 1 < simple.words.len()
+                && crate::lex::untokenize(&simple.words[head]) == "builtin"
+            {
+                head += 1;
+            }
+            let cmd_name = crate::lex::untokenize(&simple.words[head]);
             let name_const = self.builder.add_constant(Value::str(cmd_name));
             self.builder.emit(Op::LoadConst(name_const), 0);
+            if head > 0 {
+                let marker = self.builder.add_constant(Value::str("builtin"));
+                self.builder.emit(Op::LoadConst(marker), 0);
+            }
             self.builder.emit(
-                Op::CallBuiltin(crate::vm_helper::BUILTIN_BEGIN_INLINE_ENV, 1),
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_BEGIN_INLINE_ENV, 1 + u8::from(head > 0)),
                 0,
             );
             self.builder.emit(Op::Pop, 0);
@@ -3075,6 +3089,18 @@ impl ZshCompiler {
                 // fires INSIDE the redir scope. Emit the deferred
                 // assigns here so a readonly-reassignment zerr writes
                 // through the redirected stderr.
+                // c:Src/exec.c:3786-3796 — a failed redirection runs execerr
+                // (c:252-259), whose `goto done` skips addvars (c:3963) and the
+                // status line below; BUILTIN_ASSIGN_REDIR_GATE stores the status.
+                let redir_failed_skip = if !simple.assigns.is_empty() {
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_ASSIGN_REDIR_GATE, 0),
+                        0,
+                    );
+                    Some(self.builder.emit(Op::JumpIfTrue(0), 0))
+                } else {
+                    None
+                };
                 if defer_assigns_to_redir_scope {
                     for assign in &simple.assigns {
                         self.last_assign_had_cmd_subst = false;
@@ -3108,6 +3134,9 @@ impl ZshCompiler {
                         0,
                     );
                     self.builder.emit(Op::SetStatus, 0);
+                }
+                if let Some(j) = redir_failed_skip {
+                    self.builder.patch_jump(j, self.builder.current_pos());
                 }
                 self.builder.emit(Op::WithRedirectsEnd, 0);
                 self.builder.emit(
@@ -3489,6 +3518,19 @@ impl ZshCompiler {
             self.builder
                 .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_LINE, 1), 0);
             self.builder.emit(Op::Pop, 0);
+            // c:Src/exec.c:3785-3796 — a failed redirection skips the builtin:
+            // no loop exit, status 1 (fatal under POSIX_BUILTINS; dash 2).
+            let redir_failed_skip = if has_redirects {
+                let nc = self.builder.add_constant(Value::str("break"));
+                self.builder.emit(Op::LoadConst(nc), 0);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_LOOPCTL_REDIR_GATE, 1),
+                    0,
+                );
+                Some(self.builder.emit(Op::JumpIfTrue(0), 0))
+            } else {
+                None
+            };
             let levels: usize = simple
                 .words
                 .get(1)
@@ -3527,6 +3569,10 @@ impl ZshCompiler {
             // the Then push leaks past the loop_exit.
             self.emit_cmd_stack_drain();
             if depth > 0 && runtime_count && !too_many_args {
+                // The redirections end with the command, before control leaves it.
+                if has_redirects {
+                    self.builder.emit(Op::WithRedirectsEnd, 0);
+                }
                 self.emit_runtime_loop_level(&simple.words[1], "break", false);
             } else if depth >= levels && !nonpositive_literal && !too_many_args {
                 let idx = depth.saturating_sub(levels);
@@ -3563,6 +3609,9 @@ impl ZshCompiler {
                 // (the target's own still runs at its exit label). Emit
                 // the skipped decrements so the global count stays exact
                 // for a later `break` in a called function.
+                if has_redirects {
+                    self.builder.emit(Op::WithRedirectsEnd, 0);
+                }
                 self.emit_loop_exit(depth - 1 - idx);
                 self.emit_loop_jump_status();
                 let j = self.builder.emit(Op::Jump(0), 0);
@@ -3597,6 +3646,16 @@ impl ZshCompiler {
                     0,
                 );
                 self.builder.emit(Op::SetStatus, 0);
+                if has_redirects {
+                    self.builder.emit(Op::WithRedirectsEnd, 0);
+                }
+            }
+            if let Some(j) = redir_failed_skip {
+                let over = self.builder.emit(Op::Jump(0), 0);
+                self.builder.patch_jump(j, self.builder.current_pos());
+                self.builder.emit(Op::WithRedirectsEnd, 0);
+                self.emit_errexit_check();
+                self.builder.patch_jump(over, self.builder.current_pos());
             }
             return;
         }
@@ -3620,6 +3679,19 @@ impl ZshCompiler {
             self.builder
                 .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_LINE, 1), 0);
             self.builder.emit(Op::Pop, 0);
+            // c:Src/exec.c:3785-3796 — a failed redirection skips the builtin:
+            // no loop exit, status 1 (fatal under POSIX_BUILTINS; dash 2).
+            let redir_failed_skip = if has_redirects {
+                let nc = self.builder.add_constant(Value::str("continue"));
+                self.builder.emit(Op::LoadConst(nc), 0);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_LOOPCTL_REDIR_GATE, 1),
+                    0,
+                );
+                Some(self.builder.emit(Op::JumpIfTrue(0), 0))
+            } else {
+                None
+            };
             let levels: usize = simple
                 .words
                 .get(1)
@@ -3646,6 +3718,10 @@ impl ZshCompiler {
             // common case in zinit's mode-aware loop bodies.
             self.emit_cmd_stack_drain();
             if depth > 0 && runtime_count && !too_many_args {
+                // The redirections end with the command, before control leaves it.
+                if has_redirects {
+                    self.builder.emit(Op::WithRedirectsEnd, 0);
+                }
                 self.emit_runtime_loop_level(&simple.words[1], "continue", true);
             } else if depth >= levels && !nonpositive_literal && !too_many_args {
                 // Inside try-block: bump BREAKS + CONTFLAG so the
@@ -3667,6 +3743,9 @@ impl ZshCompiler {
                 // Same skipped-`loops--` compensation as the break arm:
                 // `continue N` leaves the N-1 inner loops for good, and
                 // the target loop stays open (no decrement for it).
+                if has_redirects {
+                    self.builder.emit(Op::WithRedirectsEnd, 0);
+                }
                 self.emit_loop_exit(depth - 1 - idx);
                 self.emit_loop_jump_status();
                 let j = self.builder.emit(Op::Jump(0), 0);
@@ -3685,6 +3764,16 @@ impl ZshCompiler {
                     0,
                 );
                 self.builder.emit(Op::SetStatus, 0);
+                if has_redirects {
+                    self.builder.emit(Op::WithRedirectsEnd, 0);
+                }
+            }
+            if let Some(j) = redir_failed_skip {
+                let over = self.builder.emit(Op::Jump(0), 0);
+                self.builder.patch_jump(j, self.builder.current_pos());
+                self.builder.emit(Op::WithRedirectsEnd, 0);
+                self.emit_errexit_check();
+                self.builder.patch_jump(over, self.builder.current_pos());
             }
             return;
         }
