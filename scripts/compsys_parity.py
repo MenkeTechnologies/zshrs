@@ -5701,6 +5701,11 @@ def main():
     ap.add_argument("--case", help="ad-hoc buffer text to type")
     ap.add_argument("--keys", default="tab", help="comma keys for --case")
     ap.add_argument("--only", help="run one built-in case by name")
+    ap.add_argument("--corpus", default=None, metavar="FILE",
+                    help="restrict the built-in cases to the buffers listed in FILE, one "
+                         "per line (trailing spaces are part of the buffer; `#` lines "
+                         "and blank lines ignored). Same file format comptab_parity.py "
+                         "takes, and what parity_matrix.py writes per shard for --jobs")
     ap.add_argument("--list", action="store_true", help="list built-in cases")
     ap.add_argument("--sequences", default=None,
                     help="comma-separated names from parity_corpus.KEY_SEQUENCES, "
@@ -5877,6 +5882,17 @@ def main():
                  or c.name.split('.')[0] == args.only]
         if not cases:
             sys.exit(f"no such case: {args.only}")
+    elif args.corpus:
+        # parity_matrix.py --jobs N shards the CASE list by writing each shard's
+        # buffers to a file. Without this option every shard died at argument
+        # parsing ("unrecognized arguments: --corpus"), so the emulation harness
+        # could only ever run unsharded.
+        with open(args.corpus) as f:
+            wanted = {l.rstrip("\n") for l in f
+                      if l.strip() and not l.lstrip().startswith("#")}
+        cases = [c for c in builtin if c.buffer in wanted]
+        if not cases:
+            sys.exit(f"no built-in case matches a buffer in {args.corpus}")
     else:
         cases = builtin
 
