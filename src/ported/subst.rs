@@ -2342,6 +2342,25 @@ pub fn equalsubstr(s: &str, assign: bool, nomatch: bool) -> Option<String> {
 /// (dirstack), `~user` (libc getpwnam), and `=cmd` (PATH lookup via
 /// equalsubstr).
 pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
+    // !!! RUST-ONLY ADAPTER — DROP-IN GATE (no C counterpart) !!!
+    // The `$HOME` text a bare-`~` expansion splices in, for the Korn
+    // shells that edit it. zsh (c:748 `dyncat(home, str + 1)`), dash and
+    // /bin/sh paste `$HOME` verbatim, so `HOME=/h/; echo ~/x` is `/h//x`.
+    // mksh strips the trailing slashes of a HOME with a non-slash
+    // component (`/h/` and `/h//` both give `~/x` → `/h/x`, `~` → `/h`;
+    // an all-slash HOME is kept). ksh93 special-cases a HOME of `/`
+    // alone: the following `/` is not doubled (`~/x` → `/x`).
+    let korn_tilde_home = |home: String, suffix: &str| -> String {
+        if crate::dash_mode::korn_mode() && crate::dash_mode::pdksh_family() {
+            let trimmed = home.trim_end_matches('/');
+            if !trimmed.is_empty() {
+                return trimmed.to_string();
+            }
+        } else if crate::dash_mode::ksh93_mode() && home == "/" && suffix.starts_with('/') {
+            return String::new();
+        }
+        home
+    };
     // c:737
     // c:737
     if namptr.is_empty() {
@@ -2366,7 +2385,7 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
         // c:741
         if chars.len() == 1 {
             // c:748 — bare ~
-            let home = getsparam("HOME").unwrap_or_default();
+            let home = korn_tilde_home(getsparam("HOME").unwrap_or_default(), "");
             return Some(home);
         }
         // c:Src/subst.c:743+ — the byte AFTER `~` selects the
@@ -2402,8 +2421,8 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
         // `~/...` and `~` (isend(str[1])) — bare HOME
         if isend(nx) {
             // c:748
-            let home = getsparam("HOME").unwrap_or_default();
             let suffix: String = chars[1..].iter().collect();
+            let home = korn_tilde_home(getsparam("HOME").unwrap_or_default(), &suffix);
             return Some(format!("{}{}", home, suffix));
         }
         // c:751-753 — `} else if (str[1] == '+' && isend(str[2])) {`
@@ -3995,15 +4014,49 @@ pub fn paramsubst(
     //
     // Restoring GLOB_SUBST and the carrier around the replacement's `singsub`
     // re-creates C's local scoping for exactly the span C untokenizes.
-    // `SKIP_FILESUB` mirrors C's `prefork(replstr, SUB_FLAG|SKIP_FILESUB, …)`
-    // at c:Src/subst.c:3354 (no tilde/filename expansion in a replacement).
+    // `singsub` is a full `prefork(…, PREFORK_SINGLE)` (c:Src/subst.c:520),
+    // so its c:177-181 `filesub` DOES run on the replacement: an unquoted
+    // Tilde/Equals token expands (`x=abc; ${x/b/~}` → `a$HOME` + `c`,
+    // `${x/b/=ls}` → `a/bin/lsc` in zsh 5.9.2), while `\~` (Bnull) and a
+    // double-quoted `~` stay literal because they never were tokens.
+    // !!! DROP-IN GATE — bash/ksh93/mksh (no C counterpart) !!! Inside
+    // double quotes those shells still give the `${x/pat/REPL}` replacement
+    // the UNQUOTED word treatment: quote removal and tilde expansion
+    // (`x=abc; "${x/b/'q'}"` → `aqc`, `"${x/b/~}"` → `a$HOME` + `c`,
+    // `"${x/b/\q}"` → `aqc`), where zsh and /bin/sh keep the replacement as
+    // double-quoted text. Re-lex it as an unquoted word (c:Src/lex.c
+    // parse_subst_string) so singsub's prefork does exactly that.
+    let dropin_unquoted_repl = |raw_repl: &str| -> String {
+        if qt && (crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode()) {
+            if let Ok(relexed) = crate::ported::lex::parse_subst_string(raw_repl) {
+                return relexed;
+            }
+        }
+        raw_repl.to_string()
+    };
+    // !!! WARNING: RUST-ONLY ADAPTER — the operand text this port hands the
+    // `/` arm (`rest`, built below) has the lexer's word-initial Tilde /
+    // Equals TOKENS folded to ASCII, which C's replstr still carries (it
+    // points into the tokenized word, c:3165). A quoted `~`/`=` reaches the
+    // arm Bnull-escaped, so an ASCII one leading an UNQUOTED replacement can
+    // only have been the token: restore it so singsub's filesub (c:177-181)
+    // sees what C sees (`x=abc; ${x/b/~}` → `a$HOME` + `c`). Applied before
+    // bash's source-backslash strip, which turns `\~` into a plain `~`.
+    let retok_repl_head = |raw_repl: String| -> String {
+        if !qt {
+            if let Some(rest) = raw_repl.strip_prefix('~') {
+                return format!("{}{}", crate::ported::zsh_h::Tilde, rest);
+            }
+            if let Some(rest) = raw_repl.strip_prefix('=') {
+                return format!("{}{}", crate::ported::zsh_h::Equals, rest);
+            }
+        }
+        raw_repl
+    };
     let singsub_replstr = |raw_repl: &str| -> String {
-        let saved_skip = SKIP_FILESUB.with(|c| c.get());
         let saved_globsubst = crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBSUBST);
         let saved_carrier = TILDE_GLOBSUBST_CARRIER.with(|c| c.get());
-        SKIP_FILESUB.with(|c| c.set(true));
-        let s = untokenize(&singsub(raw_repl)); // c:2687-2688
-        SKIP_FILESUB.with(|c| c.set(saved_skip));
+        let s = untokenize(&singsub(&dropin_unquoted_repl(raw_repl))); // c:2687-2688
         if crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBSUBST) != saved_globsubst {
             crate::ported::options::opt_state_set("globsubst", saved_globsubst);
         }
@@ -18405,6 +18458,7 @@ pub fn paramsubst(
                 // compile once, re-singsub per match when needed.
                 let raw_repl = parts.get(1).copied().unwrap_or("").to_string();
                 // !!! BASH-MODE GATE !!! bash strips source-literal backslashes.
+                let raw_repl = retok_repl_head(raw_repl);
                 let raw_repl = if crate::dash_mode::bash_mode() {
                     crate::dash_mode::strip_replacement_backslashes(&raw_repl)
                 } else {
@@ -18617,6 +18671,7 @@ pub fn paramsubst(
                 // !!! BASH-MODE GATE !!! bash strips source-literal backslashes
                 // from the replacement (`\~`→`~`, `\&`→`&`, `\\`→`\`) but not
                 // from expanded values; run it on the pre-singsub raw form.
+                let raw_repl = retok_repl_head(raw_repl);
                 let raw_repl = if crate::dash_mode::bash_mode() {
                     crate::dash_mode::strip_replacement_backslashes(&raw_repl)
                 } else {
@@ -18732,10 +18787,7 @@ pub fn paramsubst(
                 // Replacement: c:Src/glob.c:2687-2688 —
                 //   `singsub(replstrp); untokenize(*replstrp);`
                 // Skip when SUB_DOSUBST equivalent fires (per-match path
-                // takes over via eval_repl_for_match below). The
-                // SKIP_FILESUB gate mirrors C's `prefork(replstr,
-                // SUB_FLAG|SKIP_FILESUB, ...)` per c:Src/subst.c:3354
-                // (tilde expansion suppressed inside the replacement).
+                // takes over via eval_repl_for_match below.
                 let repl = if pat_needs_per_match {
                     String::new()
                 } else {
@@ -19584,6 +19636,7 @@ pub fn paramsubst(
                 };
                 // !!! BASH-MODE GATE !!! bash strips source-literal backslashes
                 // from the replacement; run it on the pre-singsub raw form.
+                let raw_repl = retok_repl_head(raw_repl);
                 let raw_repl = if crate::dash_mode::bash_mode() {
                     crate::dash_mode::strip_replacement_backslashes(&raw_repl)
                 } else {
@@ -19724,17 +19777,12 @@ pub fn paramsubst(
                     // a non-matching subject wrongly ran `rv::=0`). Defer.
                     String::new()
                 } else {
-                    // c:Src/subst.c around line 3354 — `prefork(replstr,
-                    // SUB_FLAG|SKIP_FILESUB)`. The replacement string
-                    // must NOT undergo file/tilde expansion: `${p/x/\~}`
-                    // yields a literal `~`, not the user's home. Match
-                    // the canonical `//` arm at subst.rs:5018 which
-                    // already sets SKIP_FILESUB around singsub; the
-                    // single-replace `/` arm was missing this gate.
-                    let saved_skip = SKIP_FILESUB.with(|c| c.get());
-                    SKIP_FILESUB.with(|c| c.set(true));
-                    let s_singsub = singsub(&raw_repl);
-                    SKIP_FILESUB.with(|c| c.set(saved_skip));
+                    // c:Src/glob.c:2687-2688 — `singsub(replstrp);
+                    // untokenize(*replstrp);`. singsub's prefork runs
+                    // filesub (c:Src/subst.c:177-181), so an unquoted `~`
+                    // expands; `${p/x/\~}` stays a literal `~` because the
+                    // Bnull-escaped `~` is no Tilde token.
+                    let s_singsub = singsub(&dropin_unquoted_repl(&raw_repl));
                     untokenize(&s_singsub)
                 };
                 let raw_repl_clone = raw_repl.clone();
