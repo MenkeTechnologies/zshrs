@@ -19,6 +19,54 @@ CI green pending the underlying fix.
 
 ---
 
+## #1205 — `unsetopt multibyte`: patterns and `${…}` substitutions still worked in characters — fixed
+
+**Status:** `fixed` 2026-10-23.
+
+```
+$ zsh   -fc "x='aé漢z'; unsetopt multibyte; print -r -- \${x//?/.}"              → .......
+$ zshrs -fc "x='aé漢z'; unsetopt multibyte; print -r -- \${x//?/.}"              → ....      ✗
+$ zsh   -fc "x='aé漢z'; unsetopt multibyte; print -r -- \${x#a?}" | od -An -tx1  → a9 e6 bc a2 7a 0a
+$ zshrs -fc "x='aé漢z'; unsetopt multibyte; print -r -- \${x#a?}"                → panic: not a char boundary  ✗
+```
+
+Without MULTIBYTE zsh matches raw BYTES. The matcher steps one byte
+(`charnext`, c:Src/pattern.c:1946), the substitution walkers step one byte
+(`MB_METACHARINC`, c:Src/glob.c:2958), and a POSIX class tests the byte with
+libc `<ctype.h>` (`patmatchrange`, c:Src/pattern.c:3886-3939). zshrs had
+three gaps:
+
+- `patcompile` forced GF_MULTIBYTE on, against c:572-575.
+- The single-byte class test used `is_ascii_*`, which never matches a high
+  byte. macOS classifies 0x80-0xff of a UTF-8 locale as Latin-1, so
+  `[[:alpha:]]` matches 0xc3 there; the answer is the platform C library's.
+- The six `paramsubst` walkers (`//`, `/`, and the four `#`/`%` strip arms)
+  stepped Rust `char`s.
+
+Once the option gate was honoured, the `#`, `##` and `(M)` arms panicked
+slicing a `&str` inside a character.
+
+**Fix.** `src/byte_units.rs` (Rust-only) spells every non-ASCII byte as one
+`Meta` pair, in the pattern (`patcompile`) and in the subject (`pattryrefs`
+and the walkers). The matcher already reads a pair as one raw byte. Each
+unit boundary is then a char boundary, and results go back through
+`decode_script_bytes`. Other changes:
+
+- `charsub` counts unmetafied bytes.
+- `$MATCH` and `$match` come back in the ordinary spelling.
+- `(#u)` / `(#U)` now toggle the hoisted flag too.
+
+`parity-fuzz --mode unicode --count 1000`: 191 → 10, against both 5.9.2 and
+the dev tree. The 10 left are two upstream defects:
+
+- `${(ml:8::.:)j}`: zsh reads out of bounds (see `.github/workflows/ci.yml`).
+- `${(L)/(U)/(C)j}` on CJK text: zshrs emits zsh's bytes, but zsh leaks a
+  raw 0x97 (`Quest`) and errors `no matches found`.
+
+Pinned by `bugs_md_regression::nomultibyte_substitutions_walk_bytes`.
+
+---
+
 ## #1204 — bare `$epochtime` expands to one empty word — port-bug
 
 **Status:** `port-bug`, found 2026-10-23 while fixing #1203.

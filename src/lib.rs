@@ -131,6 +131,9 @@ pub mod signal_queue_guard;
 pub mod subscript_escape;
 /// `scalar_range_cut` submodule (Rust-only; see the module docs).
 pub mod scalar_range_cut;
+/// `byte_units` submodule (Rust-only; see the module docs): the
+/// `unsetopt multibyte` byte spelling for the matcher and match walkers.
+pub mod byte_units;
 /// `keymap_primary` submodule (Rust-only; see the module docs): the
 /// `km->primary` store across every alias of a shared keymap.
 pub mod keymap_primary;

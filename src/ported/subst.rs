@@ -18679,7 +18679,13 @@ pub fn paramsubst(
                         let s = singsub_replstr(&raw_repl);
                         return s;
                     }
-                    crate::ported::params::setsparam("MATCH", span_text);
+                    // c:2536 `metafy` of the matched bytes — out of the
+                    // walker's `unsetopt multibyte` byte spelling.
+                    if crate::byte_units::byte_mode() {
+                        crate::ported::params::setsparam("MATCH", &crate::byte_units::canonical(span_text));
+                    } else {
+                        crate::ported::params::setsparam("MATCH", span_text);
+                    }
                     let base = if isset(crate::ported::zsh_h::KSHARRAYS) {
                         0i64
                     } else {
@@ -18777,9 +18783,19 @@ pub fn paramsubst(
                         None => false,
                     }
                 };
-                let replace_global = |val: &str| -> String {
-                    let cv: Vec<char> = val.chars().collect();
-                    let nn = cv.len();
+                let replace_global = |val_in: &str| -> String {
+                    // c:Src/glob.c:2958 `MB_METACHARINC` — the walk's unit is one
+                    // character, or one BYTE without MULTIBYTE. Walk the byte spelling
+                    // then (`crate::byte_units`): every unit boundary is a char boundary
+                    // of it, and the result goes back to the ordinary form at the end.
+                    let byte_mode = crate::byte_units::byte_mode();
+                    let spelled = if byte_mode {
+                        crate::byte_units::byte_spelling(val_in)
+                    } else {
+                        std::borrow::Cow::Borrowed(val_in)
+                    };
+                    let val: &str = &spelled;
+                    let out = (|| -> String {
                     // Byte offset of every character boundary, plus the end.
                     // The scans below try O(n) (substring: O(n^2)) slices of
                     // `val`; building each one with `cv[a..b].iter().collect()`
@@ -18788,11 +18804,15 @@ pub fn paramsubst(
                     // a ^D-triggered widget span burned CPU. C never copies —
                     // igetmatch (Src/glob.c:2964) walks pointers into the ONE
                     // string. One table up front makes a try a borrow.
-                    let bidx: Vec<usize> = val
-                        .char_indices()
-                        .map(|(b_, _)| b_)
-                        .chain(std::iter::once(val.len()))
-                        .collect();
+                    let bidx: Vec<usize> = if byte_mode {
+                        crate::byte_units::unit_bounds(val)
+                    } else {
+                        val.char_indices()
+                            .map(|(b_, _)| b_)
+                            .chain(std::iter::once(val.len()))
+                            .collect()
+                    };
+                    let nn = bidx.len() - 1;
                     let sl = |a_: usize, b_: usize| -> &str { &val[bidx[a_]..bidx[b_]] };
                     let mut o = String::with_capacity(val.len());
                     // c:Src/glob.c:2882 — `p->flags &= ~(PAT_NOTSTART|PAT_NOTEND);`
@@ -18819,11 +18839,7 @@ pub fn paramsubst(
                                                  // (c:Src/pattern.c:2561) add two values in one unit. Convert
                                                  // this scan's character index accordingly.
                     let ioff = |ci: usize| -> i32 {
-                        let b = val
-                            .char_indices()
-                            .nth(ci)
-                            .map(|(x, _)| x)
-                            .unwrap_or(val.len());
+                        let b = bidx.get(ci).copied().unwrap_or(val.len());
                         crate::ported::pattern::charsub(val, b) as i32
                     };
                     // c:Src/subst.c — `#` anchor: match only at
@@ -18840,7 +18856,7 @@ pub fn paramsubst(
                         // pattern must match the ENTIRE string. Test
                         // the whole val and replace iff successful.
                         // Bug #355 in docs/BUGS.md.
-                        let whole: String = cv.iter().collect();
+                        let whole: String = val.to_string();
                         if gms(&whole, &pat, 0) {
                             o.push_str(&eval_repl_for_match(&whole, 0));
                         } else {
@@ -18869,27 +18885,22 @@ pub fn paramsubst(
                                 prog.0.globflags,
                             )
                             .map(|end_byte| {
-                                let mut ci = 0usize;
-                                let mut b = 0usize;
-                                while ci < cv.len() && b < end_byte {
-                                    b += cv[ci].len_utf8();
-                                    ci += 1;
-                                }
-                                ci
+                                // Units that start before the match end.
+                                bidx[..nn].partition_point(|&x| x < end_byte)
                             })
                         } else {
                             (0..=nn)
                                 .rev()
-                                .find(|&end| gms(&cv[..end].iter().collect::<String>(), &pat, 0))
+                                .find(|&end| gms(&sl(0, end).to_string(), &pat, 0))
                         };
                         if let Some(e) = matched {
                             if pat_needs_per_match {
-                                let span: String = cv[..e].iter().collect();
+                                let span: String = sl(0, e).to_string();
                                 let _ = gms(&span, &pat, 0);
                             }
-                            let span: String = cv[..e].iter().collect();
+                            let span: String = sl(0, e).to_string();
                             o.push_str(&eval_repl_for_match(&span, 0));
-                            o.push_str(&cv[e..].iter().collect::<String>());
+                            o.push_str(&sl(e, nn).to_string());
                         } else {
                             o.push_str(val);
                         }
@@ -18898,15 +18909,15 @@ pub fn paramsubst(
                     if pat_anchor == '%' {
                         let mut matched: Option<usize> = None;
                         for start in 0..=nn {
-                            let cand: String = cv[start..].iter().collect();
+                            let cand: String = sl(start, nn).to_string();
                             if gms(&cand, &pat, ioff(start)) {
                                 matched = Some(start);
                                 break;
                             }
                         }
                         if let Some(s) = matched {
-                            let span_text: String = cv[s..].iter().collect();
-                            o.push_str(&cv[..s].iter().collect::<String>());
+                            let span_text: String = sl(s, nn).to_string();
+                            o.push_str(&sl(0, s).to_string());
                             // c:2543 — patoffset is a CHARACTER offset, so `s`
                             // (the char index the tail match starts at) goes in
                             // directly; the old byte sum was wrong under UTF-8.
@@ -18962,16 +18973,7 @@ pub fn paramsubst(
                     // Byte offset of each char boundary (len nn+1) so the
                     // single-pass patmatch scan can map char index <-> byte
                     // offset without re-walking the string each position.
-                    let byte_off: Vec<usize> = {
-                        let mut v = Vec::with_capacity(nn + 1);
-                        let mut b = 0usize;
-                        for ch in &cv {
-                            v.push(b);
-                            b += ch.len_utf8();
-                        }
-                        v.push(b);
-                        v
-                    };
+                    let byte_off: &[usize] = &bidx;
                     let mut q = 0_usize;
                     // c:Src/glob.c:3082 — track whether the loop reached the
                     // end via a MATCH+bump (`if (t == send) break` + outer
@@ -19102,8 +19104,7 @@ pub fn paramsubst(
                                             break;
                                         }
                                         // c:3053 umlen2 += iincchar(&ptr, mpos - ptr)
-                                        ptr +=
-                                            val[ptr..].chars().next().map_or(1, |ch| ch.len_utf8());
+                                        ptr = bidx[bidx.partition_point(|&x| x <= ptr).min(nn)];
                                     }
                                 }
                                 let e = byte_off.partition_point(|&b| b < mpos);
@@ -19112,7 +19113,7 @@ pub fn paramsubst(
                                     // (#b)/(#m) capture arrays publish before the
                                     // replacement is evaluated — same contract as
                                     // the greedy branch below.
-                                    let span: String = cv[q..e].iter().collect();
+                                    let span: String = sl(q, e).to_string();
                                     let _ = gms(&span, &pat, ioff(q));
                                 }
                                 m = Some(e);
@@ -19124,7 +19125,7 @@ pub fn paramsubst(
                                 if !anchor_ok(q, e) {
                                     continue;
                                 }
-                                let c: String = cv[q..e].iter().collect();
+                                let c: String = sl(q, e).to_string();
                                 if gms(&c, &pat, ioff(q)) {
                                     m = Some(e);
                                     break;
@@ -19192,7 +19193,7 @@ pub fn paramsubst(
                                     // replacement is evaluated — same span-local
                                     // publication the old scan did via gms, once
                                     // per real match instead of per position.
-                                    let span: String = cv[q..e].iter().collect();
+                                    let span: String = sl(q, e).to_string();
                                     let _ = gms(&span, &pat, ioff(q));
                                 }
                                 m = Some(e);
@@ -19204,7 +19205,7 @@ pub fn paramsubst(
                                 if !anchor_ok(q, e) {
                                     continue;
                                 }
-                                let c: String = cv[q..e].iter().collect();
+                                let c: String = sl(q, e).to_string();
                                 if gms(&c, &pat, ioff(q)) {
                                     m = Some(e);
                                     break;
@@ -19213,7 +19214,7 @@ pub fn paramsubst(
                         }
                         if let Some(e) = m {
                             just_matched = true;
-                            let span_text: String = cv[q..e].iter().collect();
+                            let span_text: String = sl(q, e).to_string();
                             match_count += 1; // c:3057
                             if match_count >= target_global {
                                 // c:3034 — `ioff` (== `q` here) is the CHARACTER
@@ -19232,14 +19233,14 @@ pub fn paramsubst(
                                 // loop, not marked for replacement, so
                                 // get_match_ret keeps it: "bbb" //a# →
                                 // "XbXbXb" (X then b at each position).
-                                o.push(cv[q]);
+                                o.push_str(sl(q, q + 1));
                                 q += 1;
                             } else {
                                 q = e;
                             }
                         } else {
                             just_matched = false;
-                            o.push(cv[q]);
+                            o.push_str(sl(q, q + 1));
                             q += 1;
                         }
                     }
@@ -19292,6 +19293,12 @@ pub fn paramsubst(
                         }
                     }
                     o
+                    })();
+                    if byte_mode {
+                        crate::byte_units::canonical(&out)
+                    } else {
+                        out
+                    }
                 };
                 let mut handled_array = false;
                 // c:Src/subst.c:3870 — array-vs-scalar context for
@@ -19784,18 +19791,36 @@ pub fn paramsubst(
                         None => false,
                     }
                 };
-                let replace_one = |val: &str| -> String {
+                let replace_one = |val_in: &str| -> String {
+                    // c:Src/glob.c:2958 `MB_METACHARINC` — the walk's unit is one
+                    // character, or one BYTE without MULTIBYTE. Walk the byte spelling
+                    // then (`crate::byte_units`): every unit boundary is a char boundary
+                    // of it, and the result goes back to the ordinary form at the end.
+                    let byte_mode = crate::byte_units::byte_mode();
+                    let spelled = if byte_mode {
+                        crate::byte_units::byte_spelling(val_in)
+                    } else {
+                        std::borrow::Cow::Borrowed(val_in)
+                    };
+                    let val: &str = &spelled;
+                    let out = (|| -> String {
+                    let bidx: Vec<usize> = if byte_mode {
+                        crate::byte_units::unit_bounds(val)
+                    } else {
+                        val.char_indices()
+                            .map(|(b_, _)| b_)
+                            .chain(std::iter::once(val.len()))
+                            .collect()
+                    };
+                    let nn = bidx.len() - 1;
+                    let sl = |a_: usize, b_: usize| -> &str { &val[bidx[a_]..bidx[b_]] };
                     // c:Src/glob.c:2818-2825 `iincchar` — `ioff` steps one BYTE
                     // per turn when MULTIBYTE is unset (c:Src/utils.c:5795) and
                     // one character when it is set, i.e. `charsub`'s unit
                     // (c:Src/pattern.c:2008). Convert the scan's character index
                     // before it becomes `patoffset`.
                     let ioff = |ci: usize| -> i32 {
-                        let b = val
-                            .char_indices()
-                            .nth(ci)
-                            .map(|(x, _)| x)
-                            .unwrap_or(val.len());
+                        let b = bidx.get(ci).copied().unwrap_or(val.len());
                         crate::ported::pattern::charsub(val, b) as i32
                     };
                     // c:Src/glob.c getmatch → Src/pattern.c patmatch — the
@@ -19806,7 +19831,7 @@ pub fn paramsubst(
                     // alternation. Returns the END char index, honoring
                     // (#s)/(#e) via the real slice offset. None → no match.
                     let match_end_at =
-                        |pat_str: &str, start: usize, cvv: &[char]| -> Option<usize> {
+                        |pat_str: &str, start: usize| -> Option<usize> {
                             let prog = crate::ported::pattern::patcompile(
                                 &{
                                     let mut t = pat_str.to_string();
@@ -19816,8 +19841,8 @@ pub fn paramsubst(
                                 PAT_HEAPDUP as i32,
                                 None,
                             )?;
-                            let start_byte: usize = cvv[..start].iter().map(|c| c.len_utf8()).sum();
-                            let full: String = cvv.iter().collect();
+                            let start_byte: usize = bidx[start];
+                            let full: &str = val;
                             crate::pattern_data_escape::publish_patflags(prog.0.flags
                                     | crate::ported::zsh_h::PAT_NOANCH
                                     | if start_byte > 0 {
@@ -19834,13 +19859,8 @@ pub fn paramsubst(
                                 &mut pst,
                                 prog.0.globflags,
                             )? + start_byte;
-                            let mut ci = 0usize;
-                            let mut b = 0usize;
-                            while ci < cvv.len() && b < end_byte {
-                                b += cvv[ci].len_utf8();
-                                ci += 1;
-                            }
-                            Some(ci)
+                            // Units that start before the match end.
+                            Some(bidx[..nn].partition_point(|&x| x < end_byte))
                         };
                     if let Some(whole_pat) = both_anchor_pat {
                         if gms(val, whole_pat, 0) {
@@ -19850,33 +19870,30 @@ pub fn paramsubst(
                         return val.to_string();
                     }
                     if let Some(anchor_pat) = (pat_anchor == '#').then_some(pat.as_str()) {
-                        let cv: Vec<char> = val.chars().collect();
                         // Start-anchored (`${s/#pat/repl}`): the match must
                         // begin at position 0. Use the engine so a top-level
                         // alternation takes the FIRST branch (`#(a|ab)` on
                         // "abc" → replace "a", not "ab"); the old longest-first
                         // window scan picked "ab".
-                        if let Some(end) = match_end_at(anchor_pat, 0, &cv) {
-                            let cand: String = cv[..end].iter().collect();
+                        if let Some(end) = match_end_at(anchor_pat, 0) {
+                            let cand: String = sl(0, end).to_string();
                             if anchor_pat.contains("(#b)") || anchor_pat.contains("(#m)") {
                                 let _ = gms(&cand, anchor_pat, 0);
                             }
                             let dyn_repl = resolve_repl(&cand, 0);
-                            return format!("{}{}", dyn_repl, cv[end..].iter().collect::<String>());
+                            return format!("{}{}", dyn_repl, sl(end, nn).to_string());
                         }
                         val.to_string()
                     } else if let Some(anchor_pat) = (pat_anchor == '%').then_some(pat.as_str()) {
-                        let cv: Vec<char> = val.chars().collect();
-                        let nn = cv.len();
                         for start in 0..=nn {
-                            let cand: String = cv[start..].iter().collect();
+                            let cand: String = sl(start, nn).to_string();
                             if gms(&cand, anchor_pat, ioff(start)) {
                                 // c:2543 — patoffset (`ioff`) is a CHARACTER
                                 // offset, so `start` goes in unconverted.
                                 let dyn_repl = resolve_repl(&cand, ioff(start));
                                 return format!(
                                     "{}{}",
-                                    cv[..start].iter().collect::<String>(),
+                                    sl(0, start).to_string(),
                                     dyn_repl
                                 );
                             }
@@ -19914,8 +19931,6 @@ pub fn paramsubst(
                         // replace form defaults to LONGEST; `(S)`
                         // flips to SHORTEST.
                         let substr_short = (sub_flags_bits & SUB_SUBSTR) != 0; // local: nested ${~pat} paramsubst clobbers the shared sub_flags cell, so read the per-paramsubst parsed flags
-                        let cv: Vec<char> = val.chars().collect();
-                        let nn = cv.len();
                         // c:Src/glob.c:3008-3015 — `case SUB_SUBSTR:`
                         // (shortest, non-global) head pre-check:
                         // `set_pat_start(p, l); if (!(fl & SUB_GLOBAL)
@@ -19965,12 +19980,12 @@ pub fn paramsubst(
                         let mut pat_notend_one: i32 = 0; // c:2882
                         for start in start_range {
                             if use_engine {
-                                if let Some(end) = match_end_at(&pat, start, &cv) {
+                                if let Some(end) = match_end_at(&pat, start) {
                                     count += 1; // c:3057
                                     if count < target {
                                         continue;
                                     }
-                                    let cand: String = cv[start..end].iter().collect();
+                                    let cand: String = sl(start, end).to_string();
                                     // Publish (#b)/(#m) $match/$MATCH captures for
                                     // the committed span before evaluating the
                                     // replacement (patmatch above didn't set them).
@@ -19980,9 +19995,9 @@ pub fn paramsubst(
                                     // c:3034 — `ioff` is the CHARACTER offset.
                                     let dyn_repl = resolve_repl(&cand, ioff(start));
                                     let mut out = String::with_capacity(val.len());
-                                    out.extend(cv[..start].iter());
+                                    out.push_str(sl(0, start));
                                     out.push_str(&dyn_repl);
-                                    out.extend(cv[end..].iter());
+                                    out.push_str(sl(end, nn));
                                     return out;
                                 }
                                 continue;
@@ -20013,8 +20028,8 @@ pub fn paramsubst(
                             // forced EVERY candidate to end at `nn` — so a pattern
                             // carrying `(#e)` in only ONE alternation branch
                             // (`a(b|(#e))`) never matched in the interior.
-                            let start_byte: usize = cv[..start].iter().map(|c| c.len_utf8()).sum();
-                            let full: String = cv.iter().collect();
+                            let start_byte: usize = bidx[start];
+                            let full: &str = val;
                             let mut m_end: Option<usize> = None;
                             if let Some(prog) = crate::ported::pattern::patcompile(
                                 &{
@@ -20077,19 +20092,10 @@ pub fn paramsubst(
                                                 break;
                                             }
                                             // c:3053 umlen2 += iincchar(&ptr, mpos - ptr)
-                                            ptr += full[ptr..]
-                                                .chars()
-                                                .next()
-                                                .map_or(1, |ch| ch.len_utf8());
+                                            ptr = bidx[bidx.partition_point(|&x| x <= ptr).min(nn)];
                                         }
                                     }
-                                    let mut ci = start;
-                                    let mut b = start_byte;
-                                    while ci < cv.len() && b < mpos {
-                                        b += cv[ci].len_utf8();
-                                        ci += 1;
-                                    }
-                                    m_end = Some(ci);
+                                    m_end = Some(bidx[..nn].partition_point(|&x| x < mpos));
                                 }
                             }
                             if let Some(end) = m_end {
@@ -20099,7 +20105,7 @@ pub fn paramsubst(
                                     // continue from the next start.
                                     continue;
                                 }
-                                let cand: String = cv[start..end].iter().collect();
+                                let cand: String = sl(start, end).to_string();
                                 // Publish (#b)/(#m) $match/$MATCH for the
                                 // committed span before the replacement is
                                 // evaluated — patmatch above didn't set them.
@@ -20109,13 +20115,19 @@ pub fn paramsubst(
                                 // c:3034 — `ioff` is the CHARACTER offset.
                                 let dyn_repl = resolve_repl(&cand, ioff(start));
                                 let mut out = String::with_capacity(val.len());
-                                out.extend(cv[..start].iter());
+                                out.push_str(sl(0, start));
                                 out.push_str(&dyn_repl);
-                                out.extend(cv[end..].iter());
+                                out.push_str(sl(end, nn));
                                 return out;
                             }
                         }
                         val.to_string()
+                    }
+                    })();
+                    if byte_mode {
+                        crate::byte_units::canonical(&out)
+                    } else {
+                        out
                     }
                 };
                 // Same has_subscript guard as `//` arm above —
@@ -20403,9 +20415,19 @@ pub fn paramsubst(
                         None
                     }
                 };
-                let strip_one = |val: &str, op: u8| -> String {
-                    let cv: Vec<char> = val.chars().collect();
-                    let nn = cv.len();
+                let strip_one = |val_in: &str, op: u8| -> String {
+                    // c:Src/glob.c:2958 `MB_METACHARINC` — the walk's unit is one
+                    // character, or one BYTE without MULTIBYTE. Walk the byte spelling
+                    // then (`crate::byte_units`): every unit boundary is a char boundary
+                    // of it, and the result goes back to the ordinary form at the end.
+                    let byte_mode = crate::byte_units::byte_mode();
+                    let spelled = if byte_mode {
+                        crate::byte_units::byte_spelling(val_in)
+                    } else {
+                        std::borrow::Cow::Borrowed(val_in)
+                    };
+                    let val: &str = &spelled;
+                    let out = (|| -> String {
                     // Byte offset of every character boundary, plus the end.
                     // The scans below try O(n) (substring: O(n^2)) slices of
                     // `val`; building each one with `cv[a..b].iter().collect()`
@@ -20414,11 +20436,15 @@ pub fn paramsubst(
                     // a ^D-triggered widget span burned CPU. C never copies —
                     // igetmatch (Src/glob.c:2964) walks pointers into the ONE
                     // string. One table up front makes a try a borrow.
-                    let bidx: Vec<usize> = val
-                        .char_indices()
-                        .map(|(b_, _)| b_)
-                        .chain(std::iter::once(val.len()))
-                        .collect();
+                    let bidx: Vec<usize> = if byte_mode {
+                        crate::byte_units::unit_bounds(val)
+                    } else {
+                        val.char_indices()
+                            .map(|(b_, _)| b_)
+                            .chain(std::iter::once(val.len()))
+                            .collect()
+                    };
+                    let nn = bidx.len() - 1;
                     let sl = |a_: usize, b_: usize| -> &str { &val[bidx[a_]..bidx[b_]] };
                     // c:Src/glob.c:2818-2825 `iincchar` — `ioff` steps one BYTE
                     // per turn when MULTIBYTE is unset (c:Src/utils.c:5795) and
@@ -20426,11 +20452,7 @@ pub fn paramsubst(
                     // (c:Src/pattern.c:2008). Convert the scan's character index
                     // before it becomes `patoffset`.
                     let ioff = |ci: usize| -> i32 {
-                        let b = val
-                            .char_indices()
-                            .nth(ci)
-                            .map(|(x, _)| x)
-                            .unwrap_or(val.len());
+                        let b = bidx.get(ci).copied().unwrap_or(val.len());
                         crate::ported::pattern::charsub(val, b) as i32
                     };
                     // Match bounds [b, e) in chars; None = no match.
@@ -20469,7 +20491,7 @@ pub fn paramsubst(
                                         // a BYTE length within the trial slice.
                                         let mlen = ml_.max(0) as usize;
                                         let endb = (bidx[start] + mlen).min(val.len());
-                                        let e = start + val[bidx[start]..endb].chars().count();
+                                        let e = bidx[..nn].partition_point(|&x| x < endb);
                                         count += 1; // c:3055 `--n`
                                         if count >= target {
                                             found = Some((start, e));
@@ -20495,7 +20517,7 @@ pub fn paramsubst(
                                 // captures itself (pattern.c:2526-2621 ports).
                                 gmsl(sl(0, nn), &p, 0, false).map(|ml_| {
                                     let endb = (ml_.max(0) as usize).min(val.len());
-                                    (0, val[..endb].chars().count())
+                                    (0, bidx[..nn].partition_point(|&x| x < endb))
                                 })
                             }
                         }
@@ -20509,11 +20531,11 @@ pub fn paramsubst(
                         let (b, e) = bounds.unwrap_or((0, 0));
                         let mut parts: Vec<String> = Vec::new();
                         if match_only {
-                            parts.push(cv[b..e].iter().collect()); // c:2618
+                            parts.push(sl(b, e).to_string()); // c:2618
                         }
                         if rest_flag {
-                            let mut rest: String = cv[..b].iter().collect(); // c:2630
-                            rest.extend(cv[e..].iter()); // c:2634
+                            let mut rest: String = sl(0, b).to_string(); // c:2630
+                            rest.push_str(sl(e, nn)); // c:2634
                             parts.push(rest);
                         }
                         if (ben & SUB_BIND) != 0 {
@@ -20530,10 +20552,10 @@ pub fn paramsubst(
                     match bounds {
                         Some((b, e)) => {
                             if match_only {
-                                cv[b..e].iter().collect()
+                                sl(b, e).to_string()
                             } else {
-                                let before: String = cv[..b].iter().collect();
-                                let after: String = cv[e..].iter().collect();
+                                let before: String = sl(0, b).to_string();
+                                let after: String = sl(e, nn).to_string();
                                 before + &after
                             }
                         }
@@ -20544,6 +20566,12 @@ pub fn paramsubst(
                                 val.to_string()
                             }
                         }
+                    }
+                    })();
+                    if byte_mode {
+                        crate::byte_units::canonical(&out)
+                    } else {
+                        out
                     }
                 };
                 // `per_element_array` decides whether the operator runs over an array at all. Test
@@ -20723,17 +20751,32 @@ pub fn paramsubst(
                         None => false,
                     }
                 };
-                let strip_one = |val: &str| -> String {
-                    let cv: Vec<char> = val.chars().collect();
+                let strip_one = |val_in: &str| -> String {
+                    // c:Src/glob.c:2958 `MB_METACHARINC` — the walk's unit is one
+                    // character, or one BYTE without MULTIBYTE. Walk the byte spelling
+                    // then (`crate::byte_units`): every unit boundary is a char boundary
+                    // of it, and the result goes back to the ordinary form at the end.
+                    let byte_mode = crate::byte_units::byte_mode();
+                    let spelled = if byte_mode {
+                        crate::byte_units::byte_spelling(val_in)
+                    } else {
+                        std::borrow::Cow::Borrowed(val_in)
+                    };
+                    let val: &str = &spelled;
+                    let out = (|| -> String {
                     // Byte offset of every character boundary, plus the end, so
                     // a trial slice is a borrow of `val` rather than a fresh
                     // String per try. See the sibling strip_one above for why
                     // that mattered (C's igetmatch copies nothing).
-                    let bidx: Vec<usize> = val
-                        .char_indices()
-                        .map(|(b_, _)| b_)
-                        .chain(std::iter::once(val.len()))
-                        .collect();
+                    let bidx: Vec<usize> = if byte_mode {
+                        crate::byte_units::unit_bounds(val)
+                    } else {
+                        val.char_indices()
+                            .map(|(b_, _)| b_)
+                            .chain(std::iter::once(val.len()))
+                            .collect()
+                    };
+                    let nn = bidx.len() - 1;
                     let sl = |a_: usize, b_: usize| -> &str { &val[bidx[a_]..bidx[b_]] };
                     // c:Src/glob.c:2818-2825 `iincchar` — `ioff` steps one BYTE
                     // per turn when MULTIBYTE is unset (c:Src/utils.c:5795) and
@@ -20741,14 +20784,10 @@ pub fn paramsubst(
                     // (c:Src/pattern.c:2008). Convert the scan's character index
                     // before it becomes `patoffset`.
                     let ioff = |ci: usize| -> i32 {
-                        let b = val
-                            .char_indices()
-                            .nth(ci)
-                            .map(|(x, _)| x)
-                            .unwrap_or(val.len());
+                        let b = bidx.get(ci).copied().unwrap_or(val.len());
                         crate::ported::pattern::charsub(val, b) as i32
                     };
-                    let total = cv.len();
+                    let total = nn;
                     // Match bounds [b, e) in chars; None = no match.
                     let bounds: Option<(usize, usize)> = (|| {
                         if substr_mode {
@@ -20777,7 +20816,7 @@ pub fn paramsubst(
                                     continue;
                                 }
                                 let mpos_b = bidx[start] + (crate::ported::pattern::patmatchlen().max(0) as usize);
-                                let kmax = val[bidx[start]..mpos_b.min(val.len())].chars().count();
+                                let kmax = bidx[..nn].partition_point(|&x| x < mpos_b.min(val.len())) - start;
                                 for k in 0..=kmax {
                                     if gms(
                                         sl(start, start + k),
@@ -20812,7 +20851,7 @@ pub fn paramsubst(
                             return None;
                         }
                         let mlen_b = (crate::ported::pattern::patmatchlen().max(0) as usize).min(val.len());
-                        let kmax = val[..mlen_b].chars().count();
+                        let kmax = bidx[..nn].partition_point(|&x| x < mlen_b);
                         for k in 0..=kmax {
                             // (#b) capture wiring via glob_match_static.
                             if gms(sl(0, k), &p, 0, if k < total { crate::ported::zsh_h::PAT_NOTEND } else { 0 }) { // c:2929 set_pat_end(p, *t)
@@ -20831,11 +20870,11 @@ pub fn paramsubst(
                         let (b, e) = bounds.unwrap_or((0, 0));
                         let mut parts: Vec<String> = Vec::new();
                         if match_only {
-                            parts.push(cv[b..e].iter().collect()); // c:2618
+                            parts.push(sl(b, e).to_string()); // c:2618
                         }
                         if rest_flag {
-                            let mut rest: String = cv[..b].iter().collect(); // c:2630
-                            rest.extend(cv[e..].iter()); // c:2634
+                            let mut rest: String = sl(0, b).to_string(); // c:2630
+                            rest.push_str(sl(e, nn)); // c:2634
                             parts.push(rest);
                         }
                         if (ben & SUB_BIND) != 0 {
@@ -20852,10 +20891,10 @@ pub fn paramsubst(
                     match bounds {
                         Some((b, e)) => {
                             if match_only {
-                                cv[b..e].iter().collect()
+                                sl(b, e).to_string()
                             } else {
-                                let before: String = cv[..b].iter().collect();
-                                let after: String = cv[e..].iter().collect();
+                                let before: String = sl(0, b).to_string();
+                                let after: String = sl(e, nn).to_string();
                                 before + &after
                             }
                         }
@@ -20873,6 +20912,12 @@ pub fn paramsubst(
                                 val.to_string()
                             }
                         }
+                    }
+                    })();
+                    if byte_mode {
+                        crate::byte_units::canonical(&out)
+                    } else {
+                        out
                     }
                 };
                 // `per_element_array` decides whether the operator runs over an array at all. Test
@@ -21064,17 +21109,32 @@ pub fn paramsubst(
                     crate::ported::pattern::pattrylen(pr_, s_, s_.len() as i32, -1, None, off_)
                         .then(|| crate::ported::pattern::patmatchlen().max(0) as usize)
                 };
-                let strip_one = |val: &str| -> String {
-                    let cv: Vec<char> = val.chars().collect();
+                let strip_one = |val_in: &str| -> String {
+                    // c:Src/glob.c:2958 `MB_METACHARINC` — the walk's unit is one
+                    // character, or one BYTE without MULTIBYTE. Walk the byte spelling
+                    // then (`crate::byte_units`): every unit boundary is a char boundary
+                    // of it, and the result goes back to the ordinary form at the end.
+                    let byte_mode = crate::byte_units::byte_mode();
+                    let spelled = if byte_mode {
+                        crate::byte_units::byte_spelling(val_in)
+                    } else {
+                        std::borrow::Cow::Borrowed(val_in)
+                    };
+                    let val: &str = &spelled;
+                    let out = (|| -> String {
                     // Byte offset of every character boundary, plus the end, so
                     // a trial slice is a borrow of `val` rather than a fresh
                     // String per try. See the sibling strip_one above for why
                     // that mattered (C's igetmatch copies nothing).
-                    let bidx: Vec<usize> = val
-                        .char_indices()
-                        .map(|(b_, _)| b_)
-                        .chain(std::iter::once(val.len()))
-                        .collect();
+                    let bidx: Vec<usize> = if byte_mode {
+                        crate::byte_units::unit_bounds(val)
+                    } else {
+                        val.char_indices()
+                            .map(|(b_, _)| b_)
+                            .chain(std::iter::once(val.len()))
+                            .collect()
+                    };
+                    let nn = bidx.len() - 1;
                     let sl = |a_: usize, b_: usize| -> &str { &val[bidx[a_]..bidx[b_]] };
                     // c:Src/glob.c:2818-2825 `iincchar` — `ioff` steps one BYTE
                     // per turn when MULTIBYTE is unset (c:Src/utils.c:5795) and
@@ -21082,14 +21142,10 @@ pub fn paramsubst(
                     // (c:Src/pattern.c:2008). Convert the scan's character index
                     // before it becomes `patoffset`.
                     let ioff = |ci: usize| -> i32 {
-                        let b = val
-                            .char_indices()
-                            .nth(ci)
-                            .map(|(x, _)| x)
-                            .unwrap_or(val.len());
+                        let b = bidx.get(ci).copied().unwrap_or(val.len());
                         crate::ported::pattern::charsub(val, b) as i32
                     };
-                    let total = cv.len();
+                    let total = nn;
                     // Match bounds [b, e) in chars; None = no match.
                     let bounds: Option<(usize, usize)> = (|| {
                         if substr_mode {
@@ -21121,7 +21177,7 @@ pub fn paramsubst(
                             for start in (0..total).rev() {
                                 if let Some(mlen_) = gms_na(sl(start, total), ioff(start), start > 0) {
                                     let endb_ = (bidx[start] + mlen_).min(val.len());
-                                    return Some((start, start + val[bidx[start]..endb_].chars().count()));
+                                    return Some((start, bidx[..nn].partition_point(|&x| x < endb_)));
                                 }
                             }
                             // c:3172-3177 — `if ((fl & SUB_LONG) && pattrylen(p,
@@ -21132,7 +21188,7 @@ pub fn paramsubst(
                         let mut k = total;
                         loop {
                             let suffix_start_char = total - k;
-                            let suffix: String = cv[suffix_start_char..].iter().collect();
+                            let suffix: String = sl(suffix_start_char, nn).to_string();
                             // (#b) capture wiring via glob_match_static.
                             // c:Src/glob.c:2964 — `pattrylen(p, t, umlen, 0,
                             // &patstralloc, ioff)`: the suffix's CHARACTER
@@ -21160,11 +21216,11 @@ pub fn paramsubst(
                         let (b, e) = bounds.unwrap_or((0, 0));
                         let mut parts: Vec<String> = Vec::new();
                         if match_only {
-                            parts.push(cv[b..e].iter().collect()); // c:2618
+                            parts.push(sl(b, e).to_string()); // c:2618
                         }
                         if rest_flag {
-                            let mut rest: String = cv[..b].iter().collect(); // c:2630
-                            rest.extend(cv[e..].iter()); // c:2634
+                            let mut rest: String = sl(0, b).to_string(); // c:2630
+                            rest.push_str(sl(e, nn)); // c:2634
                             parts.push(rest);
                         }
                         if (ben & SUB_BIND) != 0 {
@@ -21181,10 +21237,10 @@ pub fn paramsubst(
                     match bounds {
                         Some((b, e)) => {
                             if match_only {
-                                cv[b..e].iter().collect()
+                                sl(b, e).to_string()
                             } else {
-                                let before: String = cv[..b].iter().collect();
-                                let after: String = cv[e..].iter().collect();
+                                let before: String = sl(0, b).to_string();
+                                let after: String = sl(e, nn).to_string();
                                 before + &after
                             }
                         }
@@ -21195,6 +21251,12 @@ pub fn paramsubst(
                                 val.to_string()
                             }
                         }
+                    }
+                    })();
+                    if byte_mode {
+                        crate::byte_units::canonical(&out)
+                    } else {
+                        out
                     }
                 };
                 // `per_element_array` decides whether the operator runs over an array at all. Test
@@ -21386,17 +21448,32 @@ pub fn paramsubst(
                     crate::ported::pattern::pattrylen(pr_, s_, s_.len() as i32, -1, None, off_)
                         .then(|| crate::ported::pattern::patmatchlen().max(0) as usize)
                 };
-                let strip_one = |val: &str| -> String {
-                    let cv: Vec<char> = val.chars().collect();
+                let strip_one = |val_in: &str| -> String {
+                    // c:Src/glob.c:2958 `MB_METACHARINC` — the walk's unit is one
+                    // character, or one BYTE without MULTIBYTE. Walk the byte spelling
+                    // then (`crate::byte_units`): every unit boundary is a char boundary
+                    // of it, and the result goes back to the ordinary form at the end.
+                    let byte_mode = crate::byte_units::byte_mode();
+                    let spelled = if byte_mode {
+                        crate::byte_units::byte_spelling(val_in)
+                    } else {
+                        std::borrow::Cow::Borrowed(val_in)
+                    };
+                    let val: &str = &spelled;
+                    let out = (|| -> String {
                     // Byte offset of every character boundary, plus the end, so
                     // a trial slice is a borrow of `val` rather than a fresh
                     // String per try. See the sibling strip_one above for why
                     // that mattered (C's igetmatch copies nothing).
-                    let bidx: Vec<usize> = val
-                        .char_indices()
-                        .map(|(b_, _)| b_)
-                        .chain(std::iter::once(val.len()))
-                        .collect();
+                    let bidx: Vec<usize> = if byte_mode {
+                        crate::byte_units::unit_bounds(val)
+                    } else {
+                        val.char_indices()
+                            .map(|(b_, _)| b_)
+                            .chain(std::iter::once(val.len()))
+                            .collect()
+                    };
+                    let nn = bidx.len() - 1;
                     let sl = |a_: usize, b_: usize| -> &str { &val[bidx[a_]..bidx[b_]] };
                     // c:Src/glob.c:2818-2825 `iincchar` — `ioff` steps one BYTE
                     // per turn when MULTIBYTE is unset (c:Src/utils.c:5795) and
@@ -21404,14 +21481,10 @@ pub fn paramsubst(
                     // (c:Src/pattern.c:2008). Convert the scan's character index
                     // before it becomes `patoffset`.
                     let ioff = |ci: usize| -> i32 {
-                        let b = val
-                            .char_indices()
-                            .nth(ci)
-                            .map(|(x, _)| x)
-                            .unwrap_or(val.len());
+                        let b = bidx.get(ci).copied().unwrap_or(val.len());
                         crate::ported::pattern::charsub(val, b) as i32
                     };
-                    let total = cv.len();
+                    let total = nn;
                     // Match bounds [b, e) in chars; None = no match.
                     let bounds: Option<(usize, usize)> = (|| {
                         // c:Src/glob.c:2957 (SUB_END) and c:Src/glob.c:3111
@@ -21441,7 +21514,7 @@ pub fn paramsubst(
                             for start in (0..total).rev() {
                                 if let Some(mlen_) = gms_na(sl(start, total), ioff(start), start > 0) {
                                     let endb_ = (bidx[start] + mlen_).min(val.len());
-                                    tmatch_ = Some((start, start + val[bidx[start]..endb_].chars().count()));
+                                    tmatch_ = Some((start, bidx[..nn].partition_point(|&x| x < endb_)));
                                     break;
                                 }
                             }
@@ -21476,7 +21549,7 @@ pub fn paramsubst(
                                 let longest = tmatch_.map_or(e, |(_, mpos_)| mpos_);
                                 // Re-publish the chosen span last so the probes
                                 // above don't leave stale capture arrays behind.
-                                let span: String = cv[b..e].iter().collect();
+                                let span: String = sl(b, e).to_string();
                                 let off = if longest > e {
                                     // c:3130 leftover `ioff` == whole-subject size.
                                     crate::ported::pattern::charsub(val, val.len()) as i32
@@ -21488,7 +21561,7 @@ pub fn paramsubst(
                             return best;
                         }
                         for k in 0..=total {
-                            let suffix: String = cv[total - k..].iter().collect();
+                            let suffix: String = sl(total - k, nn).to_string();
                             // (#b) capture wiring via glob_match_static.
                             if gms(&suffix, ioff(total - k), total - k > 0) {
                                 return Some((total - k, total));
@@ -21504,11 +21577,11 @@ pub fn paramsubst(
                         let (b, e) = bounds.unwrap_or((0, 0));
                         let mut parts: Vec<String> = Vec::new();
                         if match_only {
-                            parts.push(cv[b..e].iter().collect()); // c:2618
+                            parts.push(sl(b, e).to_string()); // c:2618
                         }
                         if rest_flag {
-                            let mut rest: String = cv[..b].iter().collect(); // c:2630
-                            rest.extend(cv[e..].iter()); // c:2634
+                            let mut rest: String = sl(0, b).to_string(); // c:2630
+                            rest.push_str(sl(e, nn)); // c:2634
                             parts.push(rest);
                         }
                         if (ben & SUB_BIND) != 0 {
@@ -21525,10 +21598,10 @@ pub fn paramsubst(
                     match bounds {
                         Some((b, e)) => {
                             if match_only {
-                                cv[b..e].iter().collect()
+                                sl(b, e).to_string()
                             } else {
-                                let before: String = cv[..b].iter().collect();
-                                let after: String = cv[e..].iter().collect();
+                                let before: String = sl(0, b).to_string();
+                                let after: String = sl(e, nn).to_string();
                                 before + &after
                             }
                         }
@@ -21539,6 +21612,12 @@ pub fn paramsubst(
                                 val.to_string()
                             }
                         }
+                    }
+                    })();
+                    if byte_mode {
+                        crate::byte_units::canonical(&out)
+                    } else {
+                        out
                     }
                 };
                 // `per_element_array` decides whether the operator runs over an array at all. Test

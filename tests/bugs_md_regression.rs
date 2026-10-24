@@ -2975,3 +2975,36 @@ fn bash_param_braces_nest_only_on_dollar_brace() {
         assert_eq!((ec, out.as_str()), (0, want), "script: {script}");
     }
 }
+
+/// BUGS.md #1205 — without MULTIBYTE a match unit is one BYTE, in the matcher
+/// (c:Src/pattern.c:1946) and in the `${…}` walkers (c:Src/glob.c:2958
+/// `MB_METACHARINC`). zshrs walked characters, so every substitution below
+/// kept whole characters (and `#` / `##` / `(M)` panicked on a cut).
+/// Locale-independent cases only: `?`, a bracket of literal bytes, offsets.
+#[test]
+fn nomultibyte_substitutions_walk_bytes() {
+    if zshrs_bin().is_none() {
+        return;
+    }
+    let script = r#"hex() { printf %s "$1" | od -An -tx1 | tr -d ' \n'; echo; }
+setopt extendedglob; x='aé漢z'; unsetopt multibyte
+print -r -- ${x//?/.}
+hex ${x#a?}
+hex ${x%%?z}
+hex ${(M)x#a?}
+print -r -- ${x//[é]/X}
+print -r -- ${(S)x//(#m)[^a]/<$MBEGIN>}
+[[ $x = a?????z ]] && echo y
+setopt multibyte
+print -r -- ${x//?/.}
+print -r -- ${x#a?}"#;
+    let (ec, out, err) = run_zshrs(script);
+    assert_eq!(
+        (ec, out.as_str(), err.as_str()),
+        (
+            0,
+            ".......\na9e6bca27a\n61c3a9e6bc\n61c3\naXX漢z\na<2><3><4><5><6><7>\ny\n....\n漢z\n",
+            ""
+        )
+    );
+}

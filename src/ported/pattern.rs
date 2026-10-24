@@ -566,6 +566,15 @@ pub fn patcompstart() {
 /// the input cursor at end of parse — used by `bin_zregexparse` to
 /// detect partial-parse cases.
 pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> Option<Patprog> {
+    // Without MULTIBYTE C compiles the pattern's raw bytes (c:1946); spell
+    // each non-ASCII byte as one `Meta` pair so a literal byte compares
+    // equal to the same byte of a subject spelled the same way (pattryrefs).
+    let exp_bytes = if crate::byte_units::byte_mode() {
+        crate::byte_units::byte_spelling(exp)
+    } else {
+        std::borrow::Cow::Borrowed(exp)
+    };
+    let exp: &str = &exp_bytes;
     // Global compiled-pattern cache (crate::pat_cache, a zshrs-only opt —
     // see that module for the safety/key/threading rationale). Skipped when
     // `endexp` is requested: that out-param is a compile side effect the
@@ -893,12 +902,12 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
        // made a mid-pattern `(#i)` / `(#b)` node clear GF_MULTIBYTE for the
        // remainder of the match (c:2942 assigns the payload ABSOLUTELY).
        //
-       // GF_MULTIBYTE is forced ON rather than taken from `seeded_globflags`:
-       // the option gate is correct C (c:572-575) but zshrs's capture and
-       // substitution layers index the subject as UTF-8, and `unsetopt
-       // multibyte` makes zsh match in raw BYTES (c:1946), which those layers
-       // cannot yet represent — see the `charinc` note below.
-    patglobflags.store(seeded_globflags | GF_MULTIBYTE, Ordering::Relaxed);
+       // `seeded_globflags` carries `patcompstart`'s option-gated
+       // GF_MULTIBYTE (c:524-525), so `unsetopt multibyte` compiles a
+       // byte-unit program (c:1946). The matcher steps raw bytes inside the
+       // subject's UTF-8 (`charinc`), and the substitution walkers step the
+       // same unit (`MB_METACHARINC`, c:Src/glob.c:2958).
+    patglobflags.store(seeded_globflags, Ordering::Relaxed);
 
     // c:583-590 — leading `(#...)` flag specifiers are hoisted into
     // patprog.globflags so the matcher applies them globally for the
@@ -924,11 +933,8 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
     // both sides, but the glob scanner now drives `pattry` directly.
     //
     // c:572-575 — `if (isset(MULTIBYTE)) patglobflags = GF_MULTIBYTE; else
-    // patglobflags = 0;`. The bit is OPTION-GATED in C, but it is kept
-    // unconditional here (see the `patglobflags.store` note above): zshrs's
-    // capture / substitution layers slice the subject as UTF-8, and the
-    // nomultibyte unit is a raw BYTE. An explicit in-pattern `(#U)` still
-    // clears it below (c:1116), which the matcher now honours.
+    // patglobflags = 0;`: the bit is OPTION-GATED, taken from the seed. An
+    // in-pattern `(#u)` / `(#U)` sets / clears it below (c:1111-1117).
     //
     // The `0xff` is the `(#aN)` APPROXIMATION BUDGET (c:1054-1066), which C
     // carries in the low byte of the same word. Masking it off here dropped a
@@ -941,7 +947,7 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
     // `/abs/path/{fo,foo,oof}`. A relative `(#a1)ofo` was unaffected — the flag
     // sits inside the sole component and this very hoist loop reads it there.
     let mut hoisted_globflags: i32 =
-        GF_MULTIBYTE | (seeded_globflags & (GF_IGNCASE | GF_LCMATCHUC | 0xff));
+        seeded_globflags & (GF_MULTIBYTE | GF_IGNCASE | GF_LCMATCHUC | 0xff);
     // c:953-954 gates BOTH bytes: `*patparse == zpc_special[ZPC_INPAR]`
     // as well as `patparse[1] == zpc_special[ZPC_HASH]`. SHGLOB
     // (c:500-510) and `disable -p '('` mask the INPAR slot to Marker,
@@ -983,17 +989,9 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
                 // patgetglobflags ALSO updates the global patglobflags with the
                 // sets AND the clears, so it holds the authoritative running
                 // value. REPLACE the toggle-able bits from it rather than
-                // OR-accumulating the lossy return.
-                // GF_MULTIBYTE is deliberately NOT in the mask: the init above
-                // force-sets it (this port always matches UTF-8) while the
-                // global patglobflags may not carry it, so replacing it from the
-                // global would wrongly clear it and break multibyte matching.
-                // The original `|=` could not clear it either, so leaving it out
-                // preserves that (rare `(#U)` single-byte requests are no more
-                // broken than before). The fold/backref/matchref bits, which DO
-                // need clear semantics for `(#I)`/`(#B)`/`(#M)`, come from the
-                // authoritative global.
-                let gmask = GF_IGNCASE | GF_LCMATCHUC | GF_BACKREF | GF_MATCHREF;
+                // OR-accumulating the lossy return — `(#I)`/`(#B)`/`(#M)` and
+                // `(#U)` clear, `(#u)` sets (c:1111-1117).
+                let gmask = GF_IGNCASE | GF_LCMATCHUC | GF_BACKREF | GF_MATCHREF | GF_MULTIBYTE;
                 let cur = patglobflags.load(Ordering::Relaxed);
                 hoisted_globflags = (hoisted_globflags & !gmask) | (cur & gmask);
                 // `(#aN)` substitution budget — low 8 bits of
@@ -1008,9 +1006,6 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
                 if errs_byte != 0 {
                     hoisted_globflags = (hoisted_globflags & !0xff) | errs_byte;
                     // c:1066
-                }
-                if (bits & GF_MULTIBYTE) == 0 && rest.contains('U') {
-                    hoisted_globflags &= !GF_MULTIBYTE;
                 }
                 patparse_off.fetch_add(consumed, Ordering::Relaxed);
             }
@@ -3908,8 +3903,14 @@ pub fn charsub(x: &str, y: usize) -> usize {
     // c:1997
     let y = y.min(x.len());
     if !isset(MULTIBYTE) {
-        // c:2003-2004 — `if (!isset(MULTIBYTE)) return y - x;`
-        return y;
+        // c:2003-2004 — `if (!isset(MULTIBYTE)) return y - x;`, the distance
+        // in C's unmetafied BYTES. A `Meta` pair in `x` is one such byte
+        // (the matcher's whole input is in that spelling here, see
+        // `crate::byte_units`).
+        return match x.get(..y) {
+            Some(head) => crate::ported::utils::unmetafy_str(head).len(),
+            None => y,
+        };
     }
     // c:2011-2026 — count characters in `x[0..y]`. C bounds each
     // `mbrtowc` by `y-x` (c:2012), so an END OFFSET THAT CUTS a
@@ -4056,6 +4057,16 @@ pub fn pattryrefs(
     } else {
         &string[..stringlen as usize]
     };
+    // c:2330-2345 — C matches the UNMETAFIED bytes. Without MULTIBYTE that is
+    // the byte spelling `patcompile` gave the pattern (`crate::byte_units`);
+    // the walkers already pass it, so this is the identity for them.
+    let byte_mode = crate::byte_units::byte_mode();
+    let trial_bytes = if byte_mode {
+        crate::byte_units::byte_spelling(trial)
+    } else {
+        std::borrow::Cow::Borrowed(trial)
+    };
+    let trial: &str = &trial_bytes;
     // Substring fast path for the ubiquitous `*literal*` shape
     // (optionally `(#i)`): program is [P_GFLAGS] P_STAR P_EXACTLY
     // P_STAR P_END with no captures requested. history-search-multi-
@@ -4276,6 +4287,10 @@ pub fn pattryrefs(
         // which is exactly what C's `metafy` produces.
         let metafy_span = |lo: usize, hi: usize| -> String {
             if let Some(s) = trial.get(lo..hi) {
+                if byte_mode {
+                    // Back from the byte spelling to the ordinary form.
+                    return crate::byte_units::canonical(s);
+                }
                 return s.to_string();
             }
             let mut out = String::new();
@@ -4315,7 +4330,7 @@ pub fn pattryrefs(
         if (cur_globflags & GF_MATCHREF) != 0 && (prog.0.flags & PAT_FILE as i32) == 0 {
             let hi = matched_end.min(trial.len());
             let mstr: String = metafy_span(0, hi); // c:2536 metafy(patinstart..patinput)
-            let mlen = mstr.chars().count() as i64; // c:2534 CHARSUB
+            let mlen = charsub(trial, hi) as i64; // c:2534 CHARSUB
             let base: i64 = if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS) {
                 0
             } else {
@@ -4694,27 +4709,30 @@ pub fn patmatchrange(
                 }
                 continue;
             }
-            // c:3886-3960 — POSIX classes. Single-byte locale
-            // (the C build only reaches this file without
-            // MULTIBYTE_SUPPORT), so `ch` outside 0-255 never matches.
+            // c:3886-3960 — POSIX classes, tested with the libc <ctype.h>
+            // predicates on the unsigned byte: the range test C runs
+            // whenever GF_MULTIBYTE is clear (`unsetopt multibyte`, `(#U)`).
+            // The predicates are LOCALE-driven — macOS classifies 0x80-0xff
+            // of a UTF-8 locale as Latin-1 (`isalpha(0xc3)`); other C libraries
+            // answer for themselves — so `is_ascii_*` agreed with C only below 0x80.
+            let _ = *crate::ported::utils::MB_LOCALE_READY;
             let hit = c < 256 && {
                 let cb = c as u8;
+                let ci = cb as libc::c_int;
                 match swtype {
-                    PP_ALPHA => cb.is_ascii_alphabetic(),   // c:3886
-                    PP_ALNUM => cb.is_ascii_alphanumeric(), // c:3890
-                    PP_ASCII => (c & !0x7f) == 0,           // c:3894
-                    PP_BLANK => cb == b' ' || cb == b'\t',  // c:3898
-                    PP_CNTRL => cb.is_ascii_control(),      // c:3907
-                    PP_DIGIT => cb.is_ascii_digit(),        // c:3911
-                    PP_GRAPH => cb.is_ascii_graphic(),      // c:3915
-                    PP_LOWER => cb.is_ascii_lowercase(),    // c:3919
-                    // c:3923 ZISPRINT — C isprint(): graphic or space.
-                    PP_PRINT => cb.is_ascii_graphic() || cb == b' ',
-                    PP_PUNCT => cb.is_ascii_punctuation(), // c:3927
-                    // c:3931 isspace(): " \t\n\v\f\r"
-                    PP_SPACE => matches!(cb, b' ' | 0x09..=0x0d),
-                    PP_UPPER => cb.is_ascii_uppercase(), // c:3935
-                    PP_XDIGIT => cb.is_ascii_hexdigit(), // c:3939
+                    PP_ALPHA => unsafe { libc::isalpha(ci) != 0 }, // c:3886
+                    PP_ALNUM => unsafe { libc::isalnum(ci) != 0 }, // c:3890
+                    PP_ASCII => (c & !0x7f) == 0,                  // c:3894
+                    PP_BLANK => cb == b' ' || cb == b'\t',         // c:3898
+                    PP_CNTRL => unsafe { libc::iscntrl(ci) != 0 }, // c:3907
+                    PP_DIGIT => unsafe { libc::isdigit(ci) != 0 }, // c:3911
+                    PP_GRAPH => unsafe { libc::isgraph(ci) != 0 }, // c:3915
+                    PP_LOWER => unsafe { libc::islower(ci) != 0 }, // c:3919
+                    PP_PRINT => crate::ported::ztype_h::ZISPRINT(cb), // c:3923
+                    PP_PUNCT => unsafe { libc::ispunct(ci) != 0 }, // c:3927
+                    PP_SPACE => unsafe { libc::isspace(ci) != 0 }, // c:3931
+                    PP_UPPER => unsafe { libc::isupper(ci) != 0 }, // c:3935
+                    PP_XDIGIT => unsafe { libc::isxdigit(ci) != 0 }, // c:3939
                     PP_IDENT => crate::ported::ztype_h::iident(cb), // c:3943
                     PP_IFS => crate::ported::ztype_h::isep(cb), // c:3947
                     PP_IFSSPACE => crate::ported::ztype_h::iwsep(cb), // c:3951
@@ -6130,6 +6148,28 @@ pub fn patmatch(
             }
             if b < 0x80 && live_class_hit(b as char) {
                 return (true, badv);
+            }
+            // c:3886-3939 — without GF_MULTIBYTE a POSIX class tests the raw
+            // byte with the libc <ctype.h> predicate (`patmatchrange`). The
+            // ASCII members are already in `set`; a high byte is the locale's
+            // call (macOS: Latin-1 in a UTF-8 locale).
+            if b >= 0x80 && (gflags & GF_MULTIBYTE) == 0 && classmask != 0 {
+                let _ = *crate::ported::utils::MB_LOCALE_READY;
+                let ci = b as libc::c_int;
+                let hit = unsafe {
+                    (classmask & (1 << 0) != 0 && libc::isalpha(ci) != 0)
+                        || (classmask & (1 << 1) != 0 && libc::isalnum(ci) != 0)
+                        || (classmask & (1 << 2) != 0 && libc::isupper(ci) != 0)
+                        || (classmask & (1 << 3) != 0 && libc::islower(ci) != 0)
+                        || (classmask & (1 << 4) != 0 && libc::isspace(ci) != 0)
+                        || (classmask & (1 << 6) != 0 && libc::ispunct(ci) != 0)
+                        || (classmask & (1 << 7) != 0 && libc::iscntrl(ci) != 0)
+                        || (classmask & (1 << 8) != 0 && crate::ported::ztype_h::ZISPRINT(b))
+                        || (classmask & (1 << 9) != 0 && libc::isgraph(ci) != 0)
+                };
+                if hit {
+                    return (true, badv);
+                }
             }
             // c:2800 — without GF_MULTIBYTE the input char is a single BYTE
             // (`charref`, c:1919-1920) and `patmatchrange` walks the operand's
