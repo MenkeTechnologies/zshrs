@@ -2111,9 +2111,14 @@ fn gettokstr(c: char, sub: bool) -> lextok {
         // (`print -r -- 三` printed nothing). Only ASCII can be blank.
         let inbl = c.is_ascii() && crate::ztype_h::inblank(c as u8);
 
+        // `rest` is borrowed, never copied: this runs on every token-ending
+        // blank, and copying the remaining input each time made sourcing a
+        // 51k-entry .zcompdump quadratic (compinit -C: 10.2s vs zsh's 0.24s).
         if inbl && in_brace_param == 0 && pct == 0 && !sub && !LEX_LEXBUF.with_borrow(|b| {
-                let rest = LEX_INPUT.with_borrow(|s| s.get(LEX_POS.get()..).unwrap_or("").to_string());
-                crate::dash_mode::korn_subscript_blank(brct, LEX_OLDPOS.get(), b.ptr.as_deref().unwrap_or(""), &rest)
+                LEX_INPUT.with_borrow(|s| {
+                    let rest = s.get(LEX_POS.get()..).unwrap_or("");
+                    crate::dash_mode::korn_subscript_blank(brct, LEX_OLDPOS.get(), b.ptr.as_deref().unwrap_or(""), rest)
+                })
             }) {
             // Whitespace outside brace param ends token.
             //
