@@ -1658,6 +1658,14 @@ fn par_for() -> Option<ZshCommand> {
 
     // Check for C-style: for (( init; cond; step ))
     if tok() == DINPAR {
+        // !!! PDKSH GATE (no C counterpart) !!! mksh has no arithmetic `for ((…))`:
+        // the `((` after `for` is a syntax error.
+        if crate::dash_mode::pdksh_family() {
+            set_noaliases(saved_noaliases);
+            set_nocorrect(saved_nocorrect);
+            set_tok(LEXERR);
+            return None;
+        }
         // c:1110-1111 — close out infor / cmdpos after parse_for_cstyle
         // has consumed the init/cond/step triple. Done inside the
         // helper itself so we honour the C ordering.
@@ -6927,6 +6935,10 @@ pub fn par_for_wordcode(cmplx: &mut i32) {
     zshlex();
     // c:1097 — `if (tok == DINPAR) {`
     if tok() == DINPAR {
+        // !!! PDKSH GATE (no C counterpart) !!! mksh has no arithmetic `for ((…))`.
+        if crate::dash_mode::pdksh_family() {
+            YYERRORV!(oecused);
+        }
         // c:1098 — `zshlex();`
         zshlex();
         // c:1099-1100 — `if (tok != DINPAR) YYERRORV(oecused);`
