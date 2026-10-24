@@ -106,6 +106,39 @@ use crate::DPUTS;
 use std::ffi::CString;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+/// !!! BASH GATE (no C counterpart) !!! bash strips source-literal backslashes
+/// from a `${v/pat/repl}` replacement (`dash_mode::strip_replacement_backslashes`),
+/// but a double-quoted `$'…'` segment (the Qstring + `'` the `/` arms restore)
+/// keeps them, since stringsubst decodes it as ANSI-C in bash:
+/// `y=abc; echo "${y/b/$'\x41'}"` is `aAc`.
+macro_rules! bash_strip_repl_keep_dq_ansi {
+    ($raw:expr) => {{
+        let cs: Vec<char> = $raw.chars().collect();
+        let mut out = String::with_capacity(cs.len());
+        let mut plain = String::new();
+        let mut i = 0;
+        while i < cs.len() {
+            if cs[i] == Qstring && cs.get(i + 1) == Some(&'\'') {
+                let mut j = i + 2;
+                while j < cs.len() && cs[j] != '\'' {
+                    j += if cs[j] == '\\' { 2 } else { 1 };
+                }
+                let end = (j + 1).min(cs.len());
+                out.push_str(&crate::dash_mode::strip_replacement_backslashes(&std::mem::take(
+                    &mut plain,
+                )));
+                out.extend(&cs[i..end]);
+                i = end;
+            } else {
+                plain.push(cs[i]);
+                i += 1;
+            }
+        }
+        out.push_str(&crate::dash_mode::strip_replacement_backslashes(&plain));
+        out
+    }};
+}
+
 /// Port of `LF_ARRAY` from `Src/subst.c:33`.
 /// `#define LF_ARRAY 1`. Linked-list flag the substitution-result
 /// LinkList carries when the expansion produced multiple words.
@@ -1174,6 +1207,17 @@ fn stringsubst(
                 } // c:237
             } else if next_c == Some(Snull)
                 || (next_c == Some('\'') && !qt && !ANSI_C_SNULL_STRICT.with(|c| c.get()))
+                // !!! DROP-IN GATE (no C counterpart) !!! bash, mksh and /bin/sh
+                // decode `$'…'` inside the operand of a double-quoted `${…}`
+                // (`"${x:-$'\t'}"` is a TAB, `"${y/b/$'\x41'}"` replaces with `A`),
+                // although a bare `"$'\t'"` stays literal there; zsh and ksh93
+                // keep the operand literal too (the `!qt` rule above).
+                || (next_c == Some('\'')
+                    && qt
+                    && IN_PARAMSUBST_NEST.with(|c| c.get()) > 0
+                    && (crate::dash_mode::bash_mode()
+                        || crate::dash_mode::sh_mode()
+                        || (crate::dash_mode::korn_mode() && crate::dash_mode::pdksh_family())))
             {
                 // c:237
                 // $'...' ANSI-C quoting. Accept either the lexer-
@@ -18750,7 +18794,7 @@ pub fn paramsubst(
                 // from expanded values; run it on the pre-singsub raw form.
                 let raw_repl = retok_repl_head(raw_repl);
                 let raw_repl = if crate::dash_mode::bash_mode() {
-                    crate::dash_mode::strip_replacement_backslashes(&raw_repl)
+                    bash_strip_repl_keep_dq_ansi!(raw_repl)
                 } else {
                     raw_repl
                 };
@@ -19749,7 +19793,7 @@ pub fn paramsubst(
                 // from the replacement; run it on the pre-singsub raw form.
                 let raw_repl = retok_repl_head(raw_repl);
                 let raw_repl = if crate::dash_mode::bash_mode() {
-                    crate::dash_mode::strip_replacement_backslashes(&raw_repl)
+                    bash_strip_repl_keep_dq_ansi!(raw_repl)
                 } else {
                     raw_repl
                 };
