@@ -11639,6 +11639,19 @@ pub fn paramsubst(
                     // `v->start` and c:Src/subst.c:2944-2954 derives `vunset`
                     // from it. Record it so the `is_set` computation below reads
                     // the same resolved index instead of re-parsing the text.
+                    // !!! PDKSH GATE (no C counterpart) !!! mksh array indices
+                    // are unsigned 32-bit (`a[-1]=z; echo ${!a[@]}` lists
+                    // `… 4294967295`), so a negative subscript names a slot far
+                    // past the end rather than counting back: `${a[-1]}` is
+                    // empty and `${a[-1]:-d}` is `d` in mksh R59.
+                    let idx_n = if idx_n < 0
+                        && crate::dash_mode::korn_mode()
+                        && crate::dash_mode::pdksh_family()
+                    {
+                        idx_n as u32 as i64
+                    } else {
+                        idx_n
+                    };
                     resolved_sub_index.set(Some(idx_n));
                     let len = arr.len() as i64;
                     // c:Src/params.c:2110-2150 — KSH_ARRAYS uses 0-based
@@ -23027,6 +23040,15 @@ pub fn paramsubst(
                                     return (String::new(), 0, Vec::new());
                                 }
                             },
+                        };
+                        // !!! KSH93 GATE (no C counterpart) !!! ksh93 gives a negative
+                        // LENGTH no count-back meaning on an array slice either:
+                        // `a=(a b c d); "${a[@]:1:-1}"` and `"${@:1:-1}"` are empty, like
+                        // the scalar `${x:1:-1}` (the scalar arm below).
+                        let len = if crate::dash_mode::ksh93_mode() && len.map_or(false, |l| l < 0) {
+                            Some(0)
+                        } else {
+                            len
                         };
                         // c:Src/subst.c:3683-3690 — negative length is
                         // first adjusted by `length += alen - offset`,
