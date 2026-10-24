@@ -407,37 +407,61 @@ pub fn execbuiltin(
     // c:275 — `argc = countlinknodes(args);` — total argv length.
     argc = args.len() as i32; // c:275
 
-    // !!! BASH/KSH93 GATE (no C counterpart) !!! `read -n2 x` / `read -rN3 x`: bash and
-    // ksh93 take the count glued onto the flag, while zsh's option parser would read the
-    // digits as further option letters ("bad option: -2"). Split the digits off into the
-    // separate word the `-n N` / `-N N` handling in bin_read already expects.
+    // !!! BASH/KSH93 GATE (no C counterpart) !!! bash's `read -a NAME` / `-n N` /
+    // `-N N` / `-p PROMPT` and ksh93's `-A NAME` / `-n N` / `-N N` take a VALUE, glued
+    // (`-n2`) or as the next word, and options may follow it (`read -a a -d , x`).
+    // zsh's parser sees boolean letters there, so the value word would end option
+    // parsing. Lift each value out and queue it after the options, in the order
+    // bin_read takes them back off: prompt, count, array name.
     let args: Vec<String> = if name == "read"
         && (crate::dash_mode::bash_mode() || crate::dash_mode::ksh93_mode())
     {
-        let mut out: Vec<String> = Vec::with_capacity(args.len() + 1);
-        let mut past_flags = false;
-        for a in args {
-            let glued = !past_flags
-                && a.len() > 2
-                && a.starts_with('-')
-                && !a.starts_with("--")
-                && {
-                    let t = a.trim_end_matches(|c: char| c.is_ascii_digit());
-                    t.len() < a.len() && t.len() > 1 && (t.ends_with('n') || t.ends_with('N'))
-                };
-            if glued {
-                let t = a.trim_end_matches(|c: char| c.is_ascii_digit()).to_string();
-                let digits = a[t.len()..].to_string();
-                out.push(t);
-                out.push(digits);
-            } else {
-                if !a.starts_with('-') || a == "--" {
-                    past_flags = true;
+        let value_flags: &[u8] = if crate::dash_mode::bash_mode() { b"anNp" } else { b"AnN" };
+        let mut opts: Vec<String> = Vec::with_capacity(args.len());
+        let (mut prompt, mut count, mut aname): (Option<String>, Option<String>, Option<String>) =
+            (None, None, None);
+        let mut it = args.into_iter();
+        let mut rest: Vec<String> = Vec::new();
+        while let Some(a) = it.next() {
+            if !a.starts_with('-') || a == "-" || a == "--" {
+                rest.push(a);
+                break;
+            }
+            let b = a.as_bytes();
+            let mut j = 1;
+            let mut pushed = false;
+            while j < b.len() {
+                let c = b[j];
+                if value_flags.contains(&c) || c == b'd' || c == b'u' {
+                    let glued = &a[j + 1..];
+                    let val = if !glued.is_empty() { Some(glued.to_string()) } else { it.next() };
+                    if c == b'd' || c == b'u' {
+                        // zsh's own `d:` / `u:` arguments: pass the word(s) through.
+                        opts.push(a[..j + 1].to_string());
+                        opts.extend(val);
+                    } else {
+                        opts.push(a[..j + 1].to_string());
+                        match c {
+                            b'p' => prompt = val,
+                            b'n' | b'N' => count = val,
+                            _ => aname = val,
+                        }
+                    }
+                    pushed = true;
+                    break;
                 }
-                out.push(a);
+                j += 1;
+            }
+            if !pushed {
+                opts.push(a);
             }
         }
-        out
+        rest.extend(it);
+        opts.extend(prompt);
+        opts.extend(count);
+        opts.extend(aname);
+        opts.extend(rest);
+        opts
     } else {
         args
     };
@@ -17488,6 +17512,7 @@ pub fn bin_read(
     // /bin/bash (in other modes `-a` parses but is inert, matching nothing).
     let want_array =
         OPT_ISSET(ops, b'A') || (read_counts && OPT_ISSET(ops, b'a'));
+    let reply_named = argi < args.len();
     let reply = if argi < args.len() {
         let mut r = args[argi].clone();
         argi += 1;
@@ -17507,7 +17532,17 @@ pub fn bin_read(
         "REPLY".to_string() // c:6446
     };
 
-    if want_array && argi < args.len() {
+    // !!! DROP-IN GATE (no C counterpart) !!! bash (`read -a a junk`) and ksh93
+    // (`read -A a junk`) ignore names after the array and fill it, status 0;
+    // mksh reports "too many arguments", status 2.
+    if want_array && argi < args.len() && crate::dash_mode::pdksh_family() {
+        zwarnnam(name, "too many arguments");
+        return 2;
+    }
+    if want_array
+        && argi < args.len()
+        && !(crate::dash_mode::bash_mode() || crate::dash_mode::ksh93_mode())
+    {
         // c:6448
         zwarnnam(name, "only one array argument allowed"); // c:6449
         return 1;
@@ -17918,6 +17953,12 @@ pub fn bin_read(
         // bash `-n N` (bash_nchars) joins this raw-char path but STOPS at the
         // delimiter (newline): `read -n 10 <<< "ab"` gets "ab", not 10 bytes.
         if nchars <= 0 {
+            // !!! BASH-MODE (no C counterpart) !!! bash `read -n 0 x` reads
+            // nothing, sets x empty and succeeds.
+            if crate::dash_mode::bash_mode() && bash_nchars {
+                setsparam(&reply, "");
+                return 0;
+            }
             return 1;
         }
         // c:6633-6634 — `bptr = buf = zalloc(nchars*MB_CUR_MAX+1)`: `nchars`
@@ -18553,7 +18594,49 @@ pub fn bin_read(
         // on `   hello   ` set `line` to `   hello   ` (with spaces)
         // instead of `hello` — bug #247.
         let lead = &buf[ws_prefix_len(&buf)..];
-        let trimmed = &lead[..ws_suffix_start(lead)];
+        let mut trimmed = &lead[..ws_suffix_start(lead)];
+        // !!! DROP-IN GATE (no C counterpart) !!! bash, ksh93, mksh, dash and
+        // /bin/sh assign a lone variable by the same rule as the last of
+        // several: when the line holds exactly one field, its trailing
+        // non-whitespace delimiter goes (`IFS=: read a` on `  lead :` → `  lead `,
+        // on `a:b:` → `a:b:`). bash read.def `get_word_from_string` + `if
+        // (*input_string == 0)`. ksh93 keeps the line when a field holds a
+        // backslash escape (`a\:b:` → `a:b:`). zsh keeps the delimiter.
+        if crate::dash_mode::bash_mode() || crate::dash_mode::posix_faithful() {
+            let mut i = 0;
+            let mut escaped = false;
+            while i < trimmed.len() {
+                let l = unit_len(&trimmed[i..]);
+                let unit = &trimmed[i..i + l];
+                if unit.starts_with(rmark) {
+                    escaped = true;
+                    i += l;
+                    if i < trimmed.len() {
+                        i += unit_len(&trimmed[i..]);
+                    }
+                    continue;
+                }
+                if unit_sep(unit).0 {
+                    break;
+                }
+                i += l;
+            }
+            let word_end = i;
+            if i < trimmed.len() && unit_sep(&trimmed[i..i + unit_len(&trimmed[i..])]) == (true, false) {
+                i += unit_len(&trimmed[i..]);
+                i += ws_prefix_len(&trimmed[i..]);
+                if i >= trimmed.len() && !(escaped && crate::dash_mode::ksh93_mode()) {
+                    trimmed = &trimmed[..word_end];
+                }
+            }
+        }
+        // !!! BASH-MODE (no C counterpart) !!! bash and /bin/sh: with no NAME the
+        // line goes to REPLY "without the ending delimiter but otherwise
+        // unmodified" (bash(1) read) — IFS whitespace stays (`read <<< ' hi '`
+        // → `[ hi ]`); zsh, ksh93 and mksh strip it.
+        if !reply_named && (crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode()) {
+            trimmed = &buf;
+        }
         // Strip backslash-escape marks: `read x` on `a\ b` → x="a b".
         let trimmed = unmark(trimmed);
         // c:Src/builtin.c:7102-7109 — `-e` / `-E` flags. Both echo
@@ -23059,6 +23142,38 @@ fn printf_format(
                 Some('n') => {
                     arg_i += 1;
                 }
+                // !!! KSH93 GATE (no C counterpart) !!! ksh93 printf(1): `%H` writes the
+                // operand HTML-escaped (`<>&"'` → `&lt;` `&gt;` `&amp;` `&quot;` `&#39;`),
+                // `%#H` URL-encodes every byte but `[A-Za-z0-9-_.~]`; `%Z` writes a NUL
+                // and takes no operand. zsh has none of them ("invalid directive").
+                Some('H') if crate::dash_mode::ksh93_mode() => {
+                    let a = args.get(arg_i).cloned().unwrap_or_default();
+                    let mut esc = String::with_capacity(a.len());
+                    if spec.contains('#') {
+                        for b in crate::ported::utils::unmetafy_str(&a) {
+                            if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+                                esc.push(b as char);
+                            } else {
+                                esc.push_str(&format!("%{:02X}", b));
+                            }
+                        }
+                    } else {
+                        for c in a.chars() {
+                            match c {
+                                '<' => esc.push_str("&lt;"),
+                                '>' => esc.push_str("&gt;"),
+                                '&' => esc.push_str("&amp;"),
+                                '"' => esc.push_str("&quot;"),
+                                '\'' => esc.push_str("&#39;"),
+                                _ => esc.push(c),
+                            }
+                        }
+                    }
+                    let spec = spec.replace('#', "") + "s";
+                    out.push_str(&format_spec_str(&spec, &esc, false));
+                    arg_i += 1;
+                }
+                Some('Z') if crate::dash_mode::ksh93_mode() => out.push('\0'),
                 // c:builtin.c:5430-5443 — unknown directive in C is
                 // a hard error: `zwarnnam(name, "%s: invalid
                 // directive", start); ...; return 1;`. Bubble the
