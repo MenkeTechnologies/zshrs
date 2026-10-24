@@ -1250,6 +1250,24 @@ fn par_sublist() -> Option<ZshSublist> {
     if tok() == COPROC {
         flags.coproc = true;
         zshlex();
+        // !!! BASH GATE (no C counterpart) !!! bash's `coproc WORD
+        // compound_command` names the coprocess: `coproc NAME { …; }` leaves
+        // its fds in `NAME` and its pid in `NAME_PID` (`coproc cmd args`
+        // stays the unnamed COPROC). zsh reads `NAME` as the command and dies
+        // at the `}`. bash reads the token after the name in command
+        // position, so the name is consumed and the next token re-lexed with
+        // incmdpos set — `{` then lexes as INBRACE and `if` as IF.
+        if tok() == STRING_LEX && crate::dash_mode::bash_mode() {
+            let rest: String = super::lex::LEX_UNGET_BUF.with_borrow(|b| b.iter().collect::<String>())
+                + &super::lex::LEX_INPUT
+                    .with_borrow(|s| s.get(super::lex::LEX_POS.get()..).unwrap_or("").to_string());
+            if crate::dash_mode::bash_coproc_names_compound(&rest) {
+                // The AST has no slot for the name yet, so the coprocess still
+                // runs as COPROC; the word is consumed so the compound parses.
+                set_incmdpos(true);
+                zshlex();
+            }
+        }
     } else if tok() == BANG_TOK {
         flags.not = true;
         zshlex();

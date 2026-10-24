@@ -1139,6 +1139,27 @@ pub fn math_unset_is_error(subscripted: bool) -> bool {
     true
 }
 
+/// bash's `coproc WORD compound_command` (parse.y `coproc:`): the word after
+/// `coproc` names the coprocess only when a compound command follows it, so
+/// `coproc NAME { …; }` sets `NAME`/`NAME_PID` while `coproc cmd args` is the
+/// unnamed `COPROC`. bash reads the word after `WORD` in command position, so
+/// a reserved word there opens a compound (`coproc echo if` is a syntax
+/// error). `rest` is the input after the candidate name; true when it starts
+/// with `{`, `(`, `((`, `[[`, `if`, `while`, `until`, `for`, `case` or
+/// `select` as a word of its own.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn bash_coproc_names_compound(rest: &str) -> bool {
+    let rest = rest.trim_start_matches([' ', '\t']);
+    if rest.starts_with('(') {
+        return true;
+    }
+    let word_end = rest
+        .find(|c: char| matches!(c, ' ' | '\t' | '\n' | ';' | '&' | '|' | '(' | ')' | '<' | '>'))
+        .unwrap_or(rest.len());
+    matches!(&rest[..word_end], "{" | "[[" | "if" | "while" | "until" | "for" | "case" | "select")
+}
+
 /// ksh93's `${.sh.lineno}`: the script line of the most recent function call.
 /// It is 0 until a function is called, and ksh93 keeps one value, not one per
 /// frame: a `function name { … }` body starts out seeing its own call line, a
