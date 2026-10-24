@@ -20325,7 +20325,7 @@ fn case_pattern_for_match(pattern: &str) -> String {
             '\u{e19d}' | '\u{e19e}' => {
                 in_q = !in_q; // strip the marker, toggle quote state
             }
-            '\u{e19f}' | '\u{e18b}' => {
+            '\u{e19f}' | '\u{e1a0}' => {
                 // Bnull / Bnullkeep escape — keep it and its escaped char
                 // verbatim (already a literal escape patcompile honors).
                 out.push(c);

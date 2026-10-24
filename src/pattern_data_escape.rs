@@ -212,6 +212,7 @@ pub fn escape_tokenized_data_backslashes(v: &str) -> String {
 /// so an escape that is already present is never re-escaped into a literal
 /// backslash plus a live metacharacter.
 pub fn escape_shglob_parens(v: &str, keep_ksh_groups: bool) -> String {
+    use crate::ported::zsh_h::{Bnull, Bnullkeep};
     if !v.contains(['(', '|', ')']) {
         return v.to_string();
     }
@@ -224,7 +225,11 @@ pub fn escape_shglob_parens(v: &str, keep_ksh_groups: bool) -> String {
     let mut i = 0;
     while i < cs.len() {
         let c = cs[i];
-        if c == '\\' && i + 1 < cs.len() {
+        // A quoted `case` / `[[ ]]` char arrives as `Bnull X` (`')'`, `\)`,
+        // `'a|b'`) — already literal, so the pair is stepped over whole like
+        // a `\X` one. Escaping its `X` again left `Bnull \ )`, an unmatched
+        // group close that never matched.
+        if (c == '\\' || c == Bnull || c == Bnullkeep) && i + 1 < cs.len() {
             out.push(c);
             out.push(cs[i + 1]);
             i += 2;
@@ -247,7 +252,7 @@ pub fn escape_shglob_parens(v: &str, keep_ksh_groups: bool) -> String {
                 let ksh = keep_ksh_groups
                     && i > 0
                     && matches!(cs[i - 1], '@' | '*' | '+' | '?' | '!')
-                    && !(i >= 2 && cs[i - 2] == '\\');
+                    && !(i >= 2 && matches!(cs[i - 2], '\\' | Bnull | Bnullkeep));
                 groups.push(ksh);
                 if !ksh {
                     out.push('\\');
