@@ -5231,6 +5231,25 @@ pub fn fetchvalue<'a>(
     None
 }
 
+/// !!! KORN GATE (no C counterpart) !!! used by the two right-justify (`-R` /
+/// `-Z`) padding arms below. zsh pads the value verbatim, so `typeset -R5
+/// x='ab  '` reads `[ ab  ]`; ksh93 and mksh drop the trailing blanks first and
+/// justify what is left: `[   ab]`, and `typeset -R3 x='abcd  '` is `[bcd]`.
+/// ksh93 strips only spaces (a trailing tab stays in the value); mksh strips
+/// spaces, tabs and newlines (`typeset -R5 x=$'ab\t'` reads `[   ab]`).
+macro_rules! korn_rjust_strip_trailing {
+    ($s:expr) => {
+        if crate::dash_mode::korn_mode() {
+            let keep = if crate::dash_mode::pdksh_family() {
+                $s.trim_end_matches([' ', '\t', '\n']).len()
+            } else {
+                $s.trim_end_matches(' ').len()
+            };
+            $s.truncate(keep);
+        }
+    };
+}
+
 /// Port of `getstrvalue()` from `Src/params.c:2335`.
 /// Full C body dispatches on `PM_TYPE(v->pm->node.flags)`:
 /// PM_HASHED (KSH path: `[0]` index lookup), PM_ARRAY (sepjoin
@@ -5379,6 +5398,7 @@ pub fn getstrvalue(v: Option<&mut value>) -> String {
                 // c:2426-2510 — right-justify with optional zero-padding
                 // honouring leading-blank/minus/0x/base# prefix
                 // detection for numeric values.
+                korn_rjust_strip_trailing!(s);
                 let charlen = s.chars().count();
                 if charlen < fwidth {
                     let mut zero = true;
@@ -6946,6 +6966,7 @@ pub fn getsparam(name: &str) -> Option<String> {
                         }
                         s = out;
                     } else if pad_flags & (PM_RIGHT_B | PM_RIGHT_Z) != 0 {
+                        korn_rjust_strip_trailing!(s);
                         let charlen = s.chars().count();
                         if charlen < fwidth {
                             let mut zero = true;
