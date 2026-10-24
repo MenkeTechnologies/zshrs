@@ -1918,15 +1918,10 @@ pub fn trap_listing_line(signame: &str, body: &str) -> Option<String> {
         // needed, exactly like zsh — but over the RAW body.
         crate::ported::utils::quotedzputs(body)
     } else if dash_strict() {
-        // dash / ash close the quote, emit `"'"`, reopen — then drop a
-        // TRAILING empty reopened run (a leading one is kept).
-        let mut q = format!("'{}'", body.replace('\'', "'\"'\"'"));
-        // An IGNORED trap has an empty body and lists as `trap -- '' SIG` in
-        // every shell, so the trim must not eat the whole quoted string.
-        if q.len() > 2 && q.ends_with("''") {
-            q.truncate(q.len() - 2);
-        }
-        q
+        // dash / ash `single_quote()`: a run of apostrophes goes inside ONE
+        // `"…"` (`a''b` → `'a'"''"'b'`), and no empty `''` run follows a
+        // trailing one. An IGNORED trap's empty body is still `''`.
+        crate::extensions::emulation_output::dash_single_quote(body)
     } else {
         // bash and /bin/sh: `'` → `'\''`, no empty-run trimming at either end.
         format!("'{}'", body.replace('\'', "'\\''"))
