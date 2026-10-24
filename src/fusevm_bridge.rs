@@ -7840,6 +7840,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // is what BUILTIN_SET_VAR hands back as the assignment's status
         // (c:Src/exec.c:3396 `lastval = cmdoutval`), so mirror it here.
         vm.last_status = with_executor(|exec| exec.last_status());
+        // !!! KORN GATE (no C counterpart) !!! and like a reaped `$( … )` child
+        // (c:Src/signals.c:302) it is the status of an otherwise-empty command
+        // in ksh93 and mksh: `${ false; }; echo $?` → 1. zsh 5.10 leaves
+        // `use_cmdoutval` alone here (no child), so its answer is 0.
+        if crate::dash_mode::korn_mode() {
+            crate::ported::exec::use_cmdoutval.store(1, std::sync::atomic::Ordering::Relaxed);
+        }
         // An UNQUOTED substitution is word-split only when the shell splits
         // ordinary expansions: always under ksh/mksh, and under zsh only
         // with SH_WORD_SPLIT. `split` was decided above, before the body
