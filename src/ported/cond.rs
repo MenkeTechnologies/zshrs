@@ -185,6 +185,17 @@ pub fn evalcond(state: &mut estate, fromtest: Option<&str>) -> i32 {
                 strs = vec![s0, s1];
                 l = 2;
             }
+            // !!! KORN GATE (no C counterpart) !!! ksh93 and mksh have a `-H file`
+            // test (an HP-UX context-dependent directory), false on every other
+            // system: `test -H x` is status 1 where zsh reports "unknown
+            // condition" (2).
+            if ctype == COND_MOD
+                && l == 1
+                && crate::dash_mode::korn_mode()
+                && untokenize(&name) == "-H"
+            {
+                return 1;
+            }
             let errname: String = if name.chars().next().map_or(false, IS_DASH) {
                 untokenize(&name)
             } else if strs
@@ -677,7 +688,10 @@ pub fn optison(name: Option<&str>, s: &str) -> i32 {
     };
     if i == 0 {
         // c:510
-        if isset(POSIXBUILTINS) {
+        // !!! BASH-MODE GATE (no C counterpart) !!! bash reads an unknown `-o`
+        // option as plain false: `[[ -o nosuchopt ]]` is status 1 with no
+        // diagnostic, as in `test` (zsh: status 3).
+        if isset(POSIXBUILTINS) || crate::dash_mode::bash_mode() {
             // c:511
             return 1; // c:512
         } else {
