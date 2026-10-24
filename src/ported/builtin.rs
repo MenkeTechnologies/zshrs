@@ -1194,9 +1194,14 @@ pub fn execbuiltin(
     // !!! BASH-MODE (no C counterpart) !!! bash's declaration builtins report a failed
     // assignment (`declare -r s=1; declare s=2`) as status 1 and carry on with the rest
     // of the line; zsh's zerr from the same assignment ends it (errflag).
-    // /bin/sh (bash 3.2 in POSIX mode) does the same: `export 1bad=x` and
-    // `readonly 1bad=x` fail with 1 and the script goes on.
-    let bash_decl = (crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode())
+    // /bin/sh (bash 3.2 in POSIX mode) does the same for a bad NAME only: `export 1bad=x`
+    // and `readonly 1bad=x` fail with 1 and the script goes on, but `readonly r=1;
+    // export r=3` is a special-builtin assignment error there and ends the script.
+    let sh_bad_name = crate::dash_mode::sh_mode()
+        && trimmed.iter().any(|a| {
+            !a.starts_with('-') && !crate::ported::params::isident(a.split('=').next().unwrap_or(""))
+        });
+    let bash_decl = (crate::dash_mode::bash_mode() || sh_bad_name)
         && matches!(
             name.as_str(),
             "typeset" | "declare" | "local" | "readonly" | "export" | "integer" | "float"
