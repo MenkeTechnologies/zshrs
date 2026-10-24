@@ -633,6 +633,20 @@ pub fn execbuiltin(
                 if let Some(optidx) = optptr {
                     // c:345
                     ops.ind[c as usize] = if sense != 0 { 1 } else { 2 }; // c:346
+                    // !!! KSH93 GATE (no C counterpart) !!! ksh93 `typeset`: of `-u`/`-l`
+                    // and of `-L`/`-R` the LATER letter wins (`-lu` upper, `-ul` lower,
+                    // `-RL4` left); zsh's c:2731-2738 drop both.
+                    if name == "typeset" && crate::dash_mode::ksh93_mode() {
+                        if let Some(rival) = match c {
+                            b'u' => Some(b'l'),
+                            b'l' => Some(b'u'),
+                            b'L' => Some(b'R'),
+                            b'R' => Some(b'L'),
+                            _ => None,
+                        } {
+                            ops.ind[rival as usize] = 0;
+                        }
+                    }
                                                                           // c:347 — `if (optptr[1] == ':')` — option takes arg.
                     if optidx + 1 < optstr_bytes.len() && optstr_bytes[optidx + 1] == b':' {
                         let mut argptr: Option<String> = None;
@@ -4707,6 +4721,12 @@ pub fn bin_typeset(
         zwarnnam(name, "not found");
         return 127;
     }
+    // !!! PDKSH (no C counterpart) !!! mksh has no associative arrays: `typeset -A`
+    // (or `+A`) is "-A: unknown option", status 1, and the script goes on.
+    if crate::dash_mode::pdksh_family() && ops.ind[b'A' as usize] != 0 {
+        zwarnnam(name, "-A: unknown option");
+        return 1;
+    }
     // !!! DROP-IN GATE (no C counterpart) !!! a bare `export`: mksh lists the exported
     // NAMES only; dash lists `export NAME='value'` lines, exactly like `export -p`.
     if name == "export" && argv.is_empty() && crate::dash_mode::pdksh_family() && !OPT_ISSET(ops, b'p') {
@@ -5048,6 +5068,26 @@ pub fn bin_typeset(
             off &= !PM_UPPER;
         }
     }
+    // !!! KORN-FAMILY (no C counterpart) !!! ksh93 and mksh combine the field
+    // letters where zsh's c:2731-2738 cancel them: `-RZ4` is the zero-filled right
+    // field (`0012`), and mksh resolves `-ul` to lower case and `-LR` to left
+    // (ksh93's later-letter rule is applied by the option parser).
+    if crate::dash_mode::korn_mode() {
+        // The field has ONE width, whichever letter carried it (`-ZR4`, mksh
+        // `-LR4`): hand `-R`'s width slot to the letter that stays.
+        for keep in [PM_RIGHT_Z, PM_LEFT] {
+            if (on & keep) != 0 && (on & PM_RIGHT_B) != 0 {
+                on &= !PM_RIGHT_B;
+                let kc = if keep == PM_LEFT { b'L' } else { b'Z' } as usize;
+                if !OPT_HASARG(&ops, kc as u8) && OPT_HASARG(&ops, b'R') {
+                    ops.ind[kc] = (ops.ind[kc] & 3) | (ops.ind[b'R' as usize] & !3);
+                }
+            }
+        }
+        if (on & PM_UPPER) != 0 && (on & PM_LOWER) != 0 {
+            on &= !PM_UPPER;
+        }
+    }
     if (on & (PM_LEFT | PM_RIGHT_Z)) != 0 {
         // c:2731
         off |= PM_RIGHT_B; // c:2732
@@ -5080,7 +5120,8 @@ pub fn bin_typeset(
     }
     // !!! KORN-FAMILY (no C counterpart) !!! the three field attributes replace each other:
     // `typeset -L2 v=xy; typeset -Z5 v=42` is a zero-filled right field, not a left one.
-    if crate::dash_mode::korn_mode() {
+    // `-LZ` (left field, leading zeros stripped) is one attribute pair, kept whole.
+    if crate::dash_mode::korn_mode() && (on & (PM_LEFT | PM_RIGHT_Z)) != (PM_LEFT | PM_RIGHT_Z) {
         for keep in [PM_LEFT, PM_RIGHT_B, PM_RIGHT_Z] {
             if (on & keep) != 0 {
                 off |= (PM_LEFT | PM_RIGHT_B | PM_RIGHT_Z) & !keep;
