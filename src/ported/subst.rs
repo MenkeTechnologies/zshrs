@@ -19156,6 +19156,19 @@ pub fn paramsubst(
                     // so `a#` on "bbb" (interior empties bump to end) skips it
                     // while `(#e)` (no interior match) hits it.
                     let mut just_matched = false;
+                    // !!! KSH93 GATE (no C counterpart) !!! ksh93 takes no empty match
+                    // where the previous NON-empty match ended, and does take the empty
+                    // match at the string end unless a non-empty match ended there:
+                    // `x=hello; ${x//?(l)/-}` is `-h-e--o-` (zsh/bash: `-h-e---o`).
+                    // Holds the end of the last non-empty match while it is current.
+                    let mut ksh_nonempty_end: Option<usize> = None;
+                    // !!! PDKSH GATE (no C counterpart) !!! mksh eval.c (`case ORD('/')`)
+                    // clears the global bit when the pattern matches the empty string
+                    // (`stype &= ~STYPE_MASK`), so `//` replaces only the first match:
+                    // `x=hello; ${x//?(l)/-}` is `-hello`, `x=hhe; ${x//?(h)/-}` is `-he`.
+                    let mksh_once = crate::dash_mode::korn_mode()
+                        && crate::dash_mode::pdksh_family()
+                        && gms("", &pat, 0);
                     while q < nn {
                         let mut m: Option<usize> = None;
                         // c:Src/pattern.c P_ISSTART / P_ISEND — gate
@@ -19385,6 +19398,16 @@ pub fn paramsubst(
                                 }
                             }
                         }
+                        if m == Some(q)
+                            && ksh_nonempty_end == Some(q)
+                            && crate::dash_mode::ksh93_mode()
+                        {
+                            m = None;
+                        }
+                        ksh_nonempty_end = match m {
+                            Some(e) if e > q => Some(e),
+                            _ => None,
+                        };
                         if let Some(e) = m {
                             just_matched = true;
                             let span_text: String = sl(q, e).to_string();
@@ -19398,6 +19421,10 @@ pub fn paramsubst(
                                 // span verbatim (no replacement, no
                                 // replacement side-effect).
                                 o.push_str(&span_text);
+                            }
+                            if mksh_once {
+                                o.push_str(sl(e, nn));
+                                return o;
                             }
                             if e == q {
                                 // c:Src/glob.c:3060-3061 — `if (mpos ==
@@ -19425,7 +19452,14 @@ pub fn paramsubst(
                     // short, so `${s//(#e)/X}` never appended the tail match.
                     // Try the empty end-match exactly once here (no char to
                     // copy — the span is the empty string at nn).
-                    if q == nn && !just_matched {
+                    // ksh93 (see `ksh_nonempty_end`): tried unless a non-empty match
+                    // ended at the string end.
+                    let try_end = if crate::dash_mode::ksh93_mode() {
+                        ksh_nonempty_end != Some(nn)
+                    } else {
+                        !just_matched
+                    };
+                    if q == nn && try_end {
                         let end_empty_match = if let Some(prog) = prog_opt.as_ref() {
                             let q_byte = byte_off[nn];
                             crate::pattern_data_escape::publish_patflags(prog.0.flags
