@@ -7219,7 +7219,9 @@ pub fn doshfunc(
                                                                                     // failed when invoked from a config that had run getopts earlier.
                                                                                     // zshrs keeps the counter in the $OPTIND param plus the ZOPTIND/
                                                                                     // OPTCIND trackers getopts syncs against; reset all three.
-    if !crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXBUILTINS) {
+    // !!! BASH GATE (no C counterpart) !!! bash keeps one global OPTIND across
+    // function calls (`f(){ echo $OPTIND; }; OPTIND=3; f` prints 3).
+    if !crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXBUILTINS) && !crate::dash_mode::bash_mode() {
         // Only a changed counter needs the parameter written: a store runs the
         // whole assignment path (paramtab lock, special setfn), and the caller
         // usually has OPTIND at 1 already.
@@ -7613,6 +7615,22 @@ pub fn doshfunc(
         crate::ported::utils::set_argzero(Some(name.clone()));
         prev
     });
+    // !!! EMULATION-ONLY (no C counterpart) !!! ksh93 gives a `function name
+    // { … }` body its own OPTIND, starting at 1 and dropped on return
+    // (`function f { echo $OPTIND; OPTIND=5; }; OPTIND=3; f; echo $OPTIND` →
+    // `1`, `3`); a POSIX `name()` body shares the caller's. The POSIX_BUILTINS
+    // the Korn drop-in sets skips zsh's own save/reset above.
+    let korn_keyword_optind = crate::dash_mode::in_ksh93_keyword_function().then(|| {
+        let saved = (
+            crate::ported::params::getsparam("OPTIND"),
+            crate::ported::builtin::ZOPTIND.load(Ordering::Relaxed),
+            crate::ported::builtin::OPTCIND.load(Ordering::Relaxed),
+        );
+        crate::ported::params::setiparam("OPTIND", 1);
+        crate::ported::builtin::ZOPTIND.store(1, Ordering::Relaxed);
+        crate::ported::builtin::OPTCIND.store(0, Ordering::Relaxed);
+        saved
+    });
 
     // c:6021-6042 — body execution. C: `runshfunc(prog, wrappers, name)`.
     // zshrs delegates to the body_runner closure (typically a fusevm
@@ -7800,7 +7818,7 @@ pub fn doshfunc(
     //    scope:
     //        OPTIND=5; f(){ setopt localoptions posixbuiltins; OPTIND=42 }
     //        f; print $OPTIND    zsh -> 42
-    if !crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXBUILTINS) {
+    if !crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXBUILTINS) && !crate::dash_mode::bash_mode() {
         if let Some(saved) = funcsave_optind {
             // c:6121 `zoptind = funcsave->zoptind;`
             if let Ok(n) = saved.parse::<i64>() {
@@ -7816,6 +7834,22 @@ pub fn doshfunc(
         }
         // c:6122 `optcind = funcsave->optcind;`
         crate::ported::builtin::OPTCIND.store(funcsave_optcind, Ordering::Relaxed);
+    }
+    // The ksh93 keyword function's OPTIND goes with it (see above).
+    if let Some((optind, zoptind, optcind)) = korn_keyword_optind {
+        match optind.as_deref().map(|v| (v, v.parse::<i64>())) {
+            Some((_, Ok(n))) => {
+                crate::ported::params::setiparam("OPTIND", n);
+            }
+            Some((v, Err(_))) => {
+                crate::ported::params::setsparam("OPTIND", v);
+            }
+            None => {
+                crate::ported::params::setiparam("OPTIND", 1);
+            }
+        }
+        crate::ported::builtin::ZOPTIND.store(zoptind, Ordering::Relaxed);
+        crate::ported::builtin::OPTCIND.store(optcind, Ordering::Relaxed);
     }
 
     // c:6064 — `scriptname = funcsave->scriptname;`
