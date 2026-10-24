@@ -1153,13 +1153,33 @@ fn external_glob_failure_status() -> Option<i32> {
     Some(1)
 }
 
+thread_local! {
+    /// Set by raise_badcshglob: this command's CSH_NULL_GLOB `no match` was
+    /// already reported, ahead of its redirections; consume_badcshglob
+    /// reports the failure without printing it again.
+    static BADCSHGLOB_RAISED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 fn consume_badcshglob() -> bool {
     let v = crate::ported::glob::BADCSHGLOB.swap(0, std::sync::atomic::Ordering::Relaxed);
     if v == 1 {
         crate::ported::utils::zerr("no match"); // c:Src/subst.c:507
         true
     } else {
-        false
+        BADCSHGLOB_RAISED.with(|c| c.replace(false))
+    }
+}
+
+/// c:Src/subst.c:505-507 at its C position: the end of globlist
+/// (c:Src/exec.c:3757), before the command's redirections open. Prints
+/// `no match` now so it reaches the un-redirected stderr, and leaves the
+/// failure for the dispatcher's consume_badcshglob to act on.
+/// !!! RUST-ONLY HELPER: C prints inside globlist, which zshrs splits per word.
+fn raise_badcshglob() {
+    if crate::ported::glob::BADCSHGLOB.load(std::sync::atomic::Ordering::Relaxed) == 1 {
+        crate::ported::glob::BADCSHGLOB.store(0, std::sync::atomic::Ordering::Relaxed);
+        crate::ported::utils::zerr("no match"); // c:Src/subst.c:507
+        BADCSHGLOB_RAISED.with(|c| c.set(true));
     }
 }
 
@@ -13941,6 +13961,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // BUILTIN_XTRERR_COPY — c:Src/exec.c:3765-3773, emitted right before a
     // simple command's WithRedirectsBegin. No args.
     vm.register_builtin(BUILTIN_XTRERR_COPY, |_vm, _argc| {
+        // c:Src/exec.c:3757 globlist → c:Src/subst.c:505-507 — CSH_NULL_GLOB's
+        // `no match` is raised at the end of the words' globbing, before the
+        // redirections (c:3785) and this copy: it goes to the real stderr.
+        raise_badcshglob();
         xtrerr_flush(); // c:3766 fflush(xtrerr)
         if isset(crate::ported::zsh_h::XTRACE)
             && crate::ported::utils::xtrerr.load(std::sync::atomic::Ordering::Relaxed) == libc::STDERR_FILENO
