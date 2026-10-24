@@ -10,16 +10,174 @@
 //! "no Rust-only types in ported files" invariant; moved here so the
 //! ported zle/ tree stays a faithful C-source mirror.
 
-/// `complete` builtin per-command spec (bash-style).
+/// `complete` builtin per-command spec (bash-style), bash's `COMPSPEC`
+/// (pcomplete.h).
 #[derive(Debug, Clone, Default)]
 pub struct CompSpec {
-    pub actions: Vec<String>,     // -a, -b, -c, etc.
-    pub wordlist: Option<String>, // -W wordlist
-    pub function: Option<String>, // -F function
-    pub command: Option<String>,  // -C command
-    pub globpat: Option<String>,  // -G glob
-    pub prefix: Option<String>,   // -P prefix
-    pub suffix: Option<String>,   // -S suffix
+    pub actions: Vec<String>,       // action names (`COMPACTS`): -a, -A function, …
+    pub options: Vec<String>,       // -o names (`COMPOPTS`)
+    pub wordlist: Option<String>,   // -W wordlist
+    pub function: Option<String>,   // -F function
+    pub command: Option<String>,    // -C command
+    pub globpat: Option<String>,    // -G glob
+    pub prefix: Option<String>,     // -P prefix
+    pub suffix: Option<String>,     // -S suffix
+    pub filterpat: Option<String>,  // -X filterpat
+}
+
+/// The pseudo-command keys `complete -D` / `-E` / `-I` store their specs
+/// under (bash pcomplete.h:109-111).
+pub const EMPTYCMD: &str = "_EmptycmD_";
+/// See [`EMPTYCMD`].
+pub const DEFAULTCMD: &str = "_DefaultCmD_";
+/// See [`EMPTYCMD`].
+pub const INITIALWORD: &str = "_InitialWorD_";
+
+/// bash complete.def `compacts[]`: action name and its single-letter
+/// option (0 = only reachable as `-A name`), in the table's order, which is
+/// the order `complete -p` prints them in.
+pub const COMPACTS: &[(&str, u8)] = &[
+    ("alias", b'a'),
+    ("arrayvar", 0),
+    ("binding", 0),
+    ("builtin", b'b'),
+    ("command", b'c'),
+    ("directory", b'd'),
+    ("disabled", 0),
+    ("enabled", 0),
+    ("export", b'e'),
+    ("file", b'f'),
+    ("function", 0),
+    ("helptopic", 0),
+    ("hostname", 0),
+    ("group", b'g'),
+    ("job", b'j'),
+    ("keyword", b'k'),
+    ("running", 0),
+    ("service", b's'),
+    ("setopt", 0),
+    ("shopt", 0),
+    ("signal", 0),
+    ("stopped", 0),
+    ("user", b'u'),
+    ("variable", b'v'),
+];
+
+/// bash complete.def `compopts[]`, in print order.
+pub const COMPOPTS: &[&str] = &[
+    "bashdefault",
+    "default",
+    "dirnames",
+    "filenames",
+    "fullquote",
+    "noquote",
+    "nosort",
+    "nospace",
+    "plusdirs",
+];
+
+/// bash's `prog_completes` hash table (pcomplib.c, hashlib.c), kept as
+/// buckets so `complete -p` walks it in bash's order: bucket 0 upward,
+/// newest entry first within a bucket.
+#[derive(Debug, Clone)]
+pub struct ProgcompTable {
+    buckets: Vec<Vec<(String, CompSpec, u32)>>,
+    nentries: usize,
+    // `prog_completes != 0`: the table exists from the first insert on.
+    created: bool,
+}
+
+impl Default for ProgcompTable {
+    fn default() -> Self {
+        // pcomplib.c:40 `COMPLETE_HASH_BUCKETS 512`.
+        ProgcompTable {
+            buckets: vec![Vec::new(); 512],
+            nentries: 0,
+            created: false,
+        }
+    }
+}
+
+impl ProgcompTable {
+    /// hashlib.c:208 `hash_string` — FNV-1 over the C `char`s, so a high
+    /// byte enters sign-extended wherever `char` is signed.
+    fn hash_string(s: &str) -> u32 {
+        let mut i: u32 = 2166136261; // FNV_OFFSET
+        for &b in s.as_bytes() {
+            i = i.wrapping_mul(16777619); // FNV_PRIME, written as shifts in C
+            i ^= (b as libc::c_char) as i32 as u32;
+        }
+        i
+    }
+
+    fn bucket(&self, h: u32) -> usize {
+        (h as usize) & (self.buckets.len() - 1)
+    }
+
+    pub fn get(&self, cmd: &str) -> Option<&CompSpec> {
+        let h = Self::hash_string(cmd);
+        self.buckets[self.bucket(h)]
+            .iter()
+            .find(|(k, _, kh)| *kh == h && k == cmd)
+            .map(|(_, cs, _)| cs)
+    }
+
+    /// pcomplib.c:171 `progcomp_insert` → hashlib.c:318 `hash_insert`: an
+    /// existing key keeps its place and gets the new spec.
+    pub fn insert(&mut self, cmd: &str, cs: CompSpec) {
+        let h = Self::hash_string(cmd);
+        let b = self.bucket(h);
+        if let Some(e) = self.buckets[b].iter_mut().find(|(k, _, kh)| *kh == h && k == cmd) {
+            e.1 = cs;
+            return;
+        }
+        // hashlib.c:41 HASH_SHOULDGROW → hash_grow ×4 (c:154), rehashing
+        // old buckets in order with head insertion (c:139-147).
+        if self.nentries >= self.buckets.len() * 2 {
+            let nsize = self.buckets.len() * 4;
+            let old = std::mem::replace(&mut self.buckets, vec![Vec::new(); nsize]);
+            for e in old.into_iter().flatten() {
+                let nb = self.bucket(e.2);
+                self.buckets[nb].insert(0, e);
+            }
+        }
+        self.created = true; // c:178-179 progcomp_create
+        let b = self.bucket(h);
+        self.buckets[b].insert(0, (cmd.to_string(), cs, h));
+        self.nentries += 1;
+    }
+
+    /// pcomplib.c:151 `progcomp_remove`; false when there was no entry.
+    pub fn remove(&mut self, cmd: &str) -> bool {
+        if !self.created {
+            return true; // c:155-156 `if (prog_completes == 0) return 1;`
+        }
+        let h = Self::hash_string(cmd);
+        let b = self.bucket(h);
+        match self.buckets[b].iter().position(|(k, _, kh)| *kh == h && k == cmd) {
+            Some(p) => {
+                self.buckets[b].remove(p);
+                self.nentries -= 1;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// pcomplib.c:136 `progcomp_flush` (the bucket count is kept).
+    pub fn flush(&mut self) {
+        self.buckets.iter_mut().for_each(Vec::clear);
+        self.nentries = 0;
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.nentries == 0
+    }
+
+    /// hashlib.c:397 `hash_walk` order.
+    pub fn walk(&self) -> impl Iterator<Item = (&String, &CompSpec)> {
+        self.buckets.iter().flatten().map(|(k, cs, _)| (k, cs))
+    }
 }
 
 /// One completion-match candidate surfaced by the `complete` builtin.

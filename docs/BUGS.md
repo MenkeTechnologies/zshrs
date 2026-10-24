@@ -309,9 +309,29 @@ now takes that branch too. Found by `parity-fuzz --shell mksh --mode expand`
 
 ---
 
-## #1199 — `--bash`: `complete` drops `-D` / `-E` specs and prints names unquoted — port-bug
+## #1199 — `--bash`: `complete` drops `-D` / `-E` specs and prints names unquoted — fixed (builtin); interactive use open
 
-**Status:** `port-bug`, found 2026-10-22 while verifying #1198.
+**Status:** `fixed` 2026-10-24 for the builtin; found 2026-10-22 while verifying #1198.
+
+**Fix.** `builtin_complete` is now a port of `complete.def`:
+
+- `build_actions` takes the full option string. `-D` / `-E` / `-I` store
+  their specs under the `_DefaultCmD_` / `_EmptycmD_` / `_InitialWorD_` keys.
+- `-o` and `-X` values are kept.
+- `print_one_completion` writes the bash form, quoting names with
+  `sh_contains_shell_metas` and `sh_single_quote`.
+- `bash_complete::ProgcompTable` reproduces `prog_completes`
+  (hashlib.c: FNV-1 hash, 512 buckets, grows by 4, head insertion), so
+  `complete -p` lists specs in bash's order.
+
+After sourcing Debian's `bash_completion`, `complete -p` matches bash 5.3
+line for line (121 specs, `-D` loader included). Pinned by
+`bugs_md_regression::bash_complete_prints_like_complete_def`.
+
+**Still open:** nothing in zshrs's `--bash -i` line editor consults these
+specs yet, so the `-D` loader is registered but never run on TAB.
+
+**Original report:**
 
 ```
 $ bash -c 'f(){ :; }; complete -D -F f; complete -E -F f; complete -F f ""; complete -F f "a b"; complete -p'

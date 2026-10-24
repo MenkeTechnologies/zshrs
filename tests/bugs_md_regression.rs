@@ -3050,3 +3050,34 @@ fn zle_autoload_keeps_bindkey_stub() {
     let (ec, out, err) = run_zshrs("f() { :; }; zle -N f; bindkey x f; bindkey x; whence -w vared");
     assert_eq!((ec, out.as_str(), err.as_str()), (0, "\"x\" f\nvared: builtin\n", ""));
 }
+
+/// BUGS.md #1199 — `--bash` `complete` is bash's complete.def: `-D` / `-E` /
+/// `-I` pseudo-commands, `-o` / `-X` stored and printed, names quoted by
+/// `sh_contains_shell_metas`, and `-p` walking bash's hash order (FNV-1 into
+/// 512 buckets, newest first in a bucket). Expected output is bash 5.3's.
+#[test]
+fn bash_complete_prints_like_complete_def() {
+    if zshrs_bin().is_none() {
+        return;
+    }
+    let script = r#"f(){ :; }
+complete -o nospace -o default -A function -abv -G '*.c' -W 'a b' -X '!*.x' -F f 'x y' '' z
+complete -D -F f; complete -E -W "it's"; complete -I -c
+complete -p
+complete -r -D; complete -p -D; echo rc=$?
+complete -o bogus q; echo rc=$?"#;
+    let (ec, out) = run_mode("--bash", script);
+    assert_eq!(
+        (ec, out.as_str()),
+        (
+            0,
+            "complete -c -I\n\
+             complete -o default -o nospace -a -b -v -A function -G '*.c' -W 'a b' -X '!*.x' -F f 'x y'\n\
+             complete -F f -D\n\
+             complete -o default -o nospace -a -b -v -A function -G '*.c' -W 'a b' -X '!*.x' -F f z\n\
+             complete -W 'it'\\''s' -E\n\
+             complete -o default -o nospace -a -b -v -A function -G '*.c' -W 'a b' -X '!*.x' -F f ''\n\
+             rc=1\nrc=2\n"
+        )
+    );
+}

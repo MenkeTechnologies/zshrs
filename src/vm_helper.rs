@@ -918,7 +918,7 @@ pub struct ShellExecutor {
     /// declares it must never open one.
     pub history: std::cell::OnceCell<Option<HistoryEngine>>,
     pub(crate) process_sub_counter: u32,
-    pub completions: HashMap<String, CompSpec>, // command -> completion spec
+    pub completions: crate::bash_complete::ProgcompTable, // command -> completion spec, in bash hash order
     pub zstyles: Vec<zstyle_entry>,             // zstyle configurations
     /// Current function scope depth for `local` tracking.
     pub local_scope_depth: usize,
@@ -2396,7 +2396,7 @@ impl ShellExecutor {
             // Worker: no interactive history engine, ever — a pre-filled
             // cell so `history()` cannot open one from a pool thread.
             history: std::cell::OnceCell::from(None),
-            completions: HashMap::new(),
+            completions: Default::default(),
             process_sub_counter: 0,
             zstyles: Vec::new(),
             local_scope_depth: 0,
@@ -3226,7 +3226,7 @@ impl ShellExecutor {
             jobs: JobTable::new(),
             fpath,
             history,
-            completions: HashMap::new(),
+            completions: Default::default(),
             process_sub_counter: 0,
             zstyles: Vec::new(),
             local_scope_depth: 0,

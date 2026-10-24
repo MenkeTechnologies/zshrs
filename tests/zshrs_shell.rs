@@ -288,9 +288,9 @@ fn test_compgen_A_takes_an_action_name() {
 #[test]
 fn test_complete_o_value_is_not_stored_as_a_command() {
     // `-o default` takes a value; it used to be registered as a command
-    // named `default`.
+    // named `default`. bash 5.3 prints the stored option back.
     let (_, output, _) = run_zshrs("complete -o default -A builtin mycmd; complete");
-    assert_eq!(output.trim(), "complete -b mycmd", "got: {output}");
+    assert_eq!(output.trim(), "complete -o default -b mycmd", "got: {output}");
 }
 
 // ---------------------------------------------------------------------------

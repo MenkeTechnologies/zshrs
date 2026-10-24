@@ -169,7 +169,7 @@ pub fn enumerate_all_overlays() -> Vec<(String, Value)> {
         if !exec.completions.is_empty() {
             let map: serde_json::Map<String, Value> = exec
                 .completions
-                .iter()
+                .walk()
                 .map(|(k, v)| (k.clone(), json!(format!("{:?}", v))))
                 .collect();
             out.push(("compdef".into(), Value::Object(map)));
