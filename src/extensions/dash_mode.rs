@@ -26,7 +26,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, Ordering};
 
 /// Process-global strict-dash flag. Raised by `emulate dash` (via
 /// [`set_dash_strict`]) and cleared by any `emulate` to another
@@ -1139,6 +1139,52 @@ pub fn math_unset_is_error(subscripted: bool) -> bool {
     true
 }
 
+/// ksh93's `${.sh.lineno}`: the script line of the most recent function call.
+/// It is 0 until a function is called, and ksh93 keeps one value, not one per
+/// frame: a `function name { … }` body starts out seeing its own call line, a
+/// POSIX `name() { … }` body starts out at 0, and either way the caller reads
+/// the call line once the function returns.
+///
+/// ```text
+/// g() { echo g:${.sh.lineno}; }               # line 1
+/// function k { echo k:${.sh.lineno}; g        # line 2
+///   echo k2:${.sh.lineno}; }                  # line 3
+/// k; echo top:${.sh.lineno}                   # line 4
+///   ksh → k:4 g:0 k2:2 top:4
+/// ```
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+static KSH_SH_LINENO: AtomicI64 = AtomicI64::new(0);
+
+/// Function-call hook for `${.sh.lineno}` (see [`KSH_SH_LINENO`]): run once the
+/// callee's frame is on the function stack. `call_line` is the line the call
+/// was made from. No-op outside `--ksh`.
+pub fn korn_sh_lineno_enter(call_line: i64) {
+    if ksh93_mode() {
+        let seen = if in_korn_keyword_function() { call_line } else { 0 };
+        KSH_SH_LINENO.store(seen, Ordering::Relaxed);
+    }
+}
+
+/// Function-return hook for `${.sh.lineno}`: the caller sees the call line.
+pub fn korn_sh_lineno_leave(call_line: i64) {
+    if ksh93_mode() {
+        KSH_SH_LINENO.store(call_line, Ordering::Relaxed);
+    }
+}
+
+/// The current `${.sh.lineno}` value, for the in-process subshell snapshot:
+/// a call made inside `( … )` or `$( … )` must not change the parent's value
+/// (`f; x=$(f); (f)` leaves it at the first call's line in ksh93).
+pub fn korn_sh_lineno() -> i64 {
+    KSH_SH_LINENO.load(Ordering::Relaxed)
+}
+
+/// Restore `${.sh.lineno}` at subshell exit; see [`korn_sh_lineno`].
+pub fn set_korn_sh_lineno(v: i64) {
+    KSH_SH_LINENO.store(v, Ordering::Relaxed);
+}
+
 /// ksh93's `.sh.*` namespace under `--ksh`, as scalars. `None` for any other
 /// name, or outside ksh93 mode.
 ///
@@ -1175,6 +1221,7 @@ pub fn korn_sh_scalar(name: &str) -> Option<String> {
                 .unwrap_or(0)
                 .to_string(),
         ),
+        ".sh.lineno" => Some(KSH_SH_LINENO.load(Ordering::Relaxed).to_string()),
         _ => None,
     }
 }
