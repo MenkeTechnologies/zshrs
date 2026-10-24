@@ -16636,6 +16636,11 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
         if fl & PM_READONLY != 0 {
             fstr.push('r');
         }
+        // bash variables.c `make_attributes` emits `t` (att_trace) between `r` and `x`:
+        // `declare -tx g=2; declare -p g` → `declare -tx g="2"`.
+        if fl & PM_TAGGED != 0 {
+            fstr.push('t');
+        }
         if fl & PM_EXPORTED != 0 {
             fstr.push('x');
         }
@@ -16724,6 +16729,12 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
         let fl = hn.node.flags as u32;
         let nm = hn.node.nam.clone();
         let q = crate::dash_mode::ksh93_printf_q;
+        // A nameref lists its TARGET NAME: `typeset -n r=t; typeset -p r` is
+        // `typeset -n r=t` whether or not `t` is set (`-n` takes no other flag).
+        if fl & PM_NAMEREF != 0 {
+            println!("typeset -n {nm}={}", q(&hn.u_str.clone().unwrap_or_default()));
+            return;
+        }
         let mut attrs: Vec<String> = Vec::new();
         for (flag, letter) in [(PM_EXPORTED, "x"), (PM_READONLY, "r"), (PM_TAGGED, "t")] {
             if fl & flag != 0 {
@@ -16744,8 +16755,13 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
                 format!("-{letter}")
             }
         };
-        if fl & PM_LOWER != 0 && fl & (PM_INTEGER | PM_FFLOAT | PM_EFLOAT) != 0 {
-            attrs.push("-l".to_string()); // ksh93 lists the long flag of `integer` / `float` first
+        // `-l` / `-u` come before the type and justification flags:
+        // `typeset -l -i`, `typeset -u -i`, `typeset -u -L 3`.
+        if fl & PM_LOWER != 0 {
+            attrs.push("-l".to_string());
+        }
+        if fl & PM_UPPER != 0 {
+            attrs.push("-u".to_string());
         }
         if fl & PM_INTEGER != 0 {
             attrs.push(with_num("i", hn.base));
@@ -16756,20 +16772,14 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
         if fl & PM_EFLOAT != 0 {
             attrs.push(with_num("E", hn.base));
         }
-        if fl & PM_LOWER != 0 && fl & (PM_INTEGER | PM_FFLOAT | PM_EFLOAT) == 0 {
-            attrs.push("-l".to_string());
-        }
-        if fl & PM_UPPER != 0 {
-            attrs.push("-u".to_string());
+        // `-Z` first, then the side it pads from: `-Z4` lists `-Z 4 -R 4`,
+        // `-LZ4` lists `-Z 4 -L 4`.
+        if fl & PM_RIGHT_Z != 0 {
+            attrs.push(with_num("Z", hn.width));
         }
         if fl & PM_LEFT != 0 {
             attrs.push(with_num("L", hn.width));
-        }
-        if fl & PM_RIGHT_Z != 0 {
-            attrs.push(with_num("Z", hn.width));
-            attrs.push(with_num("R", hn.width));
-        }
-        if fl & PM_RIGHT_B != 0 {
+        } else if fl & (PM_RIGHT_Z | PM_RIGHT_B) != 0 {
             attrs.push(with_num("R", hn.width));
         }
         let head = if attrs.is_empty() {
@@ -16792,7 +16802,17 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
                 .clone()
                 .or_else(|| crate::ported::exec::array(&nm))
                 .unwrap_or_default();
-            let body: Vec<String> = a.iter().map(|v| q(v)).collect();
+            // An array with holes lists every element with its index:
+            // `a=(x y z); unset a[0]` is `typeset -a a=([1]=y [2]=z)`, while
+            // `unset a[2]` leaves the dense `(x y)`.
+            let live = crate::bash_arrays::live_indices(&nm, a.len());
+            let body: Vec<String> = if live.iter().enumerate().any(|(n, &i)| n != i) {
+                live.into_iter()
+                    .filter_map(|i| a.get(i).map(|v| format!("[{i}]={}", q(v))))
+                    .collect()
+            } else {
+                live.into_iter().filter_map(|i| a.get(i).map(|v| q(v))).collect()
+            };
             println!("{head}{nm}=({})", body.join(" "));
         } else {
             let v = getsparam(&nm).unwrap_or_default();
@@ -16818,6 +16838,18 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
         && !hn.node.nam.starts_with('.')
     {
         let fl = hn.node.flags as u32;
+        // mksh lists a nameref as its TARGET: `t=5; typeset -n r=t; typeset -p r`
+        // prints `typeset t=5`, and nothing while `t` is unset.
+        if fl & PM_NAMEREF != 0 {
+            if let nameref_resolution::Target { pm: Some(mut target), .. } =
+                resolve_nameref_name(&hn.node.nam, None)
+            {
+                if target.node.flags as u32 & PM_NAMEREF == 0 {
+                    printparamnode(&mut target, printflags);
+                }
+            }
+            return;
+        }
         // mksh lists nothing for a plain unset name, and `NAME=''` for an unset
         // one that carries attributes (`typeset -r k` -> `typeset -r k=''`).
         let attr_mask = PM_INTEGER | PM_EXPORTED | PM_READONLY | PM_TAGGED | PM_LEFT | PM_RIGHT_B
