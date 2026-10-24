@@ -14430,7 +14430,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // `false; $unset` wrongly stayed 1 (A01grammar.ztst:5).
             let keep =
                 crate::ported::exec::use_cmdoutval.load(std::sync::atomic::Ordering::Relaxed) != 0;
-            let status = if keep { vm.last_status } else { 0 };
+            // !!! DROP-IN GATE (no C counterpart) !!! dash and mksh leave the
+            // substitution's status out of `$?` (vm_helper's cmdsubst runner);
+            // `cmdoutval` still holds it.
+            let subst_status = if crate::dash_mode::dash_faithful() || crate::dash_mode::pdksh_family() {
+                crate::ported::exec::cmdoutval.load(std::sync::atomic::Ordering::Relaxed)
+            } else {
+                vm.last_status
+            };
+            let status = if keep { subst_status } else { 0 };
             crate::ported::exec::use_cmdoutval.store(0, std::sync::atomic::Ordering::Relaxed);
             return Value::Status(status);
         }

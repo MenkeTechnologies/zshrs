@@ -7482,6 +7482,8 @@ impl ShellExecutor {
         errflag.store(saved_errflag, Ordering::Relaxed);
         let prog = if parse_failed { None } else { Some(parsed) };
         let mut cmd_status: Option<i32> = None;
+        // The `$?` the command's later words see in dash and mksh (see below).
+        let outer_lastval = self.last_status();
         if let Some(prog) = prog {
             let mut compiler = crate::compile_zsh::ZshCompiler::new();
             compiler.nested_lineno_base = Some(outer_lineno); // c:Src/exec.c:4778
@@ -7970,7 +7972,16 @@ impl ShellExecutor {
         // Without this branch, a prior command's non-zero status
         // leaked through the empty cmd-subst.
         let final_status = cmd_status.unwrap_or(0);
-        self.set_last_status(final_status);
+        // !!! DROP-IN GATE (no C counterpart) !!! dash and mksh keep a command
+        // substitution's status out of `$?` while the command's words expand
+        // (`false; echo $(exit 2) $?` → `1`); only `cmdoutval` below carries it,
+        // to the status of an assignment-only or empty command.
+        if !(crate::dash_mode::dash_faithful() || crate::dash_mode::pdksh_family()) {
+            self.set_last_status(final_status);
+        } else {
+            // The body ran in this process and stored its own statuses.
+            self.set_last_status(outer_lastval);
+        }
         // c:Src/exec.c:4775 — `getoutput` (the C cmd-subst path used by
         // both `$(…)` and `` `…` ``) propagates the inner exit through
         // `cmdoutval`, then the caller does `LASTVAL = cmdoutval`. Mirror

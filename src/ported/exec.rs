@@ -628,7 +628,11 @@ pub fn getoutput(cmd: &str, qt: i32) -> Option<Vec<String>> {
     //     executor simply returns the captured buffer.
     cmdoutval.store(0, Ordering::Relaxed); // c:4759
     let buf = crate::ported::exec::run_command_substitution(cmd);
-    LASTVAL.store(cmdoutval.load(Ordering::Relaxed), Ordering::Relaxed); // c:4775
+    // !!! DROP-IN GATE (no C counterpart) !!! dash and mksh keep the status
+    // out of `$?` (`false; echo "$(exit 2)$?"` → `1`); cmdoutval carries it.
+    if !(crate::dash_mode::dash_faithful() || crate::dash_mode::pdksh_family()) {
+        LASTVAL.store(cmdoutval.load(Ordering::Relaxed), Ordering::Relaxed); // c:4775
+    }
     // !!! DROP-IN GATE (no C counterpart) !!! NUL bytes in `$( )` output: bash,
     // dash, mksh and /bin/sh drop them (`"$(printf 'a\0b')"` is `ab`), ksh93 stops
     // at the first one (`a`); zsh keeps them.
