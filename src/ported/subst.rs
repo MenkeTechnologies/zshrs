@@ -13932,7 +13932,16 @@ pub fn paramsubst(
                                 } else {
                                     i - 1
                                 };
-                                real >= 0 && (real as usize) < a.len()
+                                // !!! DROP-IN GATE — sparse arrays (bash/Korn).
+                                // A padding / `unset a[i]` slot is a HOLE, not an
+                                // element: bash `a[1]=x; ${a[0]-u}` and `a=(x y z);
+                                // unset 'a[0]'; ${a[0]-u}` both give `u`. Holes are
+                                // only ever recorded in those modes, so `--zsh`
+                                // (dense arrays, c:2954) is unaffected.
+                                real >= 0
+                                    && (real as usize) < a.len()
+                                    && !crate::bash_arrays::holes(&var_name)
+                                        .contains(&(real as usize))
                             })
                         }
                     })
@@ -13963,7 +13972,17 @@ pub fn paramsubst(
                         && !isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT))
                     && vars_contains(&var_name)
                     && !arrays_contains(&var_name)
-                    && !assoc_contains(&var_name))
+                    && !assoc_contains(&var_name)
+                    // !!! DROP-IN GATE — bash/ksh/mksh (and /bin/sh = bash
+                    // 3.2) treat a scalar as a ONE-element array: only
+                    // index 0 names a slot, so `x=s; ${x[1]-u}` is
+                    // `u` there, while zsh indexes the scalar's characters
+                    // and calls any N set.
+                    && (!(crate::dash_mode::sparse_arrays() || crate::dash_mode::sh_mode())
+                        || resolved_sub_index
+                            .get()
+                            .or_else(|| sub.trim().parse::<i64>().ok())
+                            .is_some_and(|i| i == 0)))
                 // c:Src/Modules/parameter.c — magic-assoc tables
                 // (`builtins`, `commands`, `functions`, `aliases`, etc.)
                 // dispatch through PARTAB. Without this fallback,
@@ -24169,7 +24188,19 @@ pub fn paramsubst(
                                                              // ${=}` on "a,,b" dropped the middle field. sepsplit keeps
                                                              // them as Nularg per zsh's word-splitting (Bug #636).
             let parts: Vec<String> = crate::ported::utils::sepsplit(&value, None, false); // c:3921
-            if !parts.is_empty() {
+            // c:3922-3926 — `if (!aval || !aval[0]) val = ""; else if
+            // (!aval[1]) val = aval[0]; else isarr = nojoin ? 1 : 2;`. A
+            // split that yields ONE field stays a SCALAR (no LF_ARRAY, so
+            // multsub c:641 hands the nesting reader a string): under
+            // SH_WORD_SPLIT `x=abc; ${#${x}}` is 3, not the 1 of a
+            // one-element array.
+            if parts.len() == 1 {
+                value = parts.into_iter().next().unwrap_or_default(); // c:3925
+                // isarr stays 0, but publish the scalar as the value list as the
+                // (%) arm does: the later arms (case mods, …) otherwise re-derive
+                // their input from the unsplit source.
+                split_parts = Some(vec![value.clone()]);
+            } else if !parts.is_empty() {
                 value = parts.join(" ");
                 split_parts = Some(parts);
                 // c:3274 — `isarr = nojoin ? 1 : 2;` mark this as a
@@ -26458,7 +26489,22 @@ pub fn paramsubst(
                 // sepjoin (c:utils.c:3941-3944) returns "" there, so
                 // `IFS=""; cat <<END\n${arr[@]}\nEND` now concatenates
                 // (`abc`) instead of space-joining (`a b c`).
-                let joined = crate::ported::utils::sepjoin(&parts, sep.as_deref()); // c:633
+                // !!! DROP-IN GATE — bash, ksh93 and /bin/sh join a `@` splat
+                // (`${@}`, `${a[@]}`) with a SPACE where no splitting happens
+                // (heredoc body, `case` word, scalar RHS), not with $IFS[0];
+                // the `*` forms keep the IFS join. Same rule as the bare `$@`
+                // arm's c:4226 join.
+                let at_splat = sep.is_none()
+                    && ((subscript.is_none() && var_name == "@") || splat_sub!() == Some("@"));
+                let joined = if at_splat
+                    && (crate::dash_mode::bash_mode()
+                        || crate::dash_mode::ksh93_mode()
+                        || crate::dash_mode::sh_mode())
+                {
+                    parts.join(" ")
+                } else {
+                    crate::ported::utils::sepjoin(&parts, sep.as_deref()) // c:633
+                };
                 let full = format!("{}{}{}", prefix, joined, suffix);
                 let new_pos = prefix.chars().count() + joined.chars().count();
                 return (full.clone(), new_pos, vec![full]);
@@ -28618,7 +28664,23 @@ pub fn paramsubst(
                     }
                     return (result_nodes[0].clone(), start_pos, result_nodes); // c:1625
                 } // c:1625
-                values.join(" ") // c:1625
+                // c:4226-4231 — `if (isarr && ssub) { val = sepjoin(aval,
+                // NULL, 1); … }`: the single-word context (heredoc body,
+                // `case [$@]` word, scalar RHS) joins on $IFS[0], so
+                // `IFS=:; set -- a b` makes a heredoc `$@` read `a:b`.
+                // !!! DROP-IN GATE — bash, ksh93 and /bin/sh (bash 3.2)
+                // join `$@` with a SPACE wherever no word splitting happens
+                // (bash(1) "Special Parameters": `$@` … "expands to a
+                // single word with each positional parameter separated by
+                // a space" when not split); mksh joins on IFS like zsh.
+                if crate::dash_mode::bash_mode()
+                    || crate::dash_mode::ksh93_mode()
+                    || crate::dash_mode::sh_mode()
+                {
+                    values.join(" ")
+                } else {
+                    crate::ported::utils::sepjoin(&values, None) // c:4228
+                }
             }; // c:1625
             let prefix: String = chars[..start_pos].iter().collect(); // c:1625
             let suffix: String = chars[after_pos..].iter().collect(); // c:1625
