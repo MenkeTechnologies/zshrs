@@ -28596,19 +28596,26 @@ pub fn paramsubst(
                             result_nodes,
                         ); // c:4298
                     }
+                    // c:4396-4439 — each node of the multi-element splice that
+                    // comes out EMPTY inside double quotes becomes `nulstring`
+                    // (`if (qt && !*y && isarr != 2) y = dupstring(nulstring);`,
+                    // c:4398-4399 first, c:4415-4416 middle, c:4437-4438 last;
+                    // `$@` is ISVAR_AT, isarr -1, never 2). The Nularg keeps the
+                    // node alive through prefork's empty-node delete (c:183-186)
+                    // and remnulargs (c:169) turns it back into the empty word.
+                    // Without it a nested prefork — the `${1+"$@"}` operand's
+                    // multsub (c:3226 → c:625) — dropped every empty element
+                    // after the first: `f -n "" x` gave `-n` `x`.
+                    let nul_if_empty = |y: String| if qt && y.is_empty() { Nularg.to_string() } else { y };
                     for (i, v) in values.iter().enumerate() {
-                        // c:1625
                         if i == 0 {
-                            // c:1625
-                            result_nodes.push(format!("{}{}", prefix, v)); // c:1625
+                            result_nodes.push(nul_if_empty(format!("{}{}", prefix, v))); // c:4397-4399
                         } else if i == values.len() - 1 {
-                            // c:1625
-                            result_nodes.push(format!("{}{}", v, suffix)); // c:1625
+                            result_nodes.push(nul_if_empty(format!("{}{}", v, suffix))); // c:4436-4438
                         } else {
-                            // c:1625
-                            result_nodes.push(v.clone()); // c:1625
-                        } // c:1625
-                    } // c:1625
+                            result_nodes.push(nul_if_empty(v.clone())); // c:4415-4416
+                        }
+                    }
                     return (result_nodes[0].clone(), start_pos, result_nodes); // c:1625
                 } // c:1625
                 values.join(" ") // c:1625
