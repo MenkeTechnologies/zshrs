@@ -8062,10 +8062,43 @@ pub fn paramsubst(
                             )
                             .chain(std::iter::once("argv"))
                             .collect();
+                    // !!! DROP-IN GATE (no C counterpart) !!! zsh also predeclares
+                    // ordinary-looking parameters neither bash nor ksh93 has
+                    // (`path`, `prompt`, `PROMPT2`, `HISTSIZE`, `ZSH_NAME`, …):
+                    // `pa=1 pb=2; echo "${!p*}"` is `pa pb` in bash and ksh93.
+                    // The list is `env -i bash|ksh -c '${!c*}'` over every
+                    // leading character, diffed against zshrs. A name the process
+                    // inherited from the environment (`LOGNAME`, `OLDPWD`, …)
+                    // is a real variable in those shells too, so it stays.
+                    const ZSH_PREDECLARED: &[&str] = &[
+                        "CPUTYPE", "EGID", "FIGNORE", "fpath", "FPATH", "FUNCNEST", "GID",
+                        "histchars", "HISTSIZE", "HOST", "KEYBOARD_HACK", "KEYTIMEOUT",
+                        "LISTMAX", "LOGNAME", "MAILPATH", "module_path", "MODULE_PATH",
+                        "NULLCMD", "OLDPWD", "path", "pipestatus", "prompt", "PROMPT",
+                        "PROMPT2", "PROMPT3", "PROMPT4", "PSVAR", "READNULLCMD", "SAVEHIST",
+                        "signals", "SPROMPT", "TIMEFMT", "TMPPREFIX", "TRY_BLOCK_ERROR",
+                        "TRY_BLOCK_INTERRUPT", "TTY", "TTYIDLE", "USERNAME", "VENDOR",
+                        "watch", "WATCH", "WORDCHARS", "ZSH_ARGZERO", "ZSH_EVAL_CONTEXT",
+                        "ZSH_EXECUTION_STRING", "ZSH_EXEPATH", "ZSH_NAME", "ZSH_PATCHLEVEL",
+                        "ZSH_SUBSHELL", "ZSHRS_VERSION",
+                    ];
+                    let inherited = |n: &str| {
+                        crate::ported::params::environ
+                            .get()
+                            .map_or(false, |env| env.iter().any(|(k, _)| k == n))
+                    };
+                    let foreign = |n: &str| {
+                        (ZSH_PREDECLARED.contains(&n)
+                            // ksh93 has `PS3`; bash leaves it unset.
+                            || (n == "PS3" && crate::dash_mode::bash_mode()))
+                            && !inherited(n)
+                    };
                     let mut names: Vec<String> = crate::vm_helper::partab_scan_keys("parameters")
                         .unwrap_or_default()
                         .into_iter()
-                        .filter(|n| n.starts_with(&target) && !magic.contains(n.as_str()))
+                        .filter(|n| {
+                            n.starts_with(&target) && !magic.contains(n.as_str()) && !foreign(n)
+                        })
                         .collect();
                     names.sort();
                     names.dedup();
