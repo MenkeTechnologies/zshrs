@@ -496,12 +496,21 @@ pub fn store_float(value: LongDouble) -> mnumber {
 /// An integer-typed result, as ksh93 reads one: the integer when the host
 /// cast round-trips (`INT64_MAX + 1000` is `INT64_MAX` on aarch64), else a
 /// float (`9.22337203685477581e+18` on x86).
+///
+/// An integer's `d` is otherwise unused, so it carries the sign of a zero
+/// result: ksh93 holds `-1*0` as a long double `-0`, and `signbit` sees it.
 pub fn store(value: LongDouble) -> mnumber {
     if value.fits_host_cast() {
-        mnumber { l: value.host_cast_i64(), d: 0.0, type_: MN_INTEGER }
+        let d = if value.is_zero() && value.negative { -0.0 } else { 0.0 };
+        mnumber { l: value.host_cast_i64(), d, type_: MN_INTEGER }
     } else {
         store_float(value)
     }
+}
+
+/// True for the integer-typed `-0` [`store`] produces.
+pub fn is_negative_zero(n: &mnumber) -> bool {
+    n.type_ == MN_INTEGER && n.l == 0 && n.d.is_sign_negative()
 }
 
 /// The long double an `mnumber` denotes: an integer widened, a float read
