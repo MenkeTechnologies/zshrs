@@ -461,6 +461,17 @@ static BINTAB: Lazy<Mutex<Vec<crate::ported::zsh_h::builtin>>> = Lazy::new(|| {
     }])
 }); // c:238
 
+/// `static const struct gsu_array epochtime_gsu` (datetime.c:248-249):
+/// `{ getcurrenttime, NULL, stdunsetfn }`.
+static EPOCHTIME_GSU: crate::ported::zsh_h::gsu_array = crate::ported::zsh_h::gsu_array {
+    // c:220 `getcurrenttime` — its `Param` argument is unused.
+    getfn: |_pm| getcurrenttime(),
+    // c:249 — NULL setfn. The param is PM_READONLY, so an assignment is
+    // refused before a setfn is reached; Rust needs a callable here.
+    setfn: |_pm, _val| {},
+    unsetfn: crate::ported::params::stdunsetfn,
+};
+
 // `static struct paramdef patab[]` — port of `Src/Modules/datetime.c:251`.
 // `SPECIALPMDEF` (Src/zsh.h) folds PM_SPECIAL|PM_HIDE|PM_HIDEVAL into the
 // declared flags. `pm != NULL` is C's per-parameter enable bit
@@ -474,16 +485,24 @@ pub(crate) static PATAB: Lazy<Mutex<Vec<crate::ported::zsh_h::paramdef>>> = Lazy
     let special = (PM_SPECIAL | PM_HIDE | PM_HIDEVAL) as i32;
     Mutex::new(
         [
-            ("EPOCHSECONDS", (PM_INTEGER | PM_READONLY) as i32), // c:252
-            ("EPOCHREALTIME", (PM_FFLOAT | PM_READONLY) as i32), // c:254
-            ("epochtime", (PM_ARRAY | PM_READONLY) as i32),      // c:256
+            // The integer/float rows keep `gsu: 0`: their reads are served
+            // by the name-keyed arms in params.rs. The array row carries its
+            // vtable, which addparamdef installs as `pm->gsu.a`
+            // (c:Src/module.c:1104-1107), so the node answers every read.
+            ("EPOCHSECONDS", (PM_INTEGER | PM_READONLY) as i32, 0), // c:252
+            ("EPOCHREALTIME", (PM_FFLOAT | PM_READONLY) as i32, 0), // c:254
+            (
+                "epochtime",
+                (PM_ARRAY | PM_READONLY) as i32,
+                &EPOCHTIME_GSU as *const crate::ported::zsh_h::gsu_array as usize,
+            ), // c:256
         ]
         .iter()
-        .map(|(name, flags)| crate::ported::zsh_h::paramdef {
+        .map(|(name, flags, gsu)| crate::ported::zsh_h::paramdef {
             name: name.to_string(),
             flags: flags | special,
             var: 0,
-            gsu: 0,
+            gsu: *gsu,
             getnfn: None,
             scantfn: None,
             pm: None,

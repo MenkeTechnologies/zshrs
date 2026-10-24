@@ -19,6 +19,24 @@ CI green pending the underlying fix.
 
 ---
 
+## #1206 — `[ -o \> -a ]` is "unknown condition: -o" — port-bug
+
+**Status:** `port-bug`, found 2026-10-24 running Test/C02cond.ztst under
+zshrs ("string comparison with strings that look like operators").
+
+```
+$ zsh   -fc '[ -o \> -a ]; print $?'   → too many arguments / 2   (5.9.2; the dev tree expects 0)
+$ zshrs -fc '[ -o \> -a ]; print $?'   → unknown condition: -o / 2   ✗
+```
+
+With three arguments and `>` second, the dev tree's `par_cond_2`
+(c:Src/parse.c:2496-2512) parses a binary string comparison of `-o` and `-a`.
+5.9.2 fails the test too; which upstream change fixed it was not traced.
+Other 3- and 4-argument `[` forms (`[ ! x = y ]`, `[ -a = -a ]`,
+`[ -z -a -z ]`, `[ "(" -n x ")" ]`, …) match 5.9.2.
+
+---
+
 ## #1205 — `unsetopt multibyte`: patterns and `${…}` substitutions still worked in characters — fixed
 
 **Status:** `fixed` 2026-10-23.
@@ -67,9 +85,9 @@ Pinned by `bugs_md_regression::nomultibyte_substitutions_walk_bytes`.
 
 ---
 
-## #1204 — bare `$epochtime` expands to one empty word — port-bug
+## #1204 — bare `$epochtime` expanded to nothing — fixed
 
-**Status:** `port-bug`, found 2026-10-23 while fixing #1203.
+**Status:** `fixed` 2026-10-24 (found 2026-10-23 while fixing #1203).
 
 ```
 $ zsh   -fc 'zmodload zsh/datetime; a=($epochtime); print $#a "[$epochtime]"'   → 2 [1792762300 692555000]
@@ -82,6 +100,17 @@ bare and double-quoted forms come back empty, so the manual's own idiom
 c:Src/Modules/datetime.c:256 makes `epochtime` a PM_ARRAY special whose
 `getcurrenttime` getfn serves every read; the bare-name splice path does not
 reach `arrays_get`'s `epochtime` arm. Present before #1203.
+
+**Fix.** The value lives behind the param's own vtable, as in C. The
+`epochtime` patab row carries a ported `epochtime_gsu`
+(c:Src/Modules/datetime.c:248-249), and `addparamdef` now ports its PM_ARRAY
+arm (c:Src/module.c:1104-1107), so `pm->gsu.a` is set on the live node.
+`getaparam` already dispatches a non-`arrgetfn` `gsu.a` (c:Src/params.c:3107),
+which every bare, quoted and scalar-assignment read reaches. The other module
+special arrays (`funcstack`, `funcfiletrace`, `functrace`, `dirstack`,
+`jobstates`, `aliases`, `commands`, `parameters`, `errnos`, `signals`,
+`keymaps`, `reswords`) were checked bare against 5.9.2 and already matched.
+Pinned by `bugs_md_regression::epochtime_bare_reads_call_the_array_getfn`.
 
 ---
 

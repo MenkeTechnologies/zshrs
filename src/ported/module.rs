@@ -1203,7 +1203,20 @@ pub fn addparamdef(d: &mut paramdef) -> i32 {
                 let upper = casemodify(&pm.node.nam, CASMOD_UPPER);
                 pm.ename = Some(ztrdup(&upper)); // c:1106
             }
-            let _ = d.gsu; // c:1107
+            // c:1107 — `pm->gsu.a = d->gsu ? (GsuArray)d->gsu :
+            // &vararray_gsu;`. A module's `gsu` is the address of its static
+            // `gsu_array` (`&epochtime_gsu`, Src/Modules/datetime.c:248).
+            // With none the node keeps the plain array accessors. `pm` is a
+            // copy, so the vtable goes onto the live node too.
+            if d.gsu != 0 {
+                let g = unsafe { &*(d.gsu as *const crate::ported::zsh_h::gsu_array) };
+                pm.gsu_a = Some(Box::new(g.clone()));
+                if let Ok(mut tab) = paramtab().write() {
+                    if let Some(live) = tab.get_mut(&d.name) {
+                        live.gsu_a = Some(Box::new(g.clone()));
+                    }
+                }
+            }
         } else if t == PM_HASHED {
             // c:1110
             let _ = d.gsu; // c:1112-1113

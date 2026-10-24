@@ -3008,3 +3008,32 @@ print -r -- ${x#a?}"#;
         )
     );
 }
+
+/// #1204 — `epochtime` (c:Src/Modules/datetime.c:248-257) is a PM_ARRAY whose
+/// `gsu.a` getfn computes the value; the node has no stored array. Bare,
+/// quoted and `(…)`-assigned reads came back empty, so the manual's
+/// `for secs nsecs in $epochtime` idiom ran zero times. The time values
+/// themselves are not compared, only their shape.
+#[test]
+fn epochtime_bare_reads_call_the_array_getfn() {
+    if zshrs_bin().is_none() {
+        return;
+    }
+    let script = r#"zmodload zsh/datetime
+a=($epochtime); print $#a
+n=0; for s ns in $epochtime; do (( n++ )); [[ $s == <-> && $ns == <-> ]] && print digits; done; print $n
+IFS=:; [[ "$epochtime" == <->:<-> ]] && print quoted; unset IFS
+x=$epochtime; [[ $x == <->' '<-> ]] && print scalar
+zmodload -F zsh/datetime -p:epochtime; a=($epochtime); print $#a ${+epochtime}
+zmodload -F zsh/datetime +p:epochtime; a=($epochtime); print $#a
+epochtime=(1 2)"#;
+    let (ec, out, err) = run_zshrs(&format!("setopt extendedglob\n{script}"));
+    assert_eq!(
+        (ec, out.as_str(), err.as_str()),
+        (
+            1,
+            "2\ndigits\n1\nquoted\nscalar\n0 0\n2\n",
+            "zsh:9: read-only variable: epochtime\n"
+        )
+    );
+}
