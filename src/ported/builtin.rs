@@ -18957,6 +18957,22 @@ pub fn bin_test(
     if crate::dash_mode::dash_faithful() {
         return crate::dash_mode::dash_test(name, argv);
     }
+    // !!! DROP-IN GATE (no C counterpart) !!! bash, /bin/sh, ksh93 and mksh read a
+    // two-word test as `! X` or `-unop X`; anything else is "unary operator
+    // expected" (2). zsh's par_cond lexes `-a`/`-o` as && / || and returns 1/0
+    // for `[ x -a ]` / `[ x -o ]`.
+    if crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode() || crate::dash_mode::korn_mode() {
+        let words = match (func == BIN_BRACKET, argv.last().map(|s| s.as_str())) {
+            (true, Some("]")) => &argv[..argv.len() - 1],
+            _ => argv,
+        };
+        if let [w0, w1] = words {
+            if w0 != "!" && matches!(w1.as_str(), "-a" | "-o") && !(w0.len() == 2 && w0.starts_with('-')) {
+                zwarnnam(name, &format!("{w0}: unary operator expected"));
+                return 2;
+            }
+        }
+    }
     // !!! SH GATE (no C counterpart) !!! bash 3.2's three-argument test reads
     // `! ! X` as "too many arguments" (2), and its four-argument form negates
     // that (`! ! ! X` is 2 too); five words and more go through the full parser.
