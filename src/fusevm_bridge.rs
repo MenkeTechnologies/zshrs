@@ -8758,6 +8758,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // sepjoin(aval, sep, 1); isarr = 0; }`. And argc 1 is the caller
         // saying it wants the join without the split (see the contract above).
         if in_dq || join_no_split {
+            // !!! DROP-IN GATE (no C counterpart) !!! bash, ksh93 and mksh join a
+            // `$@` in a scalar assignment with a space (`set -- a b; IFS=:;
+            // x="$@"` → `a b`); zsh and dash use IFS[0], and `$*` is IFS[0]
+            // everywhere. (/bin/sh, bash 3.2, does too, but not for `local
+            // v="$@"`, which this join cannot tell apart.)
+            if name == "@"
+                && join_no_split
+                && (crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode())
+            {
+                return Value::str(elems.join(" "));
+            }
             return Value::str(joined);
         }
         // c:Src/subst.c:3912 — the join-then-split block is gated:
