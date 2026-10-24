@@ -987,17 +987,17 @@ by version between machines.
 
 | | zsh oracle | emulation targets |
 |---|---|---|
-| Cases | 22,200 (74 modes) | 2,100 (7 shells) |
-| Divergences | **18 (0.08%)** | 0 (0%) |
-| Modes/targets at zero | **73 of 74** | -- |
+| Cases | 22,500 (75 modes) | 2,100 (7 shells) |
+| Divergences | **3 (0.01%)** | 0 (0%) |
+| Modes/targets at zero | **74 of 75** | -- |
 
-All residual zsh-mode divergence is in one mode, with a single identified
-root cause (`quote` and `zmv`, the other two modes that diverged, were
-re-measured at 0 on 2026-10-01):
+All residual zsh-mode divergence is in one mode, and every case is an upstream
+zsh defect rather than a port gap (sweep of 2026-10-23, `--count 300 --verify 3`,
+each mode against the oracle CI uses for it):
 
 | Mode | Count | Root cause |
 |---|---|---|
-| `unicode` | 18 | `unsetopt multibyte` is not honoured. zsh drops to BYTE semantics (so `[[:alpha:]]` matches one byte of a multibyte character); zshrs stays in character mode. All 18 cases set the option. |
+| `unicode` | 3 | All under `unsetopt multibyte`, all upstream. `${(ml:8::.:)j}` (2): zsh reads past the string, so its output depends on adjacent memory. `${(C)j}` (1): zshrs emits zsh's bytes, but zsh leaks a raw 0x97 (`Quest`) into a glob and errors `no matches found`. Byte semantics themselves match (BUGS.md #1205). |
 
 Two further notes on reading this table:
 
