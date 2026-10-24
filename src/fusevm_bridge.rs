@@ -2089,6 +2089,44 @@ fn with_keyword_assignments<R>(
     Ok(rc)
 }
 
+/// c:Src/exec.c — when any redirect in the current scope failed
+/// (e.g. noclobber blocked a `>` overwrite), zsh refuses to
+/// execute the command: c:3785-3796 `execerr()` (c:252-259,
+/// `redir_err = lastval = 1`) jumps to `done`. Consumes
+/// exec.redirect_failed; Some(status) when the builtin `name` must
+/// not run. Shared by every builtin dispatch path (dispatch_builtin,
+/// the `eval` and `break`/`continue` fast paths).
+///
+/// c:Src/exec.c:4422-4436 — POSIX special-builtin escalation: a
+/// failed redirect on a PSPECIAL builtin (set, readonly, eval,
+/// break, ...) under POSIX_BUILTINS is FATAL in a non-interactive
+/// shell (`exit(1)` at c:4433). The `command` prefix resets this
+/// (BINF_COMMAND) — that path consumes the flag in BUILTIN_COMMAND.
+fn take_builtin_redirect_failure(name: &str) -> Option<i32> {
+    use std::sync::atomic::Ordering;
+    let redir_failed = with_executor(|exec| std::mem::take(&mut exec.redirect_failed));
+    if !redir_failed {
+        return None;
+    }
+    // !!! DASH-FAMILY GATE !!! dash reports a redirection failure as 2,
+    // and exits with it.
+    let st = crate::extensions::dash_mode::fatal_error_status().unwrap_or(1);
+    if crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXBUILTINS)
+        && !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE)
+        && builtin_is_pspecial(name)
+    {
+        crate::ported::builtin::EXIT_VAL.store(st, Ordering::Relaxed);
+        crate::ported::builtin::EXIT_PENDING.store(1, Ordering::Relaxed);
+    }
+    // c:Src/exec.c:252-256 execerr — `redir_err = lastval = 1;`. The
+    // redirect arm already stored it, but the statement prologue between
+    // the Redirect op and this call (BUILTIN_XTRACE_ARGS) copies the VM's
+    // stale status back over LASTVAL, and the errflag abort that follows
+    // exits with LASTVAL: `print hi <&""` exited 0 where zsh exits 1.
+    crate::ported::builtin::LASTVAL.store(st, Ordering::Relaxed);
+    Some(st)
+}
+
 pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
     let args = match with_keyword_assignments(args, false, 0, |rest| dispatch_builtin(name, rest)) {
         Ok(rc) => return rc,
@@ -2103,42 +2141,9 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
     // `>(cmd)` write ends owned by this command once it finishes
     // (drops on every return path below).
     let _psub_fds = PsubFdGuard { wait_aux: true };
-    // c:Src/exec.c — when any redirect in the current scope failed
-    // (e.g. noclobber blocked a `>` overwrite), zsh refuses to
-    // execute the command and exits with status 1. The Rust port
-    // still applied the command (writing to the /dev/null sink
-    // installed by host_apply_redirect's noclobber arm) so the
-    // success status overwrote the intended 1. Short-circuit here
-    // for builtins (the external-exec equivalent lives in
-    // ZshrsHost::exec).
-    let redir_failed = with_executor(|exec| {
-        let f = exec.redirect_failed;
-        exec.redirect_failed = false;
-        f
-    });
-    if redir_failed {
-        // c:Src/exec.c:4367-4386 — POSIX special-builtin escalation:
-        // a failed redirect on a PSPECIAL builtin (set, readonly,
-        // typeset, ...) under POSIX_BUILTINS is FATAL in a
-        // non-interactive shell (`exit(1)` at c:4383). The `command`
-        // prefix resets this (BINF_COMMAND, c:4369) — that path
-        // dispatches through bin_command, not here.
-        if crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXBUILTINS)
-            && !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE)
-            && builtin_is_pspecial(name)
-        {
-            use std::sync::atomic::Ordering;
-            crate::ported::builtin::EXIT_VAL.store(1, Ordering::Relaxed);
-            crate::ported::builtin::EXIT_PENDING.store(1, Ordering::Relaxed);
-        }
-        // c:Src/exec.c:252-256 execerr — `redir_err = lastval = 1;`. The
-        // redirect arm already stored it, but the statement prologue between
-        // the Redirect op and this call (BUILTIN_XTRACE_ARGS) copies the VM's
-        // stale status back over LASTVAL, and the errflag abort that follows
-        // exits with LASTVAL: `print hi <&""` exited 0 where zsh exits 1.
-        // !!! DASH-FAMILY GATE !!! dash reports a redirection failure as 2.
-        let st = crate::extensions::dash_mode::fatal_error_status().unwrap_or(1);
-        crate::ported::builtin::LASTVAL.store(st, std::sync::atomic::Ordering::Relaxed);
+    // c:Src/exec.c:3785-3796 — a failed redirection: the builtin does not run.
+    // The external-exec equivalent lives in ZshrsHost::exec.
+    if let Some(st) = take_builtin_redirect_failure(name) {
         return st;
     }
     // c:Src/glob.c:1876-1880 NOMATCH path — when expand_glob() failed
@@ -3226,6 +3231,24 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if let Some(status) = run_command_intercepts("eval", &args) {
             return Value::Status(status);
         }
+        // c:Src/exec.c:3785-3796 — `eval … </bad`: the redirection fails before
+        // the builtin runs (fatal under POSIX_BUILTINS, eval being special).
+        if let Some(st) = take_builtin_redirect_failure("eval") {
+            return Value::Status(st);
+        }
+        // c:Src/exec.c:4287 — `if (!errflag) execbuiltin(...)`: an error raised by
+        // the prefix assignments or the words (`readonly r=1; r=2 eval :`) skips
+        // the builtin, and errflag is left for the caller's list to abort on.
+        // dispatch_builtin's pre-check, which this fast path bypasses.
+        {
+            use std::sync::atomic::Ordering;
+            let live = crate::ported::utils::errflag.load(Ordering::Relaxed);
+            if live & crate::ported::zsh_h::ERRFLAG_ERROR != 0 {
+                arm_posix_special_exit("eval");
+                let hard = live & crate::ported::zsh_h::ERRFLAG_HARD != 0;
+                return Value::Status(if hard { 1 } else { words_errflag_status() });
+            }
+        }
         // c:Src/builtin.c:407-411 — generic `--` end-of-options
         // strip applied by `execbuiltin` for builtins that have
         // NULL optstr AND no BINF_HANDLES_OPTS. `eval` qualifies
@@ -3273,7 +3296,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // `<caller>:0` and `$funcfiletrace` lost the defining file.
         let _eval_fs_guard = crate::ported::exec::EvalFuncstackFrame::push();
         let oscriptname = crate::ported::utils::scriptname_get();
-        crate::ported::utils::set_scriptname(Some("(eval)".to_string()));
+        // c:Src/builtin.c:6155-6157 — `ineval = !isset(EVALLINENO); if (!ineval)
+        // scriptname = "(eval)";`: under NO_EVAL_LINENO the body keeps the
+        // caller's scriptname (`f(){ eval 'print -P %N'; }` prints `f`).
+        if crate::ported::zsh_h::isset(crate::ported::zsh_h::EVALLINENO) {
+            crate::ported::utils::set_scriptname(Some("(eval)".to_string()));
+        }
         // Recursion backstop — c:Src/jobs.c:1878-1884. zsh caps eval recursion
         // via its job table (every eval'd pipeline grabs a job slot; the table
         // caps at MAX_MAXJOBS → "job table full or recursion limit exceeded").
@@ -3672,9 +3700,66 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 .iter()
                 .any(|b| b.node.nam == n.as_str())
         {
+            // c:Src/exec.c:3785-3796 — the redirections fail before the builtin
+            // runs: execerr (c:252-259) skips it with `lastval = 1` (dash: 2),
+            // and the `done:` escalation (c:4422-4424) is off under
+            // BINF_COMMAND, so the shell goes on (`command : </bad` → 1).
+            let redir_failed = with_executor(|exec| std::mem::take(&mut exec.redirect_failed));
+            if redir_failed {
+                let st = crate::extensions::dash_mode::fatal_error_status().unwrap_or(1);
+                crate::ported::builtin::LASTVAL.store(st, std::sync::atomic::Ordering::Relaxed);
+                return Value::Status(st);
+            }
             // c:Src/exec.c:3484 — BINF_COMMAND suppresses it too.
             let _forced = crate::ported::zle::complete::ForcedBuiltinGuard::enter();
-            return Value::Status(dispatch_builtin_raw(&n, r));
+            let exit_armed_before =
+                crate::ported::builtin::EXIT_PENDING.load(std::sync::atomic::Ordering::Relaxed) != 0;
+            let saved_exit_val = crate::ported::builtin::EXIT_VAL.load(std::sync::atomic::Ordering::Relaxed);
+            let mut status = dispatch_builtin_raw(&n, r);
+            // c:Src/exec.c:4123 + c:4296-4297 — under POSIX_BUILTINS a special
+            // or assignment builtin behind `command` gets `do_save =
+            // BINF_COMMAND`, and `if (do_save & BINF_COMMAND) errflag &=
+            // ~ERRFLAG_ERROR;`: its error is not fatal (`command shift 5; echo
+            // yes`).
+            if crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXBUILTINS)
+                && (builtin_is_pspecial(&n) || builtin_is_assign_family(&n))
+            {
+                use std::sync::atomic::Ordering;
+                let raised = crate::ported::utils::errflag.load(Ordering::Relaxed)
+                    & crate::ported::zsh_h::ERRFLAG_ERROR
+                    != 0;
+                if crate::dash_mode::sh_mode() && n == "." {
+                    // !!! SH GATE (no C counterpart) !!! bash 3.2's /bin/sh still
+                    // ends the shell, with status 1, on `command . /nonexist`.
+                    if raised {
+                        arm_posix_special_exit(&n);
+                    }
+                } else {
+                    crate::ported::utils::errflag.fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
+                    // !!! DROP-IN GATE (no C counterpart) !!! ksh93, mksh and dash
+                    // report the error's fatal status (`command . /nonexist` → dash
+                    // 2, ksh 1), not the builtin's own (zsh: 127).
+                    if raised && crate::dash_mode::posix_faithful() {
+                        status = crate::extensions::dash_mode::fatal_error_status().unwrap_or(1);
+                    }
+                    // The drop-in special builtins arm their fatal exit inline (the
+                    // Rust stand-in for that `done:` escalation); `command` disarms
+                    // it, and its status is the one the exit would have had
+                    // (`command shift 5` → dash 2). `command exit` still exits.
+                    if !exit_armed_before
+                        && n != "exit"
+                        && crate::ported::builtin::EXIT_PENDING.load(Ordering::Relaxed) != 0
+                    {
+                        let armed_val = crate::ported::builtin::EXIT_VAL.swap(saved_exit_val, Ordering::Relaxed);
+                        crate::ported::builtin::EXIT_PENDING.store(0, Ordering::Relaxed);
+                        if crate::dash_mode::posix_faithful() {
+                            status = armed_val;
+                        }
+                    }
+                }
+            }
+            crate::ported::builtin::LASTVAL.store(status, std::sync::atomic::Ordering::Relaxed);
+            return Value::Status(status);
         }
         // c:Src/exec.c:3755-3763 — `globlist(args, 0); if (errflag) { lastval
         // = 1; goto err; }`. Without POSIX_BUILTINS `command NAME` is always
@@ -3854,8 +3939,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             exec.redirect_failed = false;
             f
         }) {
-            vm.last_status = 1;
-            return Value::Status(1);
+            // dash: 2 (dash_mode::fatal_error_status).
+            let st = crate::extensions::dash_mode::fatal_error_status().unwrap_or(1);
+            // c:Src/exec.c:4422-4436 — `cflags & (BINF_PSPECIAL|BINF_EXEC)`: under
+            // POSIX_BUILTINS the failure is fatal to a non-interactive shell
+            // (`exec ls 3</bad; echo $?` prints nothing in sh/ksh emulation).
+            if crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXBUILTINS)
+                && !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE)
+            {
+                crate::ported::builtin::EXIT_VAL.store(st, std::sync::atomic::Ordering::Relaxed);
+                crate::ported::builtin::EXIT_PENDING.store(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            vm.last_status = st;
+            return Value::Status(st);
         }
 
         // c:Src/exec.c::execcmd — `exec funcname` runs the function
@@ -13818,7 +13914,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // next BUILTIN_ERREXIT_CHECK (trigger 2) unwinds the
             // script with status 1 — same deferred-exit shape the
             // `exit` builtin uses inside subshell contexts.
-            crate::ported::builtin::EXIT_VAL.store(1, Ordering::Relaxed);
+            crate::ported::builtin::EXIT_VAL.store(redir_st, Ordering::Relaxed);
             crate::ported::builtin::EXIT_PENDING.store(1, Ordering::Relaxed);
         }
         Value::Status(redir_st)
@@ -15110,6 +15206,38 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         errexit_tail(last)
     });
 
+    // BUILTIN_LOOPCTL_REDIR_GATE — see the const.
+    vm.register_builtin(BUILTIN_LOOPCTL_REDIR_GATE, |vm, argc| {
+        let name = pop_args(vm, argc).pop().unwrap_or_default();
+        match take_builtin_redirect_failure(&name) {
+            Some(st) => {
+                vm.last_status = st;
+                Value::Int(1)
+            }
+            None => Value::Int(0),
+        }
+    });
+
+    // BUILTIN_ASSIGN_REDIR_GATE — see the const.
+    vm.register_builtin(BUILTIN_ASSIGN_REDIR_GATE, |vm, _argc| {
+        // !!! DROP-IN GATE (no C counterpart) !!! bash (5 and the 3.2 /bin/sh)
+        // and ksh93 perform the assignments of `x=1 </bad` anyway
+        // (`x=1 </bad; echo $? $x` → `1 1`); zsh, dash and mksh skip them.
+        // Those modes keep the flag for BUILTIN_ASSIGN_ONLY_STATUS.
+        if crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode() || crate::dash_mode::ksh93_mode() {
+            return Value::Int(0);
+        }
+        let failed = with_executor(|exec| std::mem::take(&mut exec.redirect_failed));
+        if !failed {
+            return Value::Int(0);
+        }
+        // c:Src/exec.c:255 — `redir_err = lastval = 1` (dash: 2).
+        let st = crate::extensions::dash_mode::fatal_error_status().unwrap_or(1);
+        with_executor(|exec| exec.set_last_status(st));
+        vm.last_status = st;
+        Value::Int(1)
+    });
+
     // BUILTIN_ASSIGN_ONLY_STATUS — status of an assignment-only
     // simple command. c:Src/exec.c:3393-3396 (execcmd_exec, no
     // command word + varspc): `if (errflag) lastval = 1; else
@@ -15132,6 +15260,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // (!cmdoutval) cmdoutval = 1; }` (assignment-failed cheat).
         let assign_failed = ASSIGN_FAILED_FLAG.swap(false, std::sync::atomic::Ordering::Relaxed);
         let _ = had_cmd_subst;
+        // c:Src/exec.c:252-259 execerr — a failed redirection of the
+        // `x=1 </bad` shape is `redir_err = lastval = 1` (dash: 2). zsh jumps to
+        // `done` before addvars (BUILTIN_ASSIGN_REDIR_GATE skipped the
+        // assignments); bash and ksh93 assign anyway and land here.
+        let redir_failed = with_executor(|exec| std::mem::take(&mut exec.redirect_failed));
+        if redir_failed {
+            let st = crate::extensions::dash_mode::fatal_error_status().unwrap_or(1);
+            with_executor(|exec| exec.set_last_status(st));
+            close_pending_psub_fds(true);
+            return Value::Status(st);
+        }
         if assign_failed && crate::ported::exec::cmdoutval.load(Ordering::Relaxed) == 0 {
             // c:Src/exec.c:2662-2663 — `if (!cmdoutval) cmdoutval = 1;`
             crate::ported::exec::cmdoutval.store(1, Ordering::Relaxed);
@@ -20950,6 +21089,21 @@ pub const BUILTIN_ARRAY_INDEX_UNBRACED: u16 = 622;
 /// Src/init.c:234. Caller pairs with SetStatus.
 pub const BUILTIN_ASSIGN_ONLY_STATUS: u16 = 623;
 
+/// Assignment-only command with redirections (`x=1 </bad`), emitted after the
+/// redirections and before the deferred assignments. c:Src/exec.c:3786-3796 —
+/// a failed redirection calls execerr (c:252-259), whose `goto done` skips
+/// addvars (c:3963): the assignments do not happen and the status is 1.
+/// Returns Int(1) — after consuming exec.redirect_failed and storing the
+/// status — when the caller must jump over the assignments to
+/// WithRedirectsEnd; Int(0) otherwise. No args.
+pub const BUILTIN_ASSIGN_REDIR_GATE: u16 = 810;
+/// `break` / `continue` with redirections, emitted after the redirections and
+/// before the loop-control jump. Pops [name]. c:Src/exec.c:3785-3796 — a failed
+/// redirection skips the builtin (no loop exit), with the status and the
+/// POSIX_BUILTINS fatal escalation of take_builtin_redirect_failure. Returns
+/// Int(1) when the caller must jump past the loop control, Int(0) otherwise.
+pub const BUILTIN_LOOPCTL_REDIR_GATE: u16 = 811;
+
 /// c:Src/exec.c addvars — `if (!pm) { lastval = 1; if (!cmdoutval)
 /// cmdoutval = 1; }`. Set by BUILTIN_SET_VAR on assignsparam
 /// failure, consumed by BUILTIN_ASSIGN_ONLY_STATUS so the
@@ -22599,7 +22753,8 @@ impl fusevm::ShellHost for ZshrsHost {
             f
         });
         if redir_failed {
-            return 1;
+            // dash: 2 (dash_mode::fatal_error_status).
+            return crate::extensions::dash_mode::fatal_error_status().unwrap_or(1);
         }
         // c:Src/exec.c:3545-3547 — `setunderscore(lastnode(args))` for the
         // command about to run. Write the canonical `zunderscore` global,
@@ -22826,8 +22981,14 @@ impl fusevm::ShellHost for ZshrsHost {
                 // carrier too, or the command-boundary gate still ends the list.
                 let _ = external_glob_failure_status();
             }
-            with_executor(|exec| exec.set_last_status(1));
-            return Some(1);
+            // dash: a failed redirection is status 2 (dash_mode::fatal_error_status).
+            let st = if redir_failed {
+                crate::extensions::dash_mode::fatal_error_status().unwrap_or(1)
+            } else {
+                1
+            };
+            with_executor(|exec| exec.set_last_status(st));
+            return Some(st);
         }
         // c:Src/exec.c:3755-3763 — a shell function is not forked, so a
         // failed argument glob is `lastval = 1; goto err;` in the shell: the
