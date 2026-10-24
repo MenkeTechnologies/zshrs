@@ -12427,6 +12427,26 @@ pub fn getkeystring(s: &str, how: u32, mut misc: Option<&mut i32>) -> (String, u
                         continue;
                     }
                 }
+                // !!! DROP-IN GATE (no C counterpart) !!! in a printf FORMAT bash and
+                // /bin/sh (printf.def `tescape`) take `\"`, `\'` and `\?` as the bare
+                // character; ksh93 drops the backslash of EVERY unknown escape
+                // (`\q` → `q`) and `\%` is a literal percent, never a directive.
+                // zsh keeps `\<c>` (c:utils.c:7181-7183).
+                if printf_fmt {
+                    if (crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode())
+                        && matches!(c, '"' | '\'' | '?')
+                    {
+                        result.push(c);
+                        continue;
+                    }
+                    if crate::dash_mode::ksh93_mode() {
+                        if c == '%' {
+                            result.push('%');
+                        }
+                        result.push(c);
+                        continue;
+                    }
+                }
                 // c:utils.c:7045 — `\c` under GETKEY_BACKSLASH_C
                 // means TRUNCATE: drop the rest of the input,
                 // suppress the trailing newline. Used by `echo`

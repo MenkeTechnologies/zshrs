@@ -11893,6 +11893,35 @@ fn realpath_relative_to(target: &std::path::Path, base: &std::path::Path) -> Str
     }
 }
 
+/// bash `printf %q` for a value without control characters: lib/sh/shquote.c
+/// `sh_backslash_quote (p, 0, 3)` — a backslash before each byte of its
+/// `bstab` set (blank, newline and `` !"$&'(),;<>?[\]^`{|}* ``), before `#` only
+/// at the start, and (bash 5, `flags & 2`) before `~` at the start or after
+/// `:` / `=`. bash 3.2 (/bin/sh) never quotes `~`. An empty value is `''`.
+/// zsh's quotestring set differs (`x#`, `=`, no `,` / `!`).
+pub fn bash_backslash_quote(s: &str, quote_tilde: bool) -> String {
+    if s.is_empty() {
+        return "''".to_string();
+    }
+    let mut out = String::with_capacity(s.len() * 2);
+    let mut prev: Option<char> = None;
+    for c in s.chars() {
+        let quote = match c {
+            ' ' | '\t' | '\n' | '!' | '"' | '$' | '&' | '\'' | '(' | ')' | '*' | ',' | ';'
+            | '<' | '>' | '?' | '[' | '\\' | ']' | '^' | '`' | '{' | '|' | '}' => true,
+            '#' => prev.is_none(),
+            '~' => quote_tilde && matches!(prev, None | Some(':') | Some('=')),
+            _ => false,
+        };
+        if quote {
+            out.push('\\');
+        }
+        out.push(c);
+        prev = Some(c);
+    }
+    out
+}
+
 #[cfg(test)]
 mod add_zsh_hook_tests {
     //! Tests for the `add-zsh-hook` builtin — the SHELL-LEVEL hook

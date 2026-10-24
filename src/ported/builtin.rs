@@ -1138,6 +1138,18 @@ pub fn execbuiltin(
         errflag.fetch_and(!ERRFLAG_ERROR, Relaxed);
         return if rc == 0 { 1 } else { rc };
     }
+    // !!! DROP-IN GATE (no C counterpart) !!! bash (`sh_chkwrite`) and dash
+    // (`flushall` → `outerr`) fail a builtin whose listing could not be
+    // written: `pwd >&-`, `type ls >&-`, a bare `set >&-` all give status 1;
+    // zsh, ksh93 and mksh answer 0. Rust's Stdout swallows EBADF, so the
+    // closed fd 1 itself is the signal (these forms always print on success).
+    if rc == 0
+        && (crate::dash_mode::bash_mode() || crate::dash_mode::dash_faithful())
+        && (matches!(name.as_str(), "pwd" | "type") || (name == "set" && trimmed.is_empty()))
+        && unsafe { libc::fcntl(1, libc::F_GETFD) } == -1
+    {
+        return 1;
+    }
     rc
 }
 
@@ -14305,7 +14317,23 @@ pub fn bin_print(
                 }
                 setaparam(v, arrayval);
             } else {
+                // !!! DROP-IN GATE (no C counterpart) !!! bash and the Korn shells
+                // have SPARSE arrays: `printf -v 'a[2]' z` sets index 2 alone
+                // (`declare -p a` → `([2]="z")`); the dense store pads 0 and 1,
+                // so record them as holes the way a plain `a[2]=z` does.
+                let sparse = (crate::dash_mode::sparse_arrays()
+                    && v.ends_with(']')
+                    && crate::ported::params::gethparam(v.split('[').next().unwrap_or("")).is_none())
+                .then(|| {
+                    let (nm, key) = v[..v.len() - 1].split_once('[')?;
+                    let i = crate::dash_mode::sparse_subscript_index(key)?;
+                    Some((nm.to_string(), crate::ported::params::getaparam(nm).map_or(0, |a| a.len()), i))
+                })
+                .flatten();
                 setsparam(v, &out);
+                if let Some((nm, old_len, i)) = sparse {
+                    crate::bash_arrays::note_subscript_set(&nm, old_len, i);
+                }
             }
         } else {
             // c:Src/builtin.c — C printf goes through libc fwrite to
@@ -14322,6 +14350,18 @@ pub fn bin_print(
             // &curlen))`: printf's values are unmetafied before the
             // write. Decode Meta-char pairs to raw bytes. Bug #127.
             crate::stdout_ferror::fwrite_stdout(&mut lk, &[&crate::ported::utils::unmetafy_str(&out)]);
+            // !!! DROP-IN GATE (no C counterpart) !!! bash, ksh93, dash and /bin/sh
+            // fail a printf whose write failed (`printf x >&-` → 1); ksh93 checks
+            // fd 1 even with nothing to write (`printf '' >&-` → 1). zsh and mksh
+            // (whose printf is not a builtin) answer 0 — mirrors the echo gate.
+            if (crate::dash_mode::bash_mode()
+                || (crate::dash_mode::posix_faithful() && !crate::dash_mode::pdksh_family()))
+                && (crate::stdout_ferror::take_stdout_ferror() != 0
+                    || (crate::dash_mode::ksh93_mode()
+                        && unsafe { libc::fcntl(1, libc::F_GETFD) } == -1))
+            {
+                return 1;
+            }
         }
         // c:5464 — a `%d`/`%i` math-operand error makes printf exit 1
         // (output already emitted).
@@ -22892,11 +22932,13 @@ fn printf_format(
                     let quoted = match args.get(arg_i) {
                         Some(a) => if crate::dash_mode::ksh93_mode() {
                             crate::dash_mode::ksh93_printf_q(a)
-                        } else if crate::dash_mode::bash_mode()
+                        } else if (crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode())
                             && crate::dash_mode::bash_ansic_shouldquote(a)
                         {
                             // bash: a value with control characters prints as one `$'…'`.
                             crate::dash_mode::bash_ansic_quote(a)
+                        } else if crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode() {
+                            crate::ext_builtins::bash_backslash_quote(a, crate::dash_mode::bash_mode())
                         } else {
                             crate::ported::utils::quotestring(
                                 a,
