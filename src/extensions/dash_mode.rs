@@ -844,7 +844,9 @@ pub fn ksh93_mode() -> bool {
 /// `"${a[*]}"` / `typeset -p` with no further change.
 #[inline]
 pub fn sparse_arrays() -> bool {
-    bash_mode() || korn_mode()
+    // /bin/sh on this platform is bash 3.2 (see sh_mode), whose arrays are
+    // sparse too: `a[1]=x; echo ${a[0]-u}` is `u` there.
+    bash_mode() || korn_mode() || sh_mode()
 }
 
 /// True when `printf` in bash mode should treat this operand to a numeric

@@ -15956,6 +15956,15 @@ fn is_splice_expansion(s: &str) -> bool {
         if after_flag_group.starts_with('=') && !after_flag_group.starts_with("==") {
             return true;
         }
+        // !!! BASH-MODE GATE (no C counterpart) !!! bash's `${!name}`
+        // indirection takes the SHAPE of what it names: `n='a[@]';
+        // "${!n}"` splats `a` into separate words (bash and /bin/sh = bash
+        // 3.2), and a scalar target stays one word, so this is the splice
+        // shape — the runtime `(P)` re-pointing in paramsubst already
+        // produces the array.
+        if (crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode()) && inner.starts_with('!') {
+            return true;
+        }
         if inner.contains("[@]") || inner.contains("[*]") {
             return true;
         }
