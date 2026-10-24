@@ -2526,6 +2526,15 @@ pub fn zshrs_main() {
         if zsh::ported::options::opt_state_get("monitor").unwrap_or(false) {
             zsh::ported::init::init_io(None);
         }
+        // c:Src/init.c:1913 — `init_builtins()`: zsh_main runs it after
+        // parseargs installed the emulation, so `zsh --emulate sh -c …`
+        // (and a `--sh` drop-in) starts with the `repeat` reserved word
+        // disabled. This dispatch path never reaches zsh_main. The zsh-style
+        // leg skips it: that reference is a zsh that ran init_builtins under
+        // EMULATE_ZSH and then typed `emulate sh`, so `repeat` stays reserved.
+        if zsh_style_emu.is_none() {
+            zsh::ported::builtin::init_builtins();
+        }
         // zsh-STYLE leg (`--sh --zsh` / `--ksh --zsh`): install the emulation
         // HERE, last, and NOT fully — the reference is a zsh that finished
         // startup and then ran `emulate X` as its first command, so the option

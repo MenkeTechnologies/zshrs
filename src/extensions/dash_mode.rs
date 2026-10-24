@@ -4883,9 +4883,19 @@ pub fn hide_builtins_the_reference_lacks() {
     // word (c:Src/exec.c:3088-3096 runs the builtin regardless of DISABLED),
     // so the reserved word goes too, before anything is parsed; the word is
     // then an ordinary command whose builtin is disabled.
+    // zsh's own reserved words the reference has no keyword for go the same
+    // way (`foreach i (a b); …; end` is a syntax error in bash and ksh93, and
+    // `nocorrect echo x` is "nocorrect: not found"). `reswd_in_emulation` is
+    // the per-shell answer `type` already gives; the declaration words it also
+    // denies stay reserved for parsing (`local a=(1 2)`), as above.
     if let Ok(mut reswds) = crate::ported::hashtable::reswdtab_lock().write() {
         for name in lacks {
             reswds.disable(name);
+        }
+        for name in ["repeat", "foreach", "nocorrect", "end", "always", "coproc"] {
+            if !reswd_in_emulation(name) {
+                reswds.disable(name);
+            }
         }
     }
     let Ok(mut disabled) = crate::ported::builtin::BUILTINS_DISABLED.lock() else {
