@@ -1212,6 +1212,12 @@ thread_local! {
     /// In pattern context (RHS of == != =~ in [[ ]]) — zshrs extension
     /// over the bare incond state.
     pub static LEX_INCONDPAT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// !!! KSH93-ONLY (no C counterpart) !!! set by the cond parser while it
+    /// lexes the right-hand word of `[[ x =~ RE ]]` under `--ksh`. ksh93 reads
+    /// that word as an ERE whose bracket expressions keep blanks and operator
+    /// characters: `[[ "a b" =~ a[ ]b ]]` and `[[ "a|b" =~ a[|]b ]]` match,
+    /// and `[[ x =~ [ ]]` is a syntax error because `[ ]]` is one word.
+    pub static LEX_KSH_REGEX_RHS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// `int incasepat` (lex.c:130).
     pub static LEX_INCASEPAT: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
     /// `int inredir` (lex.c:126).
@@ -2097,6 +2103,21 @@ fn gettokstr(c: char, sub: bool) -> lextok {
     let mut intpos = 1;
     let mut unmatched = '\0';
     let mut c = c;
+    // !!! KSH93-ONLY (no C counterpart) !!! bracket-expression state of a
+    // ksh93 `=~` operand (see LEX_KSH_REGEX_RHS): 0 outside, 1 right after
+    // `[`, 4 right after `[^` (a `]` there is literal), 2 inside, 3 inside a
+    // `[:class:]` / `[.coll.]` / `[=equiv=]` whose closer is `kre_closer`.
+    let ksh_regex_rhs = LEX_KSH_REGEX_RHS.get() && !sub;
+    let mut kre: u8 = 0;
+    let mut kre_closer = '\0';
+    let mut kre_prev = '\0';
+    // !!! DROP-IN GATE (no C counterpart) !!! ksh93, mksh and bash with
+    // extglob read a pattern group after `@ * + ? !` up to its closing
+    // paren: `;`, `&`, `<` and `>` inside it are pattern text (`echo @(a;b)`
+    // prints `@(a;b)`, `[[ abc == @(a*&*c) ]]` is ksh93's AND). zsh ends
+    // the word there.
+    let ksh_pattern_groups = isset(KSHGLOB)
+        && (crate::dash_mode::korn_mode() || crate::dash_mode::bash_mode());
 
     if !sub {
         LEX_LEXBUF.with_borrow_mut(|b| b.clear());
@@ -2110,11 +2131,19 @@ fn gettokstr(c: char, sub: bool) -> lextok {
         // unquoted CJK word was split apart as if it were whitespace
         // (`print -r -- 三` printed nothing). Only ASCII can be blank.
         let inbl = c.is_ascii() && crate::ztype_h::inblank(c as u8);
+        // Inside a ksh93 `=~` bracket expression a blank or an operator
+        // character is a member of the set, not a word break.
+        let set_member_literal = (kre != 0 && matches!(c, ' ' | '\t' | ';' | '&' | '|' | '<' | '>' | '(' | ')'))
+            || (ksh_pattern_groups
+                && pct > 0
+                && in_brace_param == 0
+                && !sub
+                && matches!(c, ';' | '&' | '<' | '>'));
 
         // `rest` is borrowed, never copied: this runs on every token-ending
         // blank, and copying the remaining input each time made sourcing a
         // 51k-entry .zcompdump quadratic (compinit -C: 10.2s vs zsh's 0.24s).
-        if inbl && in_brace_param == 0 && pct == 0 && !sub && !LEX_LEXBUF.with_borrow(|b| {
+        if inbl && !set_member_literal && in_brace_param == 0 && pct == 0 && !sub && !LEX_LEXBUF.with_borrow(|b| {
                 LEX_INPUT.with_borrow(|s| {
                     let rest = s.get(LEX_POS.get()..).unwrap_or("");
                     crate::dash_mode::korn_subscript_blank(brct, LEX_OLDPOS.get(), b.ptr.as_deref().unwrap_or(""), rest)
@@ -2137,6 +2166,9 @@ fn gettokstr(c: char, sub: bool) -> lextok {
         // Char-with-context guards (`bct > 0`, `brct > 0`, etc.) stay
         // inline where C uses them.
         match lexact2_get(c) {
+            _ if set_member_literal => {
+                add(c);
+            }
             // c:982 — `case LX2_OUTPAR:` — `)`.
             //
             // c:989 — `if ((sub || in_brace_param) && isset(SHGLOB)) break;`
@@ -2532,7 +2564,19 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                         // "parse error near `()'" sourcing Debian's
                         // /usr/share/bash-completion/bash_completion.
                         let bash_cond_rhs = LEX_INCOND.get() > 1 && crate::dash_mode::bash_mode();
-                        if (e == Some(')') && !bash_cond_rhs)
+                        // !!! DROP-IN GATE (no C counterpart) !!! ksh93, mksh and
+                        // bash with extglob take `()` after a pattern operator as
+                        // an empty pattern group, anywhere in a word: `echo a*()`
+                        // prints `a*()` and `[[ "" == @() ]]` is 0. zsh splits
+                        // off the `()` and fails ("parse error near `()'").
+                        let ksh_empty_group = e == Some(')')
+                            && ksh_pattern_groups
+                            && LEX_LEXBUF.with_borrow(|b| {
+                                b.ptr.as_deref().and_then(|s| s.chars().last()).map_or(false, |l| {
+                                    matches!(l, '@' | '+' | '*' | '?' | '!' | Star | Quest | Bang)
+                                })
+                            });
+                        if (e == Some(')') && !bash_cond_rhs && !ksh_empty_group)
                             || (isset(SHGLOB)
                                 && is_inblank
                                 && bct == 0
@@ -3338,6 +3382,22 @@ fn gettokstr(c: char, sub: bool) -> lextok {
             _ => {
                 add(c);
             }
+        }
+
+        if ksh_regex_rhs {
+            kre = match (kre, c) {
+                (0, '[') => 1,
+                (1, '^') => 4,
+                (1 | 4, _) => 2,
+                (2, ']') => 0,
+                (2, ':' | '.' | '=') if kre_prev == '[' => {
+                    kre_closer = c;
+                    3
+                }
+                (3, ']') if kre_prev == kre_closer => 2,
+                (state, _) => state,
+            };
+            kre_prev = c;
         }
 
         c = match hgetc() {

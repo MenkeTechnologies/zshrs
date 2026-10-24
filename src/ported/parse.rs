@@ -10929,8 +10929,17 @@ fn parse_cond_primary() -> Option<ZshCond> {
     let s2 = tokstr().unwrap_or_default();
     let s2_chars: Vec<char> = s2.chars().collect();
     let dble = s2_chars.len() == 2 && IS_DASH(s2_chars[0]);
+    // !!! KSH93 GATE (no C counterpart) !!! ksh93 lexes the `=~` operand as an
+    // ERE: blanks and operator characters inside a bracket expression belong
+    // to the word (see LEX_KSH_REGEX_RHS).
+    let ksh_regex_rhs = crate::dash_mode::ksh93_mode()
+        && s2_chars.len() == 2
+        && (s2_chars[0] == '=' || s2_chars[0] == Equals)
+        && (s2_chars[1] == '~' || s2_chars[1] == Tilde);
     set_incond(incond() + 1);
+    super::lex::LEX_KSH_REGEX_RHS.set(ksh_regex_rhs);
     zshlex();
+    super::lex::LEX_KSH_REGEX_RHS.set(false);
     skip_cond_separators();
     set_incond(incond() - 1);
 
