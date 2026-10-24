@@ -2315,7 +2315,14 @@ impl ShellExecutor {
             "set" => println!("set: set [-abefhkmnptuvxBCHP] [-o option-name] [--] [arg ...]\n    Set or unset values of shell options and positional parameters."),
             "test" | "[" => println!("test: test [expr]\n    Evaluate conditional expression."),
             "type" => println!("type: type [-afptP] name [name ...]\n    Display information about command type."),
-            _ => println!("{}: no help available", cmd),
+            // bash builtins/help.def: an unknown topic is an error, status 1.
+            _ => {
+                crate::ported::utils::zwarnnam(
+                    "help",
+                    &format!("no help topics match `{cmd}'.  Try `help help' or `man -k {cmd}' or `info {cmd}'."),
+                );
+                return 1;
+            }
         }
         0
     }

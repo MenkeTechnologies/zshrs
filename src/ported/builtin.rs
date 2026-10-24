@@ -524,6 +524,14 @@ pub fn execbuiltin(
         }
         // !!! KSH93-ONLY (no C counterpart) !!! ksh93 `print -e` is accepted (escapes
         // are already on; `-r` turns them off).
+        // ksh93 `whence -t` (the kind word, as bash's `type -t`) and `alias -x`
+        // (an obsolete no-op ksh93 still accepts).
+        if crate::dash_mode::ksh93_mode() && name == "whence" {
+            optstr_bytes.push(b't');
+        }
+        if crate::dash_mode::ksh93_mode() && name == "alias" {
+            optstr_bytes.push(b'x');
+        }
         if crate::dash_mode::ksh93_mode() && name == "print" {
             // ksh93u+m `print` takes -e -f -n -p -r -R -s -u -v (and -C, not ported);
             // any other letter is "unknown option", status 2.
@@ -958,10 +966,11 @@ pub fn execbuiltin(
                 return 0;
             }
         }
-        // bash and ksh93 answer a `getopts` with too few operands with a usage error, status 2.
+        // bash, /bin/sh and ksh93 answer a `getopts` with too few operands with a usage
+        // error, status 2.
         if argc < bn_ref.minargs
             && name == "getopts"
-            && (crate::dash_mode::bash_mode() || crate::dash_mode::ksh93_mode())
+            && (crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode() || crate::dash_mode::ksh93_mode())
         {
             return 2;
         }
@@ -1179,7 +1188,9 @@ pub fn execbuiltin(
     // !!! BASH-MODE (no C counterpart) !!! bash's declaration builtins report a failed
     // assignment (`declare -r s=1; declare s=2`) as status 1 and carry on with the rest
     // of the line; zsh's zerr from the same assignment ends it (errflag).
-    let bash_decl = crate::dash_mode::bash_mode()
+    // /bin/sh (bash 3.2 in POSIX mode) does the same: `export 1bad=x` and
+    // `readonly 1bad=x` fail with 1 and the script goes on.
+    let bash_decl = (crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode())
         && matches!(
             name.as_str(),
             "typeset" | "declare" | "local" | "readonly" | "export" | "integer" | "float"
@@ -11230,6 +11241,17 @@ pub fn bin_unset(
         // diagnostic is zerrnam: errflag is set and the rest of the
         // command list is abandoned.
         if !isident(nm) {
+            // !!! DROP-IN GATE (no C counterpart) !!! bash, /bin/sh, ksh93 and mksh
+            // report the bad name, return 1 and go on (`unset 1bad; echo $?` → 1).
+            // bash 5 without `-v` takes it as a function name instead (status 0).
+            if crate::dash_mode::bash_mode() && !OPT_ISSET(ops, b'v') {
+                continue;
+            }
+            if crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode() || crate::dash_mode::korn_mode() {
+                zwarnnam(name, &format!("`{}': not a valid identifier", s));
+                returnval = 1;
+                continue;
+            }
             zerrnam(name, &format!("{}: invalid parameter name", crate::ported::utils::nicedupstring(&s))); // c:3876 — `%s` is nicezputs (c:Src/utils.c:316)
             returnval = 1; // c:3877
             continue; // c:3878
@@ -12069,7 +12091,10 @@ pub fn bin_whence(
 
     // c:3989-3993 — flags.
     let csh = OPT_ISSET(ops, b'c'); // c:3989
-    let v = OPT_ISSET(ops, b'v'); // c:3990
+    // !!! KSH93 GATE (no C counterpart) !!! ksh93's `whence -a` reports every match
+    // in the `-v` form (`whence -a print` → `print is a shell builtin`).
+    let v = OPT_ISSET(ops, b'v') // c:3990
+        || (nam == "whence" && crate::dash_mode::ksh93_mode() && OPT_ISSET(ops, b'a'));
     let all = OPT_ISSET(ops, b'a'); // c:3991
     let wd = OPT_ISSET(ops, b'w'); // c:3992
 
@@ -12115,14 +12140,18 @@ pub fn bin_whence(
         return 1;
     }
     if (crate::dash_mode::bash_mode() || crate::dash_mode::ksh93_mode()) && OPT_ISSET(ops, b't') {
-        let type_of = |name: &str| -> Option<&'static str> {
+        // bash `type -at NAME` lists every kind NAME resolves to, in precedence
+        // order (`type -at true` → `builtin`, `file`).
+        let all_kinds = crate::dash_mode::bash_mode() && OPT_ISSET(ops, b'a');
+        let type_of = |name: &str| -> Vec<&'static str> {
+            let mut kinds: Vec<&'static str> = Vec::new();
             if crate::dash_mode::aliases_visible()
                 && aliastab_lock()
                     .read()
                     .ok()
                     .map_or(false, |t| t.get(name).is_some())
             {
-                return Some("alias");
+                kinds.push("alias");
             }
             if crate::dash_mode::reswd_in_emulation(name)
                 && reswdtab_lock()
@@ -12130,25 +12159,31 @@ pub fn bin_whence(
                     .ok()
                     .map_or(false, |t| t.get(name).is_some())
             {
-                return Some("keyword");
+                kinds.push("keyword");
             }
             if getshfunc(name).is_some() {
-                return Some("function");
+                kinds.push("function");
             }
             let disabled = BUILTINS_DISABLED.lock().map_or(false, |s| s.contains(name));
             if !disabled && createbuiltintable().get(name).is_some() {
-                return Some("builtin");
+                kinds.push("builtin");
             }
             if crate::ported::exec::findcmd(name, 0, 0).is_some() {
-                return Some("file");
+                kinds.push("file");
             }
-            None
+            if !all_kinds {
+                kinds.truncate(1);
+            }
+            kinds
         };
         let mut rc = 0;
         for name in argv {
-            match type_of(name) {
-                Some(t) => println!("{}", t),
-                None => rc = 1,
+            let kinds = type_of(name);
+            if kinds.is_empty() {
+                rc = 1;
+            }
+            for t in kinds {
+                println!("{}", t);
             }
         }
         return rc;
@@ -12196,7 +12231,8 @@ pub fn bin_whence(
         printflags |= PRINT_WHENCE_CSH;
     }
     // c:4006
-    else if OPT_ISSET(ops, b'v') {
+    else if v {
+        // `v` is OPT_ISSET(ops,'v'), plus ksh93's `whence -a` (see above).
         printflags |= PRINT_WHENCE_VERBOSE;
     }
     // c:4008
@@ -15551,9 +15587,9 @@ pub fn bin_getopts(
     } else {
         // c:5784 — `zsfree(zoptarg); zoptarg = ztrdup("");`
         // !!! BASH/KORN GATE (no C counterpart) !!! bash, ksh93 and mksh leave
-        // `$OPTARG` UNSET after an option that takes no argument; zsh and dash
-        // set it to the empty string.
-        if crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode() {
+        // `$OPTARG` UNSET after an option that takes no argument (so does /bin/sh,
+        // bash 3.2); zsh and dash set it to the empty string.
+        if crate::dash_mode::bash_mode() || crate::dash_mode::sh_mode() || crate::dash_mode::korn_mode() {
             crate::ported::params::unsetparam("OPTARG");
         } else {
             setsparam("OPTARG", "");
@@ -15593,9 +15629,31 @@ pub fn bin_break(
     let mut dash_num: Option<i32> = None;
     if !implicit && crate::dash_mode::dash_faithful() {
         dash_num = crate::dash_mode::dash_number(&argv[0]);
-        if dash_num.is_none() {
+        // dash breakcmd: `if (n <= 0) sh_error(illnum, argv[1])` — `break 0` too.
+        let loop_cmd = func == BIN_BREAK || func == BIN_CONTINUE;
+        if dash_num.is_none() || (loop_cmd && dash_num.is_some_and(|n| n <= 0)) {
             zerrnam(name, &format!("Illegal number: {}", argv[0]));
             return crate::dash_mode::fatal_error_status().unwrap_or(2);
+        }
+    }
+    // !!! PDKSH (no C counterpart) !!! mksh's getn() takes `[+-]digits` (blanks
+    // around allowed) and nothing else: `exit abc` reports "bad number" and
+    // leaves with 1, `return abc` returns 1, `break abc` is a fatal error.
+    // zsh evaluates the operand as arithmetic (`abc` is 0).
+    if !implicit && crate::dash_mode::pdksh_family() {
+        let t = argv[0].trim();
+        let d = t.strip_prefix(['+', '-']).unwrap_or(t);
+        if d.is_empty() || !d.bytes().all(|b| b.is_ascii_digit()) {
+            if func == BIN_BREAK || func == BIN_CONTINUE {
+                zerrnam(name, &format!("bad number: {}", argv[0]));
+                return 1;
+            }
+            zwarnnam(name, &format!("bad number: {}", argv[0]));
+            if func == BIN_EXIT {
+                zexit(1, ZEXIT_NORMAL);
+                return 1;
+            }
+            dash_num = Some(1);
         }
     }
     // c:5815-5818 — first arg parsed as math expr.
@@ -19366,6 +19424,14 @@ pub fn bin_trap(
             .map(|s| if s == "RETURN" { i32::MAX } else { getsigidx(s) })
             .collect()
     });
+    // bash trap.def: an unknown name in `trap -p SIG...` is "invalid signal
+    // specification"; the valid ones still list and the status is 1.
+    let p_bad = p_filter.as_ref().is_some_and(|f| f.contains(&-1));
+    if p_bad {
+        for s in argv[1..].iter().filter(|s| *s != "RETURN" && getsigidx(s) == -1) {
+            zwarnnam(name, &format!("{s}: invalid signal specification"));
+        }
+    }
     let argv: &[String] = if list_via_p || p_filter.is_some() {
         &[]
     } else {
@@ -19611,7 +19677,7 @@ pub fn bin_trap(
             }
         }
         unqueue_signals(); // c:7378
-        return 0; // c:7379
+        return p_bad as i32; // c:7379
     }
 
     // c:7384-7400 — first arg is signal number / single `-` → clear.
@@ -19774,8 +19840,10 @@ pub fn bin_trap(
         let sig = getsigidx(&spelled);
         // !!! BASH/KORN GATE (no C counterpart) !!! `ZERR` is zsh's spelling of ERR;
         // bash, ksh93 and mksh do not know it ("invalid signal specification").
+        // mksh has no DEBUG trap either (`trap … DEBUG` → "bad signal 'DEBUG'", 1).
         let korn_bash_zerr = (crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode())
-            && sigarg.eq_ignore_ascii_case("ZERR");
+            && sigarg.eq_ignore_ascii_case("ZERR")
+            || (crate::dash_mode::pdksh_family() && sigarg.eq_ignore_ascii_case("DEBUG"));
         if sig == -1 || korn_bash_zerr {
             // c:7426
             zwarnnam(name, &format!("undefined signal: {}", sigarg)); // c:7427
