@@ -1,4 +1,4 @@
-# Call-Site Coverage Audit — Why The Report Flags 393 Under-Wired Fns
+# Call-Site Coverage Audit — Why The Report Flags Under-Wired Fns
 
 `docs/port_report.html` now compares C call-site count vs Rust
 call-site count for every ported fn (`gen_port_report.py` added
@@ -12,8 +12,9 @@ sites, Rust had 1 (all other dispatch went through a single
 That was real fakery — the canonical scope-management entry was
 defined in Rust but bypassed everywhere except one call site.
 
-After the audit landed, ~395 fns flagged. Triage falls into three
-buckets:
+When the audit landed (2026-05-28) roughly 395 fns flagged; the
+current count is the "Under-wired" stat card in
+`docs/port_report.html`. Triage falls into three buckets:
 
 ## 1. Real fakery — wire it up.
 
@@ -21,13 +22,18 @@ Pattern: Rust port has the fn defined and the C call sites have
 direct Rust-port counterparts that could be using the same fn.
 The work is the same; only the call-site syntax differs.
 
-| Fixed | C calls | Rust before | Rust after | Notes |
-|---|---|---|---|---|
-| `doshfunc` | 18 | 1 (5%) | 18 (100%) | Wired all 22 sites per `docs/PORT.md` audit (commits `b83cb32`/`a77af29`) |
-| `bindkey` | 69 | 3 (4%) | 71 (103%) | Rust factored into 3 methods; restored canonical fn (commits `a77af29` + `591929e`) |
-| `skipparens` | 28 | 1 (4%) | 16 (57%) | 5-commit substrate-port arc: signature fix + glob/cmphaswilds/parambeg/check_param/parse/lex/subst sites (commits `b39ba9b` → `0273296`) |
-| `inststr` | — | 10 | 13 | `processcmd` faithful 3-call port (commit `8d522a5`) |
-| `optlookup` | 10 | 59 (590%) | 14 (140%) | Over-wired direction — Rust used `isset(optlookup("name"))` as a string→optno bridge where C uses compile-time `OPT_NAME` integer constants. Mass-replaced 39 call sites across `builtin.rs`/`signals.rs`/`params.rs`/`options.rs`/`modules/*` with the existing `zsh_h::NAME` constants (commit `0c31afd`). |
+"Rust before" / "Rust after" are the counts at the time of the fix
+(2026-05-28). "Report 2026-10-18" is `docs/port_report.html` as
+generated on 2026-10-18 (v0.13.55); regenerate the report for current
+numbers.
+
+| Fixed | C calls | Rust before | Rust after | Report 2026-10-18 | Notes |
+|---|---|---|---|---|---|
+| `doshfunc` | 18 | 1 (5%) | 18 (100%) | 18 (100%) | Wired the C call sites per `docs/PORT.md` audit (commit `2356e1f578`) |
+| `bindkey` | 69 | 3 (4%) | 71 (103%) | 66 (96%) | Rust factored into 3 methods; restored canonical fn (commits `e850760e87` + `863b6796ba`) |
+| `skipparens` | 28 | 1 (4%) | 16 (57%) | 23 (82%) | 5-commit substrate-port arc: signature fix + glob/cmphaswilds/parambeg/check_param/parse/lex/subst sites (commits `2d42e23add` → `ce17a8d7a4`) |
+| `inststr` | — | 10 | 13 | 13 | `processcmd` faithful 3-call port (commit `358b03d8ca`) |
+| `optlookup` | 10 | 59 (590%) | 14 (140%) | 24 (240%) | Over-wired direction — Rust used `isset(optlookup("name"))` as a string→optno bridge where C uses compile-time `OPT_NAME` integer constants. Mass-replaced 39 call sites across `builtin.rs`/`signals.rs`/`params.rs`/`options.rs`/`modules/*` with the existing `zsh_h::NAME` constants (commit `a4f9a87a5c`). |
 
 ### Over-wired direction (>100%)
 
@@ -39,7 +45,7 @@ Two cases:
   canonical case — every `isset(optlookup("name"))` site is a
   string→optno bridge that could be `isset(NAME)` against the
   existing `zsh_h::NAME` constant. Fix by replacing the runtime
-  lookups with the constants (commit `0c31afd`).
+  lookups with the constants (commit `a4f9a87a5c`).
 - **Generic name collision** (leave it): C `push`/`add`/`write_loop`
   share names with Rust idioms (`Vec::push`, `String::add`, etc.).
   The audit excludes `.name(` method calls but not bare-fn-call
@@ -57,8 +63,9 @@ appears under-wired.
 |---|---|---|
 | `inststr(X)` | `inststrlen((X),1,-1)` (compresult.c:39) | Rust defines `inststr(s) { inststrlen(s, true, -1) }` and calls `inststr(s)` everywhere C uses the macro. Faithful to C source. |
 
-The audit will show the wrapped name (e.g., `inststrlen`) as
-under-wired because it can't see the macro expansion. Inlining
+The audit can show the wrapped name as under-wired because it
+can't see the macro expansion. (`inststrlen` itself is no longer
+flagged: the 2026-10-18 report counts 41 C and 41 Rust calls.) Inlining
 the macro at call sites to make the audit happy would make the
 Rust port DIVERGE from C source syntax — wrong direction. Leave
 flagged; document the wrapper here.
@@ -93,20 +100,23 @@ these would be metric-gaming, not real porting work.
 Pattern: C calls the fn from a code path Rust hasn't ported yet.
 Wiring it requires porting the containing function first.
 
-**Worked example — `skipparens` 1 → 16 over 6 commits:**
+**Worked example — `skipparens` 1 → 16 over 5 commits (2026-05-28):**
 
 | Commit | Coverage | Where the work went |
 |---|---|---|
-| `b39ba9b` | 1 → 2 (7%) | C-signature rewrite of `skipparens` + replace 1 inline depth-walk in `glob.rs:parsecomplist` |
-| `5c65993d` | 2 → 7 (25%) | Faithful re-port of `cmphaswilds` (was a stub) adds 4 internal skipparens calls |
-| `3ddc1017` | 7 → 12 (43%) | Faithful re-port of `parambeg` (was a stub, +2) + `check_param` ternary expansion (+3) |
-| `cde5367b` | 12 → 15 (54%) | `parse.rs:par_simple_wordcode` (+2) + `lex.rs:is_valid_assignment_target` (+1) |
-| `0273296b` | 15 → 16 (57%) | `subst.rs:stringsubst` `$[...]` tokenized arm routed through canonical skipparens |
+| `2d42e23add` | 1 → 2 (7%) | C-signature rewrite of `skipparens` + replace 1 inline depth-walk in `glob.rs:parsecomplist` |
+| `cf03face45` | 2 → 7 (25%) | Faithful re-port of `cmphaswilds` (was a stub) adds 4 internal skipparens calls |
+| `0536d9ddb4` | 7 → 12 (43%) | Faithful re-port of `parambeg` (was a stub, +2) + `check_param` ternary expansion (+3) |
+| `cb75576c76` | 12 → 15 (54%) | `parse.rs:par_simple_wordcode` (+2) + `lex.rs:is_valid_assignment_target` (+1) |
+| `ce17a8d7a4` | 15 → 16 (57%) | `subst.rs:stringsubst` `$[...]` tokenized arm routed through canonical skipparens |
 
-Remaining 12 sites all sit in unported deeper substrate:
+At the end of that arc the remaining 12 sites all sat in unported
+deeper substrate:
 `docomplete`/`get_comp_string` (zle_tricky.c, 8 sites), niche
 `paramsubst`/`modify` (subst.c, 3 sites), `xpandbraces`
 unbalanced-brace fallback (glob.c, 1 site — bucket 2 actually).
+Later substrate ports closed most of them: the 2026-10-18 report
+counts 23 of 28 C sites (82%).
 
 **Recipe** (reusable for any substrate-gap fn):
 
@@ -124,7 +134,9 @@ unbalanced-brace fallback (glob.c, 1 site — bucket 2 actually).
 
 - **C calls** — total `name(` occurrences across `src/zsh/Src/`
   (excludes the def line itself + comment lines).
-- **Rust calls** — same across `src/ported/` + `parse/src/`.
+- **Rust calls** — same across `src/ported/` (the `parse/` crate was
+  merged into `src/ported/` in 2026-05; `gen_port_report.py`'s
+  `RS_DIRS` still lists the now-absent `parse/src`).
 - **call %** — Rust / C. <30% red, 30-79% yellow, ≥80% green,
   gray for `unported` rows where Rust=0 is the expected "not done
   yet" state, not the fakery signal.

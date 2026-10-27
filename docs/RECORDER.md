@@ -1,10 +1,10 @@
 # RECORDER.md — Plugin-Framework-Agnostic State-Modification Recorder (PFA-SMR)
 
-**Status:** design. Shipped: `zshrs-recorder` with `--file`, `--output`, `--shell-id`, `--quiet`, `--json`, `--dry-run`, `--no-prewarm`, and `zwhere KIND NAME` / `--prefix` / `--kinds` / `--shell-id` / `--limit`. Not implemented: `zshrs-recorder --tag/--command/--env`, `zwhere -m`, and the `zwhere snapshot` subcommands described below.  
+**Status:** shipped (core). Shipped: `zshrs-recorder` with `--file`, `--output`, `--shell-id`, `--quiet`, `--json`, `--dry-run` (alias `--no-daemon`), `--no-prewarm`; `zwhere KIND [NAME]` / `--prefix` / `--kinds` / `--shell-id` / `--limit`; startup replay of the shard. Sections below that describe anything else are design; see *Not implemented* (under *Query API*) for the full list.  
 **Owner:** MenkeTechnologies  
 **Layer:** runtime AOP intercept + daemon catalog + query builtin  
 **Codename:** the *recorder*  
-**Critical non-functional constraint:** **zero recorder code in the default `zshrs` binary, period.** Not "zero overhead at runtime" — *zero bytes*. The recorder is a Cargo feature flag (`recorder`), off by default. The default `zshrs` binary is compiled without `--features recorder`, so every recorder aspect, every dispatcher swap, every IPC type, and every query-side code path is `#[cfg(feature = "recorder")]`-gated and deleted by the compiler before `objcopy` runs. A separate `zshrs-recorder` binary is built with the feature on. `objdump -d target/release/zshrs | grep -c recorder` must return `0`. See "Zero-overhead default binary" below.
+**Critical non-functional constraint:** **zero recorder code in the daily-driver `zshrs` build.** Not "zero overhead at runtime" — *zero bytes*. The recorder is a Cargo feature flag (`recorder`), off by default. Every recorder emitter and the recorder module itself are `#[cfg(feature = "recorder")]`-gated and deleted by the compiler when the feature is off. A separate `zshrs-recorder` binary is built with the feature on. CI enforces the rule on the default-feature build: `cargo build --locked --bin zshrs` followed by `nm target/debug/zshrs | grep -E '\b8recorder[0-9a-zA-Z_]'` (minus the `sqlite3RecordError` / `zshrs_daemon` whitelist) must report `0` (`.github/workflows/ci.yml`, `recorder-harness` job). The release workflow builds `zshrs`, `zshrs-recorder` and `zd` in one `cargo build --profile dist --features recorder,zd` invocation, so the shipped `zshrs` binary is compiled with the `recorder` feature on. See "Zero-overhead default binary" below.
 
 ## What this document is
 
@@ -59,15 +59,15 @@ changed value. Three structural properties of this approach:
    defines `alias x=A` then conditionally redefines it as `alias x=B`
    based on an internal check, the diff shows only the final value.
    The recorder shows both definitions in order with the override
-   chain (`prev_def_id`).
+   chain (`state` = `shadowed` / `active`, plus the `via` call chain).
 3. **The plugin boundary itself is the ATTRIBUTION unit.** zinit
    can say "MenkeTechnologies/zsh-z added function `zshz`." It
    cannot say which line of which file inside that plugin defined
    `zshz`. To zinit, "the plugin" is opaque; only the name + version
    + load options are tracked. The recorder's attribution unit is
    the EXACT call site of the dispatcher, file:line:fn_chain, with
-   plugin-name-as-context (recoverable from `parent_paths_json` in
-   the daemon's source resolver).
+   plugin-name-as-context (planned: `parent_paths_json` in
+   the daemon's source resolver, which is always `[]` today).
 
 **The recorder's per-definition granularity is the novel claim.**
 zinit-report's per-plugin diff is well-known prior art going back to
@@ -154,7 +154,7 @@ The static path has been the standard answer (zinit's `@zinit-report`, antibody'
 
 ### The runtime answer
 
-Run the user's actual init under instrumented zshrs. Every time a state-mutating builtin executes, capture (kind, name, value, file, line, fn_chain, timestamp) and forward it to the daemon. The shell already has the lineno and file context — `src/ported/parse.rs` plumbs it through `ZshPipe.lineno` and `crate::ported::lex::toklineno()`. We just need to carry it across the builtin dispatch boundary and emit a record.
+Run the user's actual init under instrumented zshrs. Every time a state-mutating builtin executes, capture (kind, name, value, file, line, fn_chain, timestamp) and buffer it in-process for the end-of-run shard write. The shell already has the lineno and file context — `src/extensions/zsh_ast.rs` (`ZshPipe.lineno`) and `crate::ported::lex::toklineno()`. We just need to carry it across the builtin dispatch boundary and emit a record.
 
 This is plugin-framework-**agnostic by construction**: it doesn't matter how the alias got defined — through 5 layers of zinit ice modifiers or in raw .zshrc — the `bin_alias` dispatcher fires once per definition, with the file:line at the moment of execution. The recorder catches all of them uniformly.
 
@@ -368,8 +368,8 @@ zinit-turbo, sheldon), the recorded `file` is the concatenated/
 compiled artifact rather than the user's per-plugin source. That's
 correct — the actual state mutation IS in the artifact at runtime.
 The daemon's source-resolver layer can map back to the original
-plugin source via `parent_paths_json` (already wired in
-`source_resolver.rs:135`), so the lineage from artifact → original
+plugin source via `parent_paths_json` (the column exists in
+`daemon/source_resolver.rs`, but it is always `[]` until transitive sources are wired), so once wired the lineage from artifact → original
 plugin file → user's plugin manifest is queryable too.
 
 ### What about non-zsh metaprogramming?
@@ -451,9 +451,9 @@ Static analyzer must guess. The recorder records:
 Each recorder run accurately reflects its actual environment. No
 modeling needed.
 
-### Per-mode tagging
+### Per-mode tagging (not implemented)
 
-The recorder captures the mode it ran in as part of each `runs` row:
+Proposed, not implemented: `zshrs-recorder` has no `--tag`, `--command` or `--env` flag, there is no `runs` table, and `zwhere` has no `-m` flag. The design would capture the mode a run used as part of a per-run header:
 
 ```sql
 ALTER TABLE runs ADD COLUMN modes TEXT;
@@ -476,7 +476,7 @@ shell config does in interactive mode that it doesn't do in
 non-interactive mode" answers questions zsh users could not
 previously answer at all.
 
-### Recommended record-the-modes-you-care-about workflow
+### Record-the-modes-you-care-about workflow (not implemented)
 
 For a daily-driver user:
 
@@ -488,7 +488,7 @@ zshrs-recorder --tag remote-ssh --env SSH_CONNECTION=fake
 zshrs-recorder --tag dumb-term --env TERM=dumb
 ```
 
-The daemon stores 4 runs, each tagged. `zwhere` queries default to
+The daemon would store 4 runs, each tagged. `zwhere` queries would default to
 the most recent run matching the current shell's mode (looked up
 from `$TERM`, `$-`, `$SSH_CONNECTION`, `$0` at query time), or can
 explicitly target any run. Mode-tagged caching is a feature, not a
@@ -611,37 +611,37 @@ Runtime AOP at the dispatcher level avoids all five. The aspect runs *inside the
                                ▼
                   ┌─────────────────────────┐
                   │   zshrs (any shell)     │
-                  │  zwhere alias gst       │  ← <50µs lookup
-                  │  zwhere file ~/.zshrc   │
-                  │  zwhere when path       │
+                  │  zwhere alias gst       │  ← shard read when no
+                  │  zwhere function \      │     daemon is running
+                  │    --prefix _git        │
                   └─────────────────────────┘
 ```
 
-### Two binaries, three usage modes
+### Two binaries, two usage modes
 
 The recorder ships as a SEPARATE binary, `zshrs-recorder`, built from
-the same source tree under a Cargo feature flag. The default `zshrs`
-binary is compiled WITHOUT the feature; recorder code is removed by
-the compiler before linking.
+the same source tree under a Cargo feature flag. A default-feature
+`zshrs` build is compiled WITHOUT the feature; recorder code is removed
+by the compiler before linking.
 
 | Binary | Built with | Purpose |
 |---|---|---|
-| `zshrs` | `cargo build` (default features, **no** `recorder` feature) | Daily-driver. Read path only. **Contains zero bytes of recorder code** — verified by `objdump`/`nm` post-build. Replays the recorder shard at startup instead of sourcing the startup files. |
-| `zshrs-recorder` | `cargo build --bin zshrs-recorder --features recorder` | One-shot indexing. Source the user's init, capture every state mutation via AOP aspects, write the rkyv shard, exit. No daemon required. Used for first-time setup or after major config changes. |
+| `zshrs` | `cargo build --bin zshrs` (default features, **no** `recorder` feature) | Daily-driver. Read path only. **Contains zero bytes of recorder code** — verified by the CI `nm` gate. Replays the recorder shard at startup instead of sourcing the startup files. (The release workflow builds `zshrs` in the same invocation as `zshrs-recorder`, so the released `zshrs` has the feature on.) |
+| `zshrs-recorder` | `cargo build --bin zshrs-recorder --features recorder` | One-shot indexing. Source the user's init, capture every state mutation via gated emitter calls, write the rkyv shard, exit. No daemon required. Used for first-time setup or after config changes. |
 
-Three usage modes from the user's perspective:
+Two usage modes from the user's perspective:
 
 | Invocation | Resolves to | Purpose |
 |---|---|---|
-| `zshrs-recorder` | new binary | Manual one-shot recording run. |
-| `zshrs` | default binary | Daily-driver. `zwhere` queries are read-only against the daemon's catalog. |
-| daemon `--watch` | daemon background trigger | Daemon's fsnotify on configured paths spawns `zshrs-recorder` automatically when a sourced file changes. |
+| `zshrs-recorder` | recorder binary | Manual one-shot recording run. Re-run after editing an rc file; nothing re-runs it automatically. |
+| `zshrs` | default binary | Daily-driver. `zwhere` reads the daemon's catalog, or the newest `images/*-recorder.rkyv` shard when no daemon is running. |
 
-The two binaries share the entire codebase except the recorder
-aspects, IPC types, and query-side code, all of which live behind
-`#[cfg(feature = "recorder")]`. There is exactly one source of truth
-for the runtime; the binaries diverge only in which `cfg`-gated code
-the compiler keeps.
+The two binaries share the entire codebase except the recorder module
+(`src/recorder/mod.rs`) and the emitter call sites, all of which live
+behind `#[cfg(feature = "recorder")]`. The query side (`zwhere`, in
+`daemon/builtins.rs`) is not gated: it is a read path and ships in every
+build. There is exactly one source of truth for the runtime; the
+binaries diverge only in which `cfg`-gated code the compiler keeps.
 
 ## Zero-overhead default binary (non-functional requirement #1)
 
@@ -665,14 +665,8 @@ The mechanism is conditional compilation, not runtime indirection.
 ```toml
 # Cargo.toml (root)
 [features]
-default = []
-recorder = ["dep:rusqlite", "dep:rkyv"]   # already deps in workspace, just lifted
-                                          # behind feature for `zshrs` default binary
-
-[[bin]]
-name = "zshrs"
-path = "bins/zshrs.rs"
-# default features only — `recorder` is OFF
+default = ["daemon", "aot-hook"]
+recorder = ["daemon"]                     # recorder implies daemon; OFF by default
 
 [[bin]]
 name = "zshrs-recorder"
@@ -681,93 +675,73 @@ required-features = ["recorder"]          # cargo refuses to build this bin
                                           # without the feature
 ```
 
-`cargo build`           → emits `zshrs` (no recorder).  
+`cargo build --bin zshrs` → emits `zshrs` (no recorder).  
 `cargo build --features recorder --bin zshrs-recorder` → emits `zshrs-recorder`.  
-`cargo build --features recorder --bins` → emits both.
+`cargo build --features recorder --bins` → emits both, and `zshrs` in that build carries the recorder.
 
-The release CI matrix builds:
+CI and release:
 
 | Job | Command | Output |
 |---|---|---|
-| `default` | `cargo build --release` | `target/release/zshrs` (no recorder) |
-| `with-recorder` | `cargo build --release --features recorder --bin zshrs-recorder` | `target/release/zshrs-recorder` (with recorder) |
+| `ci.yml` `recorder-harness` | `cargo build --locked --features recorder --bin zshrs-recorder`, then `cargo build --locked --bin zshrs` + the `nm` gate (see *Validation*), then `cargo test --locked --features recorder --test recorder_harness` | debug `zshrs-recorder`; debug `zshrs` checked for zero recorder symbols |
+| `release.yml` | `cargo build --profile dist --locked --features recorder,zd --bin zshrs --bin zshrs-recorder --bin zd` (`cross build` with the same arguments for cross targets) | all three binaries from one invocation; the shipped `zshrs` is built with the `recorder` feature on |
 
 ### Three implementation rules enforce zero-default-overhead
 
 #### Rule 1 — Every recorder symbol is `#[cfg(feature = "recorder")]`
 
-The recorder module:
+The module is declared behind the feature in `src/lib.rs`:
 
 ```rust
-// src/recorder/mod.rs — entire module gated
-#![cfg(feature = "recorder")]
-
-pub mod aspects;
-pub mod ipc;
-pub mod buffer;
-
-pub fn install_aspects(runtime: &mut Runtime) { ... }
-pub fn flush_on_exit() { ... }
-```
-
-The aspect code:
-
-```rust
-// src/exec/builtins/alias.rs
-pub fn bin_alias(args: &[&str]) -> i32 {
-    do_alias(args)              // ← only this in default build
-}
-
 #[cfg(feature = "recorder")]
-pub fn bin_alias_recording(args: &[&str], ctx: RecordCtx) -> i32 {
-    crate::recorder::aspects::emit_alias_event(args, ctx);
-    do_alias(args)
-}
+pub mod recorder;
 ```
 
-The runtime registration:
+`src/recorder/mod.rs` is one file: `enable()` / `is_enabled()`, the
+`DefKind` / `RecordEvent` / `RecordCtx` types, `recorder_ctx_global()`,
+one `emit_*` function per event kind (`emit_alias`, `emit_galias`,
+`emit_salias`, `emit_function`, `emit_assign`, `emit_typeset`,
+`emit_export`, `emit_path_mod`, `emit_hash_d`, `emit_zstyle`,
+`emit_bindkey`, `emit_compdef`, `emit_zmodload`, `emit_setopt`,
+`emit_unsetopt`, `emit_trap`, `emit_source`, `emit_unalias`,
+`emit_unset`, `emit_zle`, `emit_completion`, …) and `flush()`.
+
+Interception is a direct gated call at each state-mutating site, not a
+dispatcher swap. `bin_alias` in `src/ported/builtin.rs`:
 
 ```rust
-fn build_runtime(opts: &Opts) -> Runtime {
-    let mut rt = Runtime::default();
-    register_builtins(&mut rt);
-
-    #[cfg(feature = "recorder")]
-    if opts.record {
-        crate::recorder::install_aspects(&mut rt);  // swaps dispatchers
+#[cfg(feature = "recorder")]
+if let Some(ref ctx) = recorder_ctx {
+    if (flags1 & ALIAS_GLOBAL as u32) != 0 {
+        crate::recorder::emit_galias(n, Some(v), ctx.clone());
+    } else if (flags1 & ALIAS_SUFFIX as u32) != 0 {
+        crate::recorder::emit_salias(n, Some(v), ctx.clone());
+    } else {
+        crate::recorder::emit_alias(n, Some(v), ctx.clone());
     }
-
-    rt
 }
 ```
 
-In a default build, `crate::recorder` does not exist as a name in scope. The `#[cfg]`-gated `install_aspects` block is removed by the parser/expansion phase. The default `zshrs` binary contains no `recorder::*` symbols.
+Activation: `bins/zshrs-recorder.rs` calls `zsh::recorder::enable()`
+before sourcing the init; every emitter is a no-op until then.
 
-#### Rule 2 — Recorder dependencies are feature-gated too
+In a default build, `crate::recorder` does not exist as a name in scope and every gated call site is removed before type-checking. The default `zshrs` binary contains no `recorder::*` symbols.
 
-`Cargo.toml`'s `[dependencies]` declares recorder-only deps as optional and pulls them in only via the `recorder` feature:
+#### Rule 2 — The recorder adds no dependencies of its own
 
-```toml
-[dependencies]
-# ... shared deps (rusqlite, rkyv) are already used by daemon, but for
-# the recorder-IPC-emit-only code path we keep them out of zshrs's
-# default build by re-routing through the `recorder` feature on the
-# zshrs side. The daemon crate uses them unconditionally.
-rusqlite = { version = "0.32", optional = true }
-rkyv     = { version = "0.7", optional = true, features = [...] }
+`recorder = ["daemon"]`. The recorder uses the daemon crate's shard
+writer (`daemon::recorder_shard::write_bundle_shard`); `rusqlite` and
+`rkyv` are unconditional dependencies already used by the default build.
+The feature gates recorder code, not crates.
 
-[features]
-default = []
-recorder = ["dep:rusqlite", "dep:rkyv"]
-```
 #### Rule 3 — `zwhere` is always in default `zshrs`
 
-The recorder feature gates the **AOP write path** (the runtime
-intercepts that emit records during shell init). The **query path**
-is just an IPC client over `definitions_query` — same tier as
-`zcache`, `zls`, `zping`. zshrs already links the daemon-client
-crate, so the marginal cost of shipping `zwhere` in the default
-binary is a few hundred bytes of code, not a separate feature.
+The recorder feature gates the **write path** (the emitters that
+record during shell init). The **query path** is not gated: with no
+daemon running, `zwhere` reads the newest `~/.zshrs/images/*-recorder.rkyv`
+shard itself (`zwhere_from_shard`); with a daemon running it calls the
+`definitions_query` / `definitions_kinds` ops. Same tier as `zcache`,
+`zls`, `zping`.
 
 `zwhere` lives in `daemon/builtins.rs` alongside the other z*
 builtins:
@@ -780,8 +754,11 @@ zwhere --shell-id ID …          # restrict to one shell_id
 zwhere --limit N …              # cap (default 1000)
 ```
 
-Output: tab-separated `kind\tname\tvalue\tshell_id\tfile:line`,
-script-friendly. Pipe through `column -t` for human reading.
+Output: one row per definition, oldest first, tab-separated
+`kind\tname\tvalue\tshell_id\tfile:line\tstate\tvia`, where `state` is
+`shadowed` (a later definition replaced it) or `active`, and `via` is
+the function call chain it ran under. Script-friendly; pipe through
+`column -t` for human reading.
 
 The earlier draft of this doc claimed `zwhere` would be feature-gated;
 that was incorrect reasoning. Read-only query has no dependency on
@@ -789,15 +766,18 @@ the recorder's write-path code, so there's nothing to gate.
 
 ### Validation
 
-The zero-recorder-code claim is empirically verifiable, not just asserted:
+The zero-recorder-code claim is checked in CI, not just asserted:
 
 | Test | Command | Pass criterion |
 |---|---|---|
-| **Symbol absence** | `nm target/release/zshrs \| grep -c recorder` | `0` |
-| **String absence** | `strings target/release/zshrs \| grep -c -i recorder` | `0` (modulo benign matches in third-party deps unrelated to our recorder; whitelist check) |
-| **Disassembly absence** | `objdump -d target/release/zshrs \| grep -c "recorder::"` | `0` |
-| **Binary-size delta** | `wc -c target/release/zshrs` before vs after recorder feature added | `≤ +0 bytes` |
-| **CI gate** | All four checks above run on every release tag | Block merge on regression |
+| **Symbol absence** (`ci.yml` `recorder-harness`) | `cargo build --locked --bin zshrs; nm target/debug/zshrs \| grep -E '\b8recorder[0-9a-zA-Z_]' \| grep -v sqlite3RecordError \| grep -v zshrs_daemon \| wc -l` | `0`, on every CI run; nonzero fails the job |
+
+The match is on the mangled module path (`8recorder` = byte length +
+name), so shell-side code that only walks the filesystem for
+`*-recorder.rkyv` shards does not count. String-absence, disassembly
+and binary-size checks are not implemented, and nothing checks a
+release artifact: the release `zshrs` is built with the feature on (see
+*Cargo configuration*).
 
 | Performance benchmark | Baseline (pre-recorder) | Target (post-recorder, default build) |
 |---|---|---|
@@ -805,33 +785,41 @@ The zero-recorder-code claim is empirically verifiable, not just asserted:
 | Sourcing zpwr's init | T₁ | T₁ ± noise |
 | `compinit` (compsys cold) | T₂ | T₂ ± noise |
 
-There is no perf regression possible because the default binary literally contains no recorder code. The benchmarks exist to catch accidental introduction of a non-`#[cfg]`-gated branch — a regression test, not a tolerance budget.
+There is no perf regression possible because the default-feature binary contains no recorder code. The benchmarks exist to catch accidental introduction of a non-`#[cfg]`-gated branch — a regression test, not a tolerance budget.
 
-If `nm | grep recorder` ever returns nonzero in the default release artifact, that's a release blocker.
+If the `nm` gate ever returns nonzero on the default-feature build, CI fails.
 
 ## Interception surface
 
-The complete list of state-mutating builtins to intercept (one aspect per row):
+The state-mutating sites that emit events. Each row is a `DefKind`
+variant in `src/recorder/mod.rs`:
 
 | Kind | Builtin / syntax | What's recorded |
 |---|---|---|
-| `alias` | `alias name=value` | name, value, type=normal/global/suffix |
+| `alias` / `galias` / `salias` | `alias name=value`, `alias -g`, `alias -s` | name, value |
+| `unalias` | `unalias name` | name |
 | `function` | `name() { ... }` and `function name { ... }` and `autoload name` | name, body (or autoload-only flag), funcfile if known |
-| `assign` | `VAR=value` (top-level assignment, not local) | name, value, prev_value (if any) |
-| `typeset` | `typeset` / `declare` / `readonly` / `integer` / `float` / `local` | name, type flags, value, scope |
+| `assign` | `VAR=value` (top-level assignment, not local) | name, value; arrays and assocs keep element order (`value_array` / `value_assoc`) |
+| `typeset` | `typeset` / `declare` / `readonly` / `integer` / `float` / `local` | name, type flags, value |
 | `export` | `export NAME[=value]` | name, value |
-| `path_mod` | `path+=...`, `fpath+=...`, `manpath=...`, `module_path+=...` | array name, ops (added/removed/reordered), final state hash |
+| `unset` | `unset NAME` | name |
+| `path_mod` | `path+=...`, `fpath+=...`, `manpath=...`, `module_path+=...`, `cdpath=...` | one row per entry added (name = the entry, value = `path`/`fpath`/`manpath`/`module_path`/`cdpath`); a fresh `path=(…)` records only entries absent before it (`vm_helper.rs::emit_path_or_assign`) |
+| `completion` | each `_name` file in a directory added to `fpath` | name, absolute path |
 | `hash_d` | `hash -d name=path` | name, path |
 | `zstyle` | `zstyle pattern style values...` | pattern, style, values |
 | `bindkey` | `bindkey [-M map] sequence widget` | keymap, sequence, widget |
+| `zle` | `zle -N widget [func]`, `zle -A old new` | widget, function |
 | `compdef` | `compdef _func cmd ...` | function-name, command list |
 | `zmodload` | `zmodload mod` (loading), `zmodload -F mod +/-feat` | module, features |
-| `setopt` | `setopt OPT` / `unsetopt OPT` / `set -o opt` | option name, on/off |
+| `setopt` / `unsetopt` | `setopt OPT` / `unsetopt OPT` / `set -o opt` | option name |
 | `trap` | `trap 'cmd' SIG` | signal, handler |
-| `sched` | `sched +M:S cmd` | absolute time, command |
-| `source` | `source FILE` / `. FILE` | resolved absolute path, mtime, inode (already in daemon source_resolver) |
+| `source` | `source FILE` / `. FILE` | resolved path |
 
-**~15 surfaces.** Bounded by zsh's grammar; new builtins in upstream zsh are rare events (last decade: maybe 3 additions). Each surface is one dispatcher in zshrs's runtime; the aspect is mechanical.
+`DefKind` also has a `Sched` variant and `emit_sched` exists, but no
+call site emits it: the recorder drains pending `sched` entries before
+the snapshot (see *Startup replay*), so `sched` is not recorded.
+
+Bounded by zsh's grammar; new builtins in upstream zsh are rare events. Each surface is one gated call at the mutating site.
 
 ### What's NOT intercepted (and why)
 
@@ -839,111 +827,36 @@ The complete list of state-mutating builtins to intercept (one aspect per row):
 - **Read-only introspection.** `whence`, `which`, `type`, `print`, `getopts`.
 - **Job control.** `bg`, `fg`, `jobs`, `wait` — runtime state, not config.
 - **External commands.** Cannot intercept; they run in subprocesses.
-- **Reading from stdin.** `read VAR` does mutate VAR; included under `assign` if the variable is then used by config, but typically interactive (recorder skips by default — opt-in via `--record-reads`).
+- **Reading from stdin.** `read VAR` is not intercepted.
+- **`sched`.** See above.
 
-## Schema
+## Storage
 
-### SQLite (canonical)
+### rkyv shard (canonical)
 
-```sql
--- One row per recorder run.
-CREATE TABLE runs (
-    run_id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    started_at_ns    INTEGER NOT NULL,
-    finished_at_ns   INTEGER,
-    cmdline          TEXT,           -- 'zshrs-recorder'
-    zdotdir          TEXT,           -- snapshot of $ZDOTDIR
-    home             TEXT,
-    record_count     INTEGER,
-    notes            TEXT
-);
+There is no recorder SQLite schema. The canonical store is the rkyv
+shard `~/.zshrs/images/{hash8}-recorder.rkyv`, a `CanonicalShard`
+(`daemon/shard.rs`) with per-subsystem maps plus the
+`catalog` / `catalog_history` extras that `zwhere` reads. Each captured
+event is a `RecordEvent` (`src/recorder/mod.rs`): `order_idx`, `ts_ns`,
+`kind`, `name`, `value`, `file`, `line`, `fn_chain`, `attrs`,
+`value_array`, `value_assoc`, `shell_id`.
 
--- One row per state-modifying event.
-CREATE TABLE definitions (
-    id               INTEGER PRIMARY KEY AUTOINCREMENT,
-    run_id           INTEGER NOT NULL REFERENCES runs(run_id),
-    order_idx        INTEGER NOT NULL,    -- sequence within run
-    ts_ns            INTEGER NOT NULL,
-    kind             TEXT    NOT NULL,    -- 'alias', 'function', 'export', ...
-    name             TEXT    NOT NULL,    -- 'gst', 'PATH', '_git', ...
-    value            TEXT,                -- alias body, fn source (truncated >4KB → hash + blob ref)
-    value_hash       BLOB,                -- sha256 if truncated
-    file             TEXT,                -- absolute path; NULL if synthesized (e.g. eval)
-    line             INTEGER,
-    col              INTEGER,
-    fn_chain         TEXT,                -- 'compinit > _comp_setup > zpwrLoadAliases'
-    flags            INTEGER NOT NULL DEFAULT 0,  -- bitmask: dynamic_eval, sourced, plugin_loaded, ...
-    prev_value       TEXT,                -- previous value if this overwrote one
-    prev_def_id      INTEGER REFERENCES definitions(id),  -- earlier definition this shadowed
-    sensitive        INTEGER NOT NULL DEFAULT 0   -- secret-bearing flag (PATH != sensitive; AWS_SECRET_ACCESS_KEY = sensitive)
-);
-CREATE INDEX idx_definitions_kind_name ON definitions(kind, name);
-CREATE INDEX idx_definitions_file_line ON definitions(file, line);
-CREATE INDEX idx_definitions_run ON definitions(run_id, order_idx);
+The shell reads the newest shard by mtime with
+`daemon::shard::read_canonical_shard`; it is deserialized whole, not
+mapped. When a daemon is running, its `recorder_ingest` op folds the
+same bundle (`recorder_shard::fold_bundle`) into its in-memory canonical
+rows and its SQLite mirror (`catalog.db`); the `definitions_*` ops
+(`definitions_query`, `definitions_kinds`, `definitions_emit`,
+`definitions_diff`, `definitions_subscribe`) answer from those rows.
 
--- Per-name index of latest definition (denormalized cache for fast `zwhere` lookup).
-CREATE TABLE current_defs (
-    kind             TEXT NOT NULL,
-    name             TEXT NOT NULL,
-    def_id           INTEGER NOT NULL REFERENCES definitions(id),
-    run_id           INTEGER NOT NULL,
-    PRIMARY KEY (kind, name)
-);
-```
+## Buffering and write
 
-### rkyv shard (read path)
-
-`~/.zshrs/recorder-{run_id}.rkyv`: serialized
-`Vec<DefinitionRecord>` with byte-aligned layout suitable for `mmap`
-+ zero-copy access. Each record is the same data as a SQLite row but
-in a fixed-shape struct.
-
-```rust
-#[derive(rkyv::Archive, rkyv::Serialize)]
-pub struct DefinitionRecord {
-    pub kind: u8,                    // enum DefKind (compact)
-    pub name: rkyv::string::ArchivedString,
-    pub value: Option<rkyv::string::ArchivedString>,
-    pub file_idx: u32,                // index into per-shard file table
-    pub line: u32,
-    pub col: u16,
-    pub fn_chain_idx: u32,            // index into chain table
-    pub flags: u16,
-    pub order_idx: u32,
-    pub ts_ns: u64,
-}
-```
-
-The thin client (regular `zshrs`) doesn't talk to SQLite for hot
-lookups — it mmaps the rkyv shard via the daemon's catalog hint and
-binary-searches by `(kind, name)`. Same pattern as zshrs's existing
-autoload cache (`docs/DAEMON.md`). Lookup latency: 50ns to 5µs
-depending on cold/warm cache.
-
-## IPC and batching
-
-Per-event IPC over the daemon socket would tank `compinit` (~20k
-events). Batching:
-
-```
-Recorder buffer: VecDeque<RecordEvent>, soft cap N=512 events
-                                        hard cap M=4096 events
-
-Flush triggers:
-  - buffer.len() >= N
-  - 50ms since last flush AND buffer.len() > 0
-  - phase boundary (e.g. precmd hook fires, indicating init done)
-  - shell exit
-```
-
-Single batch flush = one SOCK_STREAM write of a length-prefixed
-serialized `Vec<RecordEvent>`. Daemon side: single SQLite
-transaction, `PRAGMA synchronous=NORMAL`, ~10ms for 4096 inserts.
-
-Total recorder run overhead estimate (zpwr + zinit + p10k): **~1.5×
-normal startup time**, dominated by SQLite IO. Acceptable for a
-one-shot indexing run; not suitable for daily driver (which is why
-recorder is opt-in).
+Events accumulate in one in-process `Vec<RecordEvent>` (`BUFFER` in
+`src/recorder/mod.rs`). At exit the recorder folds them and writes the
+shard itself (`recorder::flush` →
+`daemon::recorder_shard::write_bundle_shard`). There is no per-event or
+batched IPC, so no daemon round trip sits on the recording path.
 
 ## Startup replay
 
@@ -1074,7 +987,10 @@ before the bundle ships, is compile every `_*` completer on the recorded
 This is the same work the shell would otherwise do lazily, one completer
 at a time, at a prompt: the loader installs an autoloaded function by
 running its definition program, and caches that compiled chunk keyed by
-name + the file's mtime and length. Front-loading it means the first
+name, checked against the resolved fpath directory, a SHA-256 of the
+exact definition text, and the producing binary's `(mtime, len)`
+(`src/extensions/autoload_cache.rs`, *What identifies an entry*).
+Front-loading it means the first
 `ls -<TAB>` after a fresh install is an O(1) probe into the shard rather
 than a parse + compile of the completer's file — for `_git`, 229 µs of
 chunk decode instead of 318 ms of parse + compile.
@@ -1091,92 +1007,96 @@ place this can run safely today. The same pass is reachable as
 
 **Cost.** Roughly 6× the source size in bytecode and ~0.84 ms per
 completer (debug build): a 13k-file directory took 35 s and produced
-165 MB. Entries already current are skipped by mtime + length, so a
-re-run after installing one plugin is one `stat` per completer.
+165 MB. Every completer file is still read and hashed, because the key
+is the text's SHA-256 rather than a `stat`; a file whose text already
+has an entry is skipped without being parsed
+(`autoload_prewarm.rs::prewarm_fpath`), so a re-run after installing
+one plugin pays a read + hash per completer and a parse + compile only
+for the new ones.
 
 ## fn_chain capture
 
-The function call-stack at the time of definition is captured from
-zsh's existing `funcstack` array (per CLAUDE.md memory: zshrs
-already plumbs this through the parser via `ZshPipe.lineno`). The
-implementation reads the current funcstack and joins names with `>`:
+Each event's context comes from `recorder::recorder_ctx_global()`
+(`src/recorder/mod.rs`), which reads shell parameters, not the
+environment:
+
+- `fn_chain` — `$funcstack` (innermost first) reversed and joined with
+  ` > `, so the outermost function comes first. Empty `$funcstack`
+  (top level of a sourced file) gives no chain.
+- `file` / `line` — `scriptfilename` and `$LINENO`. Inside a function,
+  `absolute_site` anchors the line to `$funcsourcetrace[1]` (where the
+  function was defined) so the result is an absolute `file:line`.
+- When a user function shadows the builtin (zinit's `alias` wrapper
+  ends in `builtin alias`), `recorder_ctx_global_for` replaces
+  `file`/`line` with the call site of the innermost frame of that name
+  from `$funcfiletrace`; `fn_chain` is kept.
 
 ```
-funcstack: ['compinit', '_comp_setup', 'zpwrLoadAliases']
+funcstack: (zpwrLoadAliases _comp_setup compinit)
            ↓
-fn_chain: "compinit > _comp_setup > zpwrLoadAliases"
+fn_chain:  "compinit > _comp_setup > zpwrLoadAliases"
 ```
 
-For top-level (sourced from `.zshrc` directly, no enclosing
-function), `fn_chain` is empty and `file`/`line` alone identify the
-site.
+`zwhere` prints `fn_chain` as the `via` column.
 
-For `eval`-generated code:
-
-```
-eval "alias x=y"   ← in ~/.zshrc:42
-```
-
-We record `file=~/.zshrc`, `line=42`, `flags |= DYNAMIC_EVAL`,
-`fn_chain` reflects the funcstack at the eval call site. Users can
-filter with `zwhere -d` (dynamic-only) or `zwhere -D` (exclude
-dynamic).
+`eval`-generated code has no special handling: there is no
+dynamic-eval flag, and its events carry whatever `scriptfilename`,
+`$LINENO` and `$funcstack` hold when the eval'd code runs.
 
 ## Query API
 
-A new builtin `zwhere`:
+`zwhere` (`daemon/builtins.rs`) is the only query surface:
 
 ```
-USAGE
-   zwhere KIND NAME              # exact match within KIND
-   zwhere all NAME               # match across all kinds
-   zwhere -f FILE                # everything defined in FILE
-   zwhere -F PATTERN             # files matching glob PATTERN
-   zwhere -k KIND                # all entries of given kind
-   zwhere -t SINCE               # entries since timestamp / run id
-   zwhere -d / -D                # only dynamic-eval / exclude dynamic
-   zwhere -l NAME                # full lineage (every prior def, in order)
-   zwhere -o KIND NAME           # `--origin` — first definition only
-
-OUTPUT
-   /Users/wizard/.zpwr/env/.shell_aliases_functions.sh:1742:42 (zpwrLoadAliases ← _zpwr_init)
-       gst → 'git status -sb'
-
-   With -l (lineage):
-   3 definitions of `gst`:
-   1. /Users/wizard/.zinit/snippets/OMZ::lib/git.zsh/OMZL::git.zsh:188   gst → 'git status'  [overridden]
-   2. /Users/wizard/.zpwr/env/.shell_aliases_functions.sh:1742           gst → 'git status -sb'  [overridden]
-   3. /Users/wizard/.zshrc:567                                            gst → 'git status -sb --branch'  [current]
+zwhere KIND [NAME]              # rows for KIND, optionally one NAME (exact)
+zwhere KIND --prefix STR        # KIND rows whose name starts with STR
+zwhere --kinds                  # list every populated kind
+zwhere --shell-id ID …          # restrict to one shell_id
+zwhere --limit N …              # cap (default 1000)
 ```
 
-Output format is two-line: location header + content body. Stable
-columns for grep-ability:
+`KIND` must be one of `daemon/definitions.rs::KNOWN_KINDS`. Each row is
+`kind\tname\tvalue\tshell_id\tfile:line\tstate\tvia`. For keyed kinds
+(`alias`, `function`, `params`, `bindkey`, `zle`, …) every definition of
+a name is printed oldest first, earlier ones `shadowed` and the last
+`active`, so the override chain is the default output:
 
 ```
-zwhere -k alias | grep ' git '
+alias	gst	git status	zshrs	~/.zinit/snippets/OMZL::git.zsh/OMZL::git.zsh:188	shadowed	
+alias	gst	git status -sb	zshrs	~/.zpwr/env/.shell_aliases_functions.sh:1742	shadowed	zpwrLoadAliases
+alias	gst	git status -sb --branch	zshrs	~/.zshrc:567	active	
 ```
 
-### Timing-based queries
+Rows are tab-separated for `awk`/`cut`; pipe through `column -t` for
+reading.
 
-Beyond "where", "WHEN" matters for debugging load order:
+### Ordering queries
 
-```
-zwhere when path                  # every site that mutated $path, in order
-zwhere when fpath                 # every site that touched $fpath
-zwhere when -k setopt PROMPT_SUBST   # when did PROMPT_SUBST get enabled
-```
+`order_idx` is stored on every `RecordEvent` but `zwhere` does not
+expose it, and the shard path sorts rows by name. Two partial answers
+exist:
 
-Output uses `order_idx` to reconstruct the sequence:
+- Positional kinds `path`, `fpath` and `source` name each row by its
+  capture index, so `zwhere path | sort -t$'\t' -k2,2n` lists `$path`
+  additions in the order they happened. `manpath`, `module_path` and
+  `cdpath` additions are folded into `path` (`recorder_shard.rs`,
+  `path_mod` arm); `manpath` is in `KNOWN_KINDS` but never populated.
+- `zwhere setopt EXTENDED_GLOB` gives one site, with `on` / `off` in
+  the value column. The fold keeps every `setopt` / `unsetopt` event,
+  but the catalog is keyed by `(kind, name)` (`encode_catalog`), so
+  only one site per option survives and there is no history for
+  `setopt`. Names match as spelled at the call site (`extendedglob`
+  and `EXTENDED_GLOB` are different rows).
 
-```
-1.  ~/.zshenv:5         path=(/usr/local/bin $path)
-2.  ~/.zshrc:21         path+=(~/.local/bin)
-3.  zinit_init:101      path=(/opt/homebrew/bin $path)            [via zinit ice]
-4.  ~/.zpwr/env/.zpwr_env.sh:88   path+=($ZPWR/scripts)
-5.  /etc/zshrc:12       path+=(/usr/sbin)                         [SYSTEM]
-```
+### Not implemented
 
-That's a debugging superpower zsh users do not have today.
+- `zwhere all NAME` (cross-kind lookup), `-f FILE` (everything defined
+  in a file), `-F PATTERN` (files by glob), `-k KIND`, `-t SINCE`,
+  `-l` / `-o` (lineage / origin only; the default output already
+  carries the full chain), `-d` / `-D` (dynamic-eval filters; no such
+  flag is recorded).
+- `zwhere when VAR` / `zwhere when -k KIND NAME` — a load-order view
+  driven by `order_idx`.
 
 ## User-facing impact: the daily-driver workflow change
 
@@ -1235,12 +1155,12 @@ levels of plugin-manager indirection.
 
 | Operation | Today | With recorder |
 |---|---|---|
-| "Where is alias `gst` defined?" | 30s-5min (grep + inspect) | <100µs (`zwhere alias gst`) |
-| "Where did `_my_completion` function come from?" | 5-30min (autoload chain trace) | <100µs |
-| "Why is `PATH` showing `/opt/...` first?" | 5-60min (every PATH= site traced manually) | `zwhere when path` shows the ordered list |
-| "Which plugin enabled `EXTENDED_GLOB`?" | 10-30min (every `setopt` site grep) | `zwhere when -k setopt EXTENDED_GLOB` |
-| "What aliases did the `git` plugin define?" | 5-15min | `zwhere -F '*git*'` |
-| "What changed between my interactive and SSH sessions?" | impossible-without-side-by-side-diff | `zwhere -m diff interactive remote-ssh` |
+| "Where is alias `gst` defined?" | 30s-5min (grep + inspect) | `zwhere alias gst` |
+| "Where did `_my_completion` function come from?" | 5-30min (autoload chain trace) | `zwhere function _my_completion`, `zwhere completion _my_completion` (file it was found in) |
+| "Why is `PATH` showing `/opt/...` first?" | 5-60min (every PATH= site traced manually) | `zwhere path \| sort -t$'\t' -k2,2n` (capture order; no `zwhere when`) |
+| "Which plugin enabled `EXTENDED_GLOB`?" | 10-30min (every `setopt` site grep) | `zwhere setopt EXTENDED_GLOB` (one site per option) |
+| "What aliases did the `git` plugin define?" | 5-15min | `zwhere alias \| grep git.plugin` (filter on the `file:line` column; no `-F`) |
+| "What changed between my interactive and SSH sessions?" | impossible-without-side-by-side-diff | not implemented (no per-mode recordings) |
 
 For a user actively configuring their shell — which is most zsh
 power users — these operations come up multiple times per week.
@@ -1344,36 +1264,36 @@ This is not a coherent artifact. It cannot be:
 
 ### What the recorder's snapshot artifact unlocks
 
-The complete end-state for one recorder run is a small set of files
-(per `docs/DAEMON.md`'s sharded layout):
+The complete end-state for one recorder run is one file:
+`~/.zshrs/images/{hash8}-recorder.rkyv`, a `CanonicalShard` holding
+the per-subsystem state plus the `catalog` / `catalog_history` extras
+that `zwhere` reads (see *Storage*). There is no separate manifest
+file and no run id in the name. The daemon's `catalog.db` is a SQLite
+mirror (`entries`, `plugins`, …) rebuilt from shards; it has no
+`definitions` table and is not part of the artifact.
 
-- `~/.zshrs/recorder-{run_id}.rkyv` — the rkyv shard with
-  every definition record, mmap-ready
-- `~/.zshrs/catalog.sqlite` — the definitions table queryable
-  for inspection
-- `~/.zshrs/manifest-{run_id}.json` — header (modes, source
-  files, timestamps, hash chain)
-
-Together: typically 1-10 MB for even an extreme power-user config
-(zpwr + zsh-more-completions + zinit + 50 plugins). One artifact;
-one byte-checksum-able blob.
+The zpwr recording measured in *Startup cost* is 20.8 MB.
 
 ### Capability table
 
 | Capability | Source-tree model (today) | Snapshot artifact model (recorder) |
 |---|---|---|
-| Ship to another machine | rsync `~/.zshrc` + clone every plugin repo + run `zinit update` + hope | `scp recorder-{id}.rkyv user@host:~/.zshrs/`; `zshrs` next launch on host has byte-identical shell |
+| Ship to another machine | rsync `~/.zshrc` + clone every plugin repo + run `zinit update` + hope | `scp {hash8}-recorder.rkyv user@host:~/.zshrs/images/`; `zshrs` next launch on host has byte-identical shell |
 | Reproducible across machines | broken: plugin version drift, missing dependencies, `.zcompdump` corruption, different fpath, conditional loads | guaranteed: same shard → same state, deterministically |
 | Version control diffs | `git diff ~/.zshrc` shows source changes; says nothing about runtime result | `git diff snap-A.rkyv snap-B.rkyv` (via deserialized form) shows every state change between snapshots |
 | Atomic rollback | manually comment out plugins, restart, debug, repeat | `zwhere snapshot restore <run_id>` swaps the active shard; instant rollback |
-| Branch / experiment | duplicate dotfiles + plugin manager state, manual switch | symlink active shard to a different `recorder-{id}.rkyv` |
-| Audit (security / compliance) | trace through dotfiles → plugin manager → maybe-runs maybe-doesn't | `SELECT * FROM definitions WHERE run_id = ?` — every alias/function/binding visible |
+| Branch / experiment | duplicate dotfiles + plugin manager state, manual switch | keep a different `{hash8}-recorder.rkyv` as the newest shard in `images/` |
+| Audit (security / compliance) | trace through dotfiles → plugin manager → maybe-runs maybe-doesn't | `zwhere --kinds`, then `zwhere KIND` per kind — every alias/function/binding with its `file:line` |
 | Corporate "blessed" environment | dotfile bootstrap script that "works on most machines" | publish `blessed-shell-v2026-Q1.rkyv` to artifact registry; every employee pulls + loads → same shell |
 | Per-project shells | per-repo `.envrc` + direnv + ad-hoc plugin loads | per-repo `.zshrc-snapshot.rkyv`; daemon swaps on `cd` (per `docs/DAEMON.md` source-resolver layer) |
 | Time-travel | "what did my shell look like 6 months ago?" — undefined; no snapshot exists | load 6-month-old shard, diff against current |
 | Bisect a regression | manually comment out plugins until it works | `zwhere snapshot bisect <good_run_id> <bad_run_id>` — binary-search to the offending definition |
-| Ship to CI | install zsh + zinit + plugins + warm `.zcompdump` in CI image — minutes per CI job | drop `recorder-{id}.rkyv` into image; CI shell starts in 50ms vs 5s |
+| Ship to CI | install zsh + zinit + plugins + warm `.zcompdump` in CI image — minutes per CI job | drop `{hash8}-recorder.rkyv` into the image's `~/.zshrs/images/`; the CI shell replays it instead of sourcing the init chain (301 ms for zpwr, see *Startup cost*) |
 | Sign for supply-chain | no unit to sign | `zwhere snapshot sign <key>` — sign the shard manifest for trust attestation |
+
+`zwhere snapshot …` (restore, bisect, sign) does not exist: `zwhere`
+takes `snapshot` as a kind name and rejects it. Those cells, the time-travel
+diff and per-project shard swapping describe planned tooling.
 
 ### The Docker analogy is exact
 
@@ -1394,7 +1314,7 @@ exports). Shells uniquely lack it. The recorder's rkyv shard is the
 shell-config equivalent of an OCI image — addressable, reproducible,
 distributable, signable.
 
-### Tooling enabled by the snapshot artifact
+### Tooling enabled by the snapshot artifact (not implemented)
 
 The recorder ships the build phase. Shipping the full snapshot-artifact
 toolchain on top is straightforward, since the shard format is already
@@ -1515,15 +1435,15 @@ existed, so an old recording reports its plugins without a re-record.
 
 | Failure mode | Mitigation                                                                                                                                                                        |
 |---|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Recorder run is slow on cold sqlite (first-time setup of zpwr's 17k completions) | Batched inserts, `PRAGMA journal_mode=WAL`, prepared statements; benchmark target: ≤2× normal startup time                                                                        |
-| Stale records after a sourced file changes | Daemon's fsnotify (already wired) detects mtime change → triggers `zsh-recorder` re-run for the changed scope; old records of that file are flagged stale and excluded by default |
-| Recorder + daemon down | recorder is opt-in; falls back to silently no-op; user sees "no records, run `zshrs-recorder`" message from `zwhere`                                                              |
-| Schema growth across many runs | retain last K runs (K=10 default), GC older runs; daemon's existing log-rotation logic applies                                                                                    |
-| `eval`-generated code overflowing record size | truncate `value` field at 4KB, store full content in a side blob keyed by sha256                                                                                                  |
-| Sensitive content in records (export AWS_SECRET=...) | reuse `daemon/source_resolver.rs::is_sensitive` heuristic; `zwhere` masks values for sensitive entries unless `--show-sensitive` is passed                                        |
-| Concurrent recorders | run_id is autoinc; multiple recorder runs are independent rows in `runs`; reads always see most-recent-by-default                                                                 |
-| Hash collision on `current_defs` (same name set in multiple kinds) | primary key is `(kind, name)`, naturally handles                                                                                                                                  |
-| Recorder catches its own internal calls | aspect's before-advice has a `IN_RECORDER` guard flag set during emit; nested calls during record-emit are skipped                                                                |
+| Recorder run cost | No SQLite on the recording path: events go to the in-process `BUFFER` and the shard is written once at exit (`recorder::flush` → `write_bundle_shard`) |
+| Stale shard after a sourced file changes | Not re-recorded automatically (no fsnotify trigger). Startup keeps replaying the old shard; staleness is logged and shown by `zshrs --doctor`; re-run `zshrs-recorder` |
+| No recording | Startup sources the init files as zsh does; `zwhere` exits with `no recording: run zshrs-recorder (looked in …)` |
+| Growth across runs | None: each run atomically replaces its `{hash8}-recorder.rkyv` (tmp + fsync + rename, `shard::write_canonical_shard`); no per-run history is kept, so there is nothing to GC |
+| Large `eval`-generated values | Not handled: values are stored whole, with no truncation or side blob |
+| Sensitive content in records (`export AWS_SECRET=…`) | Not handled by `zwhere`: values print unmasked. `source_resolver.rs::is_sensitive` and `--show-sensitive` belong to `zcache export`, not to `zwhere` |
+| Concurrent recorders | Per-shard lock + atomic rename; the last writer's shard wins. A forked subshell inheriting the atexit hook is refused by a pid check (see *Startup replay*) |
+| Same name in several kinds | The catalog is keyed by `(kind, name)` (`recorder_shard::encode_catalog`), so kinds do not collide |
+| Recorder catches its own internal calls | `IN_RECORDER` guard (`src/recorder/mod.rs`): an emit that starts while another is in progress is skipped |
 
 ## Performance targets
 
@@ -1531,63 +1451,41 @@ existed, so an old recording reports its plugins without a re-record.
 |---|---|
 | Recorder run total time (zpwr + zinit + p10k init) | ≤ 2× regular zshrs startup |
 | Per-event in-process capture cost | ≤ 5 µs (function-stack snapshot + struct push) |
-| Batched IPC flush (512 events) | ≤ 200 µs round-trip |
-| `zwhere` query (warm rkyv mmap) | ≤ 100 µs end-to-end |
-| `zwhere` query (cold daemon) | ≤ 5 ms (sqlite query path) |
+| `zwhere` query, no daemon | not measured; each call deserializes the whole newest shard (`read_canonical_shard`, no mmap) |
+| `zwhere` query, daemon running | not measured; answered from the daemon's in-memory canonical rows (`definitions_query`) |
 | Daemon RAM growth per recorder run | ≤ 2 MB resident (catalog + rkyv shard) |
-| Disk per recorder run (typical zpwr config) | ≤ 4 MB (compressed sqlite + rkyv) |
+| Disk per recording (zpwr config) | ≤ 4 MB target, not met: the measured shard is 20.8 MB uncompressed (*Startup cost*); one shard per config, replaced on each run |
 
 ## Implementation plan
 
-### Phase 1 — single-aspect proof
+### Phase 1 — single-surface proof (done)
 
-1. Add `zshrs-recorder` binary.
-2. Wire one aspect: `bin_alias` dispatcher. Before-advice captures (file, line, fn_chain) and pushes to in-process `Vec<RecordEvent>`.
-3. At shell exit, dump the vec to stderr in plain text.
-4. Run on `~/.zshrc`. Validate: every alias appearing in the user's interactive shell is in the dump, with correct file:line.
+1. `zshrs-recorder` binary (`bins/zshrs-recorder.rs`, `required-features = ["recorder"]`).
+2. First emitter: the gated block in `builtin.rs::bin_alias` captures (file, line, fn_chain) into the in-process `BUFFER`.
+3. End-of-run summary of per-kind counts on stderr.
 
-Estimated: 1-2 days.
+### Phase 2 — full intercept surface (done)
 
-### Phase 2 — full intercept surface
+4. Emitters for every surface in the *Interception surface* table.
+5. Coverage: `tests/recorder_harness.rs` runs `zshrs-recorder --no-daemon --file` on each `tests/recorder_corpus/*.zsh` and asserts the exact per-kind counts from the end-of-run summary. The expected counts live in the test, not in `.expected` sibling files.
 
-5. Add aspects for the remaining 14 builtin/syntax surfaces from the table above.
-6. Validate each independently against a known config.
-7. Add coverage test: `tests/recorder_corpus/*.zsh` — for each test file, list expected `(kind, name, line)` triples in a sibling `.expected` file; harness runs the recorder and diffs.
+### Phase 3 — storage (done, without IPC)
 
-Estimated: 3-5 days.
+6. The recorder folds its buffer and writes `~/.zshrs/images/{hash8}-recorder.rkyv` itself (`recorder::flush` → `recorder_shard::write_bundle_shard`). There is no `daemon/ipc.rs` message and no IPC on the recording path.
+7. The daemon picks shards up through `canonical.sync_recorder_shards()`; the `recorder_ingest` op folds bundles from clients that still send one. No SQLite definitions schema and no `current_defs` table: the catalog is keyed by `(kind, name)` in the shard's `catalog` extra, with override chains in `catalog_history`.
 
-### Phase 3 — daemon IPC + storage
+### Phase 4 — `zwhere` query builtin (partly done)
 
-8. Define `RecordEvent` IPC message in `daemon/ipc.rs`.
-9. Recorder buffers + flushes on triggers above.
-10. Daemon receiver: SQLite schema + insertion + rkyv shard build.
-11. `current_defs` denormalized table maintenance.
+8. Done: `zwhere` in `daemon/builtins.rs`, daemon-backed or reading the newest shard; `KIND [NAME]`, `--prefix`, `--kinds`, `--shell-id`, `--limit`; tab-separated output with `state` / `via`; the override chain is the default output.
+9. Not done: `--when`, `--file`, cross-kind lookup (see *Query API → Not implemented*).
 
-Estimated: 3-4 days.
+### Phase 5 — fsnotify-driven re-record (not implemented)
 
-### Phase 4 — `zwhere` query builtin
+10. Nothing re-runs the recorder when a sourced file changes. Staleness is logged and reported by `zshrs --doctor`; the user re-runs `zshrs-recorder`.
 
-12. Implement `zwhere` builtin in zshrs runtime, dispatching to daemon.
-13. Output formatting + column stability for grep-ability.
-14. `--lineage`, `--when`, `--file`, `--kind` flags.
+### Phase 6 — property test + fuzz (not implemented)
 
-Estimated: 2-3 days.
-
-### Phase 5 — fsnotify-driven re-record
-
-15. Daemon's fsnotify already exists; extend to trigger a recorder run on changes to any file in the most recent run's `definitions.file` set.
-16. Stale-record marking + `zwhere` filtering.
-
-Estimated: 2 days.
-
-### Phase 6 — CI + fuzz
-
-17. Property test: for any input file, `zshrs-recorder` followed by `zwhere all *` should return a record matching every alias/function visible in `whence`.
-18. Fuzz: generated `.zshrc` mutations + `cargo fuzz` against the aspect layer to catch missed mutations.
-
-Estimated: ongoing.
-
-**Total Phase 1-5: ~2-3 weeks.** Reuses daemon / sqlite / rkyv / fsnotify already in place.
+11. No property test comparing a recording against `whence` output, and no fuzz target for the emitters.
 
 ## Patent strategy alignment
 
@@ -1618,15 +1516,10 @@ shipped by any shell.
 
 ## Naming
 
-- Builtin: `zwhere` (matches the `z*` builtin family per
-  `cache_architecture_rkyv.md` memory)
-- Mode flag: `zshrs-recorder`
-- Wrapper: `bins/zshrs-recorder.rs` (calls `zshrs-recorder`)
-- Daemon op: `record_events` (matches existing `source_resolve`,
-  `op_*` naming)
-- SQLite table: `definitions` (canonical), `runs` (per-run header),
-  `current_defs` (denormalized cache)
-- rkyv shard: `~/.zshrs/recorder-{run_id}.rkyv`
+- Builtin: `zwhere` (the `z*` builtin family)
+- Binary: `zshrs-recorder` (`bins/zshrs-recorder.rs`, built with `--features recorder`)
+- Daemon ops: `recorder_ingest` (bundle in), `definitions_query` / `definitions_kinds` (query)
+- Storage: no SQLite tables; the rkyv shard `~/.zshrs/images/{hash8}-recorder.rkyv`
 
 ## Open questions
 

@@ -19,10 +19,12 @@ sets `shell_id` once per bundle/record so cross-shell queries
 - **`definitions_diff`** — REQUIRED `shell_a` + `shell_b`.
 
 Rows tagged with one shell_id never silently overwrite rows tagged with
-a different shell_id — `(kind, name, shell_id)` is the de-facto primary
-key for cross-shell queries even though the canonical engine still keys
-by `(kind, name)` internally (latest write wins per name; the diff op
-distinguishes by shell_id at query time).
+a different shell_id — `(kind, name, shell_id)` is the primary key. The
+canonical engine stores zshrs / untagged rows under the bare `name` and
+every other shell's rows under `name\x1f<shell_id>`
+(`daemon/canonical.rs::composite_storage_key`), so a bash `alias ll`
+and a zshrs `alias ll` coexist; within one shell_id the latest write
+wins.
 
 ## Reserved identifiers
 
@@ -80,7 +82,7 @@ use a `vendor:tool` form so they don't squat on a future shell name:
 ### bash wrapper pushing a record
 
 ```bash
-source examples/daemon-shell.zsh        # works under bash too
+source examples/daemon-shell.bash       # bash 3.2+ wrapper library
 export DAEMON_SHELL_ID=bash
 daemon-record-alias ll 'ls -al'
 daemon-record-export EDITOR vim

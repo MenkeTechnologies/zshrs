@@ -6,7 +6,8 @@ shell-function wrappers in [`daemon-shell.zsh`](./daemon-shell.zsh).
 
 ## Setup
 
-`~/.zshrs/daemon.toml`:
+`~/.zshrs/zshrs-daemon.toml` (auto-seeded on first daemon start with
+`listen = "127.0.0.1:7733"`):
 
 ```toml
 [http]
@@ -28,7 +29,10 @@ Restart `zshrs-daemon` after editing.
 |---|---|---|---|
 | `GET` | `/health` | none | liveness + version |
 | `GET` | `/ops` | none | list every op name the daemon accepts |
+| `GET` | `/openapi`, `/openapi.json` | none | OpenAPI 3.1 document derived from the op list |
+| `GET` | `/metrics` | none | Prometheus text exposition |
 | `POST` | `/op/<NAME>` | bearer if configured | invoke op `<NAME>` with JSON body |
+| `GET` | `/stream/watch`, `/stream/events`, `/stream/definitions` | bearer if configured | Server-Sent Events (see below) |
 
 Op JSON body shape matches the existing IPC `args` payload — same surface,
 different transport.
@@ -49,7 +53,7 @@ Missing/wrong token → `401 {"ok":false,"code":"unauthorized","msg":"..."}`.
 
 ```sh
 curl -s http://127.0.0.1:7733/health
-# {"ok":true,"version":"0.12.0","uptime_ms":12345}
+# {"ok":true,"version":"<crate version>","uptime_ms":12345}
 ```
 
 ### Op list
@@ -101,15 +105,15 @@ JOB=$(curl -s -X POST http://127.0.0.1:7733/op/job_submit \
 echo "submitted job_id=$JOB"
 
 # 2. Poll status (blocks via shell loop; daemon doesn't push).
-# Terminal states: exited (clean exit, check exit_code), failed,
-# killed, cancelled. Pre-terminal: pending, running.
+# States: running, then one of exited (check exit_code), killed,
+# failed.
 while :; do
     ST=$(curl -s -X POST http://127.0.0.1:7733/op/job_status \
         -H 'Content-Type: application/json' \
         -d "{\"id\":$JOB}" | jq -r .job.state)
     echo "state=$ST"
     case "$ST" in
-        exited|failed|killed|cancelled) break ;;
+        exited|failed|killed) break ;;
     esac
     sleep 1
 done
@@ -158,9 +162,15 @@ requested format.
 | `format` | Output |
 |---|---|
 | `sh` (default) | shell-source-able lines (`alias gst='git status -sb'`) |
-| `json` | JSON object/array per subsystem |
+| `json` | JSON object/array per subsystem; the default for targets with no `sh` form (`shard`, `index`, `catalog`, `history`, `plugins`, …) |
 | `yaml` | YAML — same shape as json |
 | `text` | human-readable, no escaping |
+| `csv` | tabular rows; `key,value` for canonical-state targets |
+| `sql` | `INSERT` statements for replaying into a fresh db |
+| `native` | base64 of the rkyv shard bytes |
+| `disasm` | fusevm ops for `function` / `script` / `sourced` targets |
+| `zcompdump` | compinit's combined `_comps` / `_services` / `_patcomps` dump |
+| `zsh-histfile` | `history` in zsh EXTENDED_HISTORY format |
 | `pdf` | PDF document; `body_base64` field carries the bytes |
 
 ### Aliases as JSON
@@ -361,7 +371,8 @@ Cron-equivalent recurring + one-shot jobs. State persists across daemon
 restarts. The schedule tick runs every 1 second, dispatches `job_submit`
 for each due row, and tags the resulting jobs with `"scheduled"`.
 
-Cron format is **6 fields** including seconds: `sec min hr dom mon dow`.
+Cron accepts the 5-field crontab form `min hr dom mon dow` (seconds
+pinned to 0) or the 6-field form with seconds: `sec min hr dom mon dow`.
 
 ```sh
 # Every 15 minutes:
@@ -396,7 +407,7 @@ curl -s -X POST http://127.0.0.1:7733/op/schedule_remove \
 
 ## Streaming endpoints (Server-Sent Events)
 
-Two SSE endpoints push notifications to long-lived HTTP clients without
+Three SSE endpoints push notifications to long-lived HTTP clients without
 polling. Each event is a `text/event-stream` record:
 
 ```
@@ -452,10 +463,13 @@ data: {"data":{"target":"prod","status":"ok"},"scope":"shell:N","subscription_id
 | HTTP | `code` field | When |
 |---|---|---|
 | `200` | n/a — `ok:true` | success |
-| `400` | `bad_args` | malformed body, missing required field |
+| `400` | `bad_args`, `bad_cron`, `bad_format`, `bad_pattern` | malformed body, missing required field, bad cron / format / pattern |
 | `401` | `unauthorized` | missing or wrong bearer token |
+| `403` | `scope_denied`, `wrong_token` | token lacks the op's scope; wrong lock token |
 | `404` | `unknown_op` | no such op (typo, wrong daemon version) |
-| `404` | `no_such_file` / similar | op-specific not-found |
+| `404` | `no_such_file`, `no_such_kind`, `no_such_function` | op-specific not-found |
+| `408` | `timeout` | op timed out (e.g. `lock_acquire`) |
+| `409` | `busy` | resource held (e.g. a lock) |
 | `500` | varies | daemon-internal failure (see `msg`) |
 
 Body always `{"ok":false,"code":"...","msg":"..."}` for any non-200.

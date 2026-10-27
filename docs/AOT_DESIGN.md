@@ -13,13 +13,13 @@ binary (`src/extensions/aot.rs`, `fusevm::aot`). The sections below are the orig
 
 The killer capability: **AOP + nanosecond profiling baked into native binaries for shell scripts (zshrs) and Perl scripts (stryke `--compat`).** Two legacy ecosystems get the same AOT + advice-weaving + profiling stack via the shared fusevm codegen pass. No prior art on either side.
 
-`zshrs build script.zsh -o script` produces a static native binary that:
+`zbuild --native --in script.zsh --out script` produces a standalone native binary that (the original design spelled this `zshrs build script.zsh -o script`; that subcommand was never implemented — the shipped entry point is the `zbuild` builtin, `src/extensions/aot.rs`):
 
 - Runs on a target machine with **zero zshrs install**, **zero shell install**, **zero runtime dependency** (POSIX-compliant kernel + libc on Linux is sufficient; static-musl removes even libc).
 - Contains **actual machine code** for the script's logic — no parse, no compile, no JIT warmup at launch. (Shipped, with the qualification in [\[0x16\]](#0x16-what-actually-shipped): the program's *control flow* is machine code; each op's *work* is a call into the linked runtime.)
 - Behaves identically to running the source script under `zshrs` — same builtins, same expansion semantics, same `eval`/dynamic-dispatch support.
 
-Workflow: `zshrs build script.zsh && scp script user@server:/usr/local/bin/ && ssh user@server script`. No `apt install`, no `brew install`, no version management on the target.
+Workflow: `zshrs -c 'zbuild --native --in script.zsh --out script' && scp script user@server:/usr/local/bin/ && ssh user@server script`. No `apt install`, no `brew install`, no version management on the target.
 
 ---
 
@@ -75,12 +75,12 @@ script.zsh
   │
   ├─ cranelift-object → script.o  ─── (NEW: AOT codegen pass)
   │
-  ├─ ld script.o + libzshrs_runtime.a  ─── (NEW: link step)
+  ├─ ld script.o + libzsh.a  ─── (NEW: link step)
   │
   └─ script  (static native binary)
 ```
 
-The new components are the **codegen pass** (Chunk → `.o`) and the **runtime stub library** (`libzshrs_runtime.a`).
+The new components are the **codegen pass** (Chunk → `.o`) and the **runtime stub library** (`libzsh.a`, built by the `runtime/` workspace member).
 
 ---
 
@@ -91,8 +91,8 @@ The new components are the **codegen pass** (Chunk → `.o`) and the **runtime s
 **Output:** Object file (`.o` on Linux, `.o`/Mach-O on macOS) containing:
 
 - One symbol per compiled function.
-- One `_zshrs_main` entry symbol per script (or per-script in multi-script bundles).
-- Calls to runtime ABI symbols (`zshrs_v1_builtin_*`, `zshrs_v1_executor_*`) that ld resolves at link time.
+- One `_zshrs_main` entry symbol per script (or per-script in multi-script bundles). *Design only — not implemented:* the shipped entry symbol is fusevm's `fusevm_aot_entry` (see [\[0x16\]](#0x16-what-actually-shipped)).
+- Calls to runtime ABI symbols (originally planned as versioned `zshrs_vN_builtin_*` / `zshrs_vN_executor_*`) that ld resolves at link time. *Design only — not implemented:* the shipped object calls `fusevm_aot_exec_op` per op, and the runtime registers builtins through the single `#[no_mangle]` symbol `fusevm_aot_register_builtins` (`src/extensions/aot.rs::fusevm_aot_register_builtins`).
 - Relocations + DWARF for debugging (optional v1, recommended).
 
 **Architecture:** Cranelift handles target triples natively. No LLVM, no host C toolchain. `cranelift-object` is the standard backend for AOT use.
@@ -106,18 +106,18 @@ The new components are the **codegen pass** (Chunk → `.o`) and the **runtime s
 
 ---
 
-## [0x05] Runtime stub: `libzshrs_runtime.a`
+## [0x05] Runtime stub: `libzsh.a`
 
 A `staticlib` crate (`crate-type = ["staticlib"]`) that exposes every zshrs runtime primitive as a C-ABI symbol. The compiled `.o` calls into it; ld resolves at link time; the result is a single self-contained static binary.
 
 **Where it comes from:** the workspace member `runtime/` (package `zshrs-runtime`, lib name `zsh`), built with `cargo build --release -p zshrs-runtime` → `target/release/libzsh.a`. It is a separate member rather than a second `crate-type` on the main `zshrs` lib so that `cargo install zshrs` does not emit — and then discard — a 170 MB archive it never installs.
 
-**Known limitation:** `runtime_staticlib()` (`src/extensions/aot.rs:397`) probes for `libzsh.a` beside the running executable, which works in the `target/<profile>/` dev layout but not for a shell installed by `cargo install` or Homebrew, since neither ships the archive. Those users must point `ZSHRS_AOT_RUNTIME_LIB` at an archive built from source. Phase E below (pre-shipped per-target archives under `~/.zshrs/runtime/`) is the intended fix.
+**Known limitation:** `runtime_staticlib()` (`src/extensions/aot.rs::runtime_staticlib`) probes for `libzsh.a` beside the running executable, which works in the `target/<profile>/` dev layout but not for a shell installed by `cargo install` or Homebrew, since neither ships the archive. Those users must point `ZSHRS_AOT_RUNTIME_LIB` at an archive built from source. Phase E below (pre-shipped per-target archives under `~/.zshrs/runtime/`) is the intended fix.
 
 **What's in the stub:**
 
-- All ~317 `BUILTIN_*` handlers (echo, cd, set, typeset, read, print, …).
-- `ShellExecutor` state (variables, arrays, assoc_arrays, options, jobs, traps, …) accessible via `zshrs_v1_executor_*` accessors.
+- Every `BUILTIN_*` handler registered via `register_builtin` in `src/fusevm_bridge.rs` (echo, cd, set, typeset, read, print, …). Count: `rg -o 'register_builtin\(BUILTIN_[A-Z0-9_]+' src | rg -o 'BUILTIN_[A-Z0-9_]+' | sort -u | wc -l` (222 as of 2026-10-27, v0.13.56).
+- `ShellExecutor` state (variables, arrays, assoc_arrays, options, jobs, traps, …). The design called for `zshrs_vN_executor_*` accessors; *design only — not implemented:* the linked runtime reaches this state through `fusevm_aot_exec_op` → `VM::exec_op`, the same path the interpreter uses.
 - Fork/exec dispatcher (`host_exec_external`).
 - File descriptor + redirect machinery.
 - Pattern matching, glob, parameter expansion, history, completion (interactive paths can be excluded for non-interactive AOT binaries — TBD).
@@ -125,11 +125,15 @@ A `staticlib` crate (`crate-type = ["staticlib"]`) that exposes every zshrs runt
 
 **Size estimate:** 5-10 MB static.a. Per-binary overhead. Acceptable — Go binaries are similar.
 
-**ABI versioning:** Every symbol prefixed with `zshrs_vN_` where N is the runtime ABI version. Multiple versions can coexist in the same `.a`. Old binaries built against `zshrs_v1_*` keep running when zshrs ships `zshrs_v2_*` — the v1 symbols stay in the runtime forever per [`DESIGN_GOALS.md`](./DESIGN_GOALS.md) "compat-floor regressions are catastrophic." This is the load-bearing decision for the 30-year horizon.
+**ABI versioning (design only — not implemented):** Every symbol prefixed with `zshrs_vN_` where N is the runtime ABI version. Multiple versions can coexist in the same `.a`. Old binaries built against version 1 keep running when zshrs ships version 2 — the v1 symbols stay in the runtime forever per [`DESIGN_GOALS.md`](./DESIGN_GOALS.md) "compat-floor regressions are catastrophic." This is the load-bearing decision for the 30-year horizon.
+
+**As shipped:** no `zshrs_vN_` symbols exist. The object's entry is `fusevm_aot_entry`, each op calls `fusevm_aot_exec_op`, and the runtime registers builtins through `fusevm_aot_register_builtins`. The embedded chunk blob is versioned by fusevm's `AOT_CHUNK_MAGIC` header, not by symbol names.
 
 ---
 
 ## [0x06] CLI surface
+
+> **Design only — not implemented.** No `zshrs build` subcommand and none of the flags below shipped. The shipped surface is the `zbuild` builtin: `zbuild [--native|-n] --in|-i PATHS... --out|-o OUT` (`--help|-h` prints usage). Multiple `--in` paths are baked in the order given and run sequentially; there is no manifest, entry-point convention, or directory walker.
 
 ```
 zshrs build script.zsh                 # default: ./script (current platform)
@@ -164,11 +168,11 @@ Library files (`lib/foo.zsh`, `lib/bar.zsh`) get packed and made resolvable via 
 
 **Daily target:** Mac aarch64 → Linux x86_64 SFTP server. Plus Linux aarch64 servers. Future RISC-V.
 
-**Cranelift handles target triples natively** (no LLVM, no cross-toolchain). The constraint is `libzshrs_runtime-{target}.a` must exist for each target.
+**Cranelift handles target triples natively** (no LLVM, no cross-toolchain). The constraint is a per-target `libzsh-{target}.a` must exist for each target.
 
-**Strategy: pre-shipped target stubs.**
+**Strategy: pre-shipped target stubs.** *Design only — not implemented:* today `zbuild --native` links the host `libzsh.a` only (`ZSHRS_AOT_RUNTIME_LIB` or beside the running executable) and has no `--target` flag.
 
-- `cargo install zshrs` ships with `libzshrs_runtime-{x86_64-linux-musl, x86_64-linux-gnu, aarch64-linux-musl, aarch64-linux-gnu, aarch64-darwin}.a` blobs in `~/.zshrs/runtime/`.
+- `cargo install zshrs` ships with `libzsh-{x86_64-linux-musl, x86_64-linux-gnu, aarch64-linux-musl, aarch64-linux-gnu, aarch64-darwin}.a` blobs in `~/.zshrs/runtime/`.
 - `zshrs build --target X` picks the matching stub.
 - ~50-100 MB additional install size. One-shot install does it.
 - CI cross-builds (`cross` or `cargo-zigbuild`) populate the stubs at release time.
@@ -188,7 +192,7 @@ Library files (`lib/foo.zsh`, `lib/bar.zsh`) get packed and made resolvable via 
 | Full embed (parser + compiler + VM in runtime stub) | Strict superset of interp mode, zero compat regression | Stub size +2-3 MB | Yes |
 | AOT-strict mode (reject scripts using eval) | Smallest possible binary | Breaks zsh compat-floor | No |
 
-**Decision:** Full embed. Per [`DESIGN_GOALS.md`](./DESIGN_GOALS.md) "Compat with his existing world is sacred." The cold-path size cost is acceptable; breaking eval is not.
+**Decision:** Full embed. Per [`DESIGN_GOALS.md`](./DESIGN_GOALS.md) "Compat with the existing world is sacred." The cold-path size cost is acceptable; breaking eval is not.
 
 ---
 
@@ -200,7 +204,7 @@ Stryke shares fusevm. The codegen pass added in [§4](#0x04-codegen-pass) is ups
 
 ```
 Chunk → cranelift-object → .o
-  ├─ linked with libzshrs_runtime.a → zshrs binaries
+  ├─ linked with libzsh.a → zshrs binaries
   └─ linked with libstryke_runtime.a → stryke binaries
 ```
 
@@ -228,15 +232,15 @@ Stryke advice syntax + `intercept_proceed` semantics: TBD by the stryke maintain
 
 ## [0x0A] Versioning & ABI durability
 
-Per [`DESIGN_GOALS.md`](./DESIGN_GOALS.md): "Bytecode and SQLite formats must be versioned and migration-safe." Same applies to the AOT artifact.
+Per [`DESIGN_GOALS.md`](./DESIGN_GOALS.md): "Bytecode formats versioned … SQLite schemas migration-safe." Same applies to the AOT artifact.
 
 **Three version axes:**
 
-1. **Runtime ABI version.** `zshrs_v1_*` symbols stay forever. New runtime features add `zshrs_v2_*` alongside. Multiple ABIs coexist in the runtime `.a`. Old binaries always link against the version they were built with.
+1. **Runtime ABI version.** *Design only — not implemented* (the shipped ABI is the unversioned `fusevm_aot_*` symbol set; the chunk blob carries `AOT_CHUNK_MAGIC`). Version-1 symbols stay forever. New runtime features add version-2 symbols alongside. Multiple ABIs coexist in the runtime `.a`. Old binaries always link against the version they were built with.
 2. **fusevm IR version.** Recorded in the `.o` for diagnostics; not needed at link time (the IR is already lowered to native code by then).
 3. **zsh feature flags.** Recorded in a `.note.zshrs` section in the binary so `file ./script` / `zshrs introspect ./script` can report what features were used. Helps debug "why does this binary need posix vs zsh-extension mode."
 
-**Acceptance criterion:** A binary built today by `zshrs build` must keep running on the same kernel + libc 30 years from now (`DESIGN_GOALS.md` 30-year horizon). Achieved by: pure-Rust runtime, no LLVM dep, static link, libc syscalls only, ABI symbols never removed.
+**Acceptance criterion:** A binary built today by `zbuild --native` must keep running on the same kernel + libc 30 years from now (`DESIGN_GOALS.md` 30-year horizon). Achieved by: pure-Rust runtime, no LLVM dep, static link, libc syscalls only, ABI symbols never removed.
 
 ---
 
@@ -262,7 +266,7 @@ Explicitly **not** in v1:
 - **Hot-reload of compiled binaries.** Build → ship → run. No incremental rebuild on the target.
 - **Source debugger that maps machine PCs back to `.zsh` line numbers.** v1 emits DWARF tied to the Chunk's source spans; full source-level debugger is v2.
 - **Profile-guided optimization.** Cranelift doesn't do PGO; if needed, that's an LLVM swap, separate axis.
-- ~~**Embed the interactive shell**~~ — **REVERSED.** Per §0x14 unified-AOT pivot, the interactive daily-driver shell is also AOT-compiled. ZLE, completion, plugins, and runtime state all live in the same binary as the script-runner mode. There is no longer a "source-form runtime" — one product, one artifact, one binary.
+- ~~**Embed the interactive shell**~~ — **REVERSED.** Per the §0x13 unified-AOT pivot (decision log, 2026-04-28), the interactive daily-driver shell is also AOT-compiled. (The daily-driver half of that pivot was itself reversed the same day in favor of the sharded rkyv image — see §0x13 and the decision log.) ZLE, completion, plugins, and runtime state all live in the same binary as the script-runner mode. There is no longer a "source-form runtime" — one product, one artifact, one binary.
 
 ---
 
@@ -273,12 +277,12 @@ These are the load-bearing decisions to lock down before any code is written.
 | # | Question | Default | Reasoning |
 |---|----------|---------|-----------|
 | 1 | Codegen pass: upstream in fusevm or zshrs-side wrapper? | **Upstream** | Stryke benefits free. Single pipeline. |
-| 2 | Runtime ABI versioning scheme? | **`zshrs_vN_*` symbol prefix, all versions coexist** | Endgame durability — old binaries always link. |
+| 2 | Runtime ABI versioning scheme? | **`zshrs_vN_*` symbol prefix, all versions coexist** (design only — not implemented; shipped ABI is `fusevm_aot_*`, see §0x16) | Endgame durability — old binaries always link. |
 | 3 | eval/dynamic-dispatch handling? | **Full embed in runtime stub** | Compat-floor preservation > 2-3 MB size cost. |
 | 4 | Static-link strategy on Linux? | **musl by default, glibc opt-in** | True zero-deps deployment. |
 | 5 | Cross-arch via pre-shipped stubs or on-demand build? | **Pre-shipped for v1, on-demand for v1.1** | Ship the deployment-story winner first. |
 | 6 | Multi-script dispatch: argv[0] (busybox) or argv[1] (subcommand)? | **Both, argv[0] takes precedence** | Match user framing + ergonomics. |
-| 7 | `zshrs build .` entry-point heuristic? | **`main.zsh` → `__main__.zsh` → single non-lib → error** | Predictable, configurable via `--entry`. |
+| 7 | `zshrs build .` entry-point heuristic? | **`main.zsh` → `__main__.zsh` → single non-lib → error** (design only — not implemented; `zbuild` takes explicit `--in` paths) | Predictable, configurable via `--entry`. |
 | 8 | What goes in `~/.zshrs/runtime/`? | **Pre-built stubs per target triple** | One-time install cost, zero per-build cost. |
 | 9 | DWARF in v1 binaries? | **Yes, --strip removes** | Cheap to include, expensive to add later. |
 | 10 | First implementation language for runtime stub? | **Rust (existing zshrs code as `staticlib`)** | Reuse 100% of current implementation. No rewrite. |
@@ -289,14 +293,14 @@ If any of these defaults is wrong, fix it here before code starts. Once code exi
 
 ## [0x0E] Implementation phases
 
-1. **Phase A — fusevm cranelift-object output.** Add `cranelift-object` as fusevm dep; implement Chunk → `.o` codegen alongside the existing JIT path. Ship as fusevm 0.11.
-2. **Phase B — `libzshrs_runtime.a` stub.** Add a `crate-type = ["staticlib"]` lib target (shipped as the `runtime/` workspace member, emitting `libzsh.a`). Expose all BUILTIN_* + executor accessors as `zshrs_v1_*` C-ABI symbols. CI builds for {mac-aarch64, linux-x86_64-musl, linux-aarch64-musl}.
-3. **Phase C — `zshrs build` CLI.** Wire up `cargo` subcommand → cranelift-object → ld → output binary. Single-script first.
-4. **Phase D — Multi-script + bundle support.** v2 trailer format equivalent for native, busybox dispatch, `zshrs build .` walker.
-5. **Phase E — Cross-arch.** Pre-shipped target stubs in install. `--target` flag.
+1. **Phase A — fusevm cranelift-object output.** Add `cranelift-object` as fusevm dep; implement Chunk → `.o` codegen alongside the existing JIT path. **Shipped** in fusevm's `aot` feature (workspace pins 0.26.7, root `Cargo.toml`).
+2. **Phase B — `libzsh.a` stub.** Add a `crate-type = ["staticlib"]` lib target. **Shipped** as the `runtime/` workspace member (package `zshrs-runtime`, lib name `zsh`), emitting `libzsh.a`. The planned `zshrs_vN_*` C-ABI symbol set was not built — builtins register through `fusevm_aot_register_builtins`. Per-target CI builds for {mac-aarch64, linux-x86_64-musl, linux-aarch64-musl}: not implemented.
+3. **Phase C — build CLI.** cranelift-object → ld → output binary. **Shipped** as the `zbuild --native` builtin rather than a `zshrs build` subcommand.
+4. **Phase D — Multi-script + bundle support.** v2 trailer format equivalent for native, busybox dispatch, `zshrs build .` walker. Partial: `zbuild --in a.zsh b.zsh …` bakes several scripts run in order; busybox dispatch and the directory walker are not implemented.
+5. **Phase E — Cross-arch.** Pre-shipped target stubs in install. `--target` flag. Not implemented.
 6. **Phase F — eval embed verification.** Build full zpwr (172k LOC, 506+ subcommands) as one AOT binary. Run on clean Linux box with no zsh installed. Pass = ship.
 
-Each phase has its own load-bearing tests added to [`tests/`](./tests/) per [`DESIGN_GOALS.md`](./DESIGN_GOALS.md) "96-test invariant is load-bearing." Phase F is the acceptance criterion for v1.
+Each phase has its own load-bearing tests added to [`tests/`](../tests/) per [`DESIGN_GOALS.md`](./DESIGN_GOALS.md) "Every PR ships behavioral tests." Phase F is the acceptance criterion for v1.
 
 ---
 
@@ -304,9 +308,9 @@ Each phase has its own load-bearing tests added to [`tests/`](./tests/) per [`DE
 
 The AOT binary must pass every existing zshrs behavioral test that doesn't require interactivity. Specifically:
 
-- **All 174 `no_tree_walker_dispatch` tests** run against an AOT-built `test_runner` binary, not source-mode zshrs.
-- **All 396 corpus tests** (plugin compat, parameter expansion, etc.) run against AOT.
-- **All 70 ztst tests** (zsh test suite ports) run against AOT.
+- **All `tests/no_tree_walker_dispatch.rs` tests** run against an AOT-built `test_runner` binary, not source-mode zshrs (`rg -c '#\[test\]' tests/no_tree_walker_dispatch.rs`: 174 as of 2026-10-27, v0.13.56).
+- **All `tests/zsh_construct_corpus.rs` tests** (plugin compat, parameter expansion, etc.) run against AOT (`rg -c '#\[test\]' tests/zsh_construct_corpus.rs`: 396 as of 2026-10-27, v0.13.56).
+- **All `.ztst` files in `test_corpus/`** (the zsh test suite) run against AOT (`fd -e ztst . test_corpus | wc -l`: 77 as of 2026-10-27, v0.13.56).
 - **New AOT-specific tests:**
   - Build and run the same script under interp and AOT, compare stdout/stderr/exit/side-effects.
   - Build hello-world, scp to clean Linux container, run.
@@ -390,6 +394,8 @@ If a future architectural proposal demands GC, the proposal is wrong by construc
 
 ## [0x12] AOP + profiling bake-in
 
+> **Design only — not implemented.** Neither compile-time AOP weaving nor codegen-time profiling shipped. `zbuild` accepts only `--in`, `--out`, `--native` and `--help`; every `zshrs build --aop / --profile / --profile-format / --profile-port` form in this section is a proposal. Runtime AOP (`intercept`, `src/extensions/intercepts.rs`) and `zprof` exist only as runtime features of the shell.
+
 **World-first stack:** AOT-compiled shell script + AOP intercepts compiled into the binary + nanosecond-accuracy profiling emitted as native code prologue/epilogue. No shell has shipped any one of these. zshrs ships all three in the same artifact.
 
 ### AOP at compile time
@@ -435,7 +441,7 @@ function_exit:
 
 **Why nanosecond accuracy:** rdtscp on modern x86 is ~10ns to read with serialization. aarch64 `mrs CNTVCT_EL0` is ~5ns. No syscall, no `gettimeofday`, no microsecond clock. Per-function timing is sub-µs accurate.
 
-**Per-thread storage:** Profile counters live in TLS to avoid contention. The runtime stub provides `zshrs_v1_profile_alloc` / `zshrs_v1_profile_flush`.
+**Per-thread storage:** Profile counters live in TLS to avoid contention. The runtime stub would provide versioned `profile_alloc` / `profile_flush` entry points (design only — not implemented).
 
 **Output formats** (selectable via `--profile-format=`):
 
@@ -450,6 +456,8 @@ Flush triggers: process exit (default), `SIGUSR1` (for long-running scripts), or
 **Compile-time selectivity** matters: profiling all 50k functions in a zpwr-equivalent binary adds ~10-15% binary size and ~5ns per call-edge. `--profile=hot` (annotation-driven) or `--profile=glob:` (pattern) keeps the cost localized.
 
 ### CLI surface additions
+
+Design only — not implemented (see the note at the top of this section).
 
 ```
 zshrs build --aop FILE script.zsh -o script              # bake in AOP intercepts
@@ -481,7 +489,7 @@ Both flags produce additional `.note.zshrs-{aop,profile}` ELF sections so `zshrs
 
 ## [0x13] Daily-driver cache architecture — rkyv image + worker-hydrated catalog
 
-**Scope:** Sections §0x00–§0x12 cover script-AOT — `zshrs build script.zsh -o script` producing a static deployment binary. That capability stands. This section addresses a **different** question: how the daily-driver shell stores plugin / compsys / autoload bytecode for fast lookup at every prompt.
+**Scope:** Sections §0x00–§0x12 cover script-AOT — `zbuild --native --in script.zsh --out script` producing a static deployment binary. That capability stands. This section addresses a **different** question: how the daily-driver shell stores plugin / compsys / autoload bytecode for fast lookup at every prompt.
 
 The earlier "binary IS the database" framing — bake every plugin and every completion into the daily-driver binary's `.text` segment — was wrong on memory. At zpwr-scale (172k LOC + 27,387 zsh-more-completions + 100-200 zinit plugins ≈ 200-400 MB of bytecode), `.text` pre-faulting puts 50-100 MB resident on every shell launch and the kernel cannot evict `PROT_EXEC` pages. The working set must scale with **what's actually called**, not **what's installed**.
 
@@ -499,12 +507,20 @@ The daily-driver bytecode lives in a **sharded layout** under a single directory
 │   ├── {hash8}-plugin-{name}.rkyv …        ← one per zinit plugin
 │   └── {name}.rkyv.lock                    ← per-shard advisory flock
 ├── catalog.db                              ← daemon-hydrated mirror: entries / hooks /
-│                                             plugins / entry_stats — dbview target
-├── history.db                              ← shell history
-├── zshrs.log                               ← tracing output (10 MB cap, rotation)
+│                                             plugins / entry_stats / compiled_files — dbview target
+├── zshrs_history.db                        ← shell history (FTS5 index; flat mirror in zshrs_history)
+├── history.db                              ← daemon-owned history db
+├── compsys.db                              ← completion-system SQLite mirror
+├── plugins.db                              ← plugin side-effect cache
+├── autoloads.rkyv / deparse.rkyv / scripts.rkyv   ← shell-side rkyv caches
+├── zshrs.log                               ← shell tracing
+├── zshrs-daemon.log                        ← daemon tracing
+├── zshrs-recorder.log                      ← recorder tracing (all three size-rotated together)
 ├── daemon.sock                             ← Unix domain socket for client → daemon IPC
 └── daemon.pid                              ← singleton lock + daemon process ID
 ```
+
+The authoritative daemon-side layout is the header comment of `daemon/paths.rs`; the shell-side files are named in `src/extensions/history.rs`, `src/compsys/cache.rs`, `src/extensions/plugin_cache.rs` and `daemon/ops.rs::SHELL_CACHE_FILES`. The daemon config lives in `zshrs-daemon.toml`, the shell config in `zshrs.toml`.
 
 **Why sharded, not monolithic:** a single `image.rkyv` would have to be rebuilt every time any source file changed. With user-frequency commits to zpwr + plugin-update churn (`zinit update foo`, `git pull` in any plugin tree), this loops in seconds-to-minutes of full-corpus rebuild that's >99% redundant. Sharding the image by source root reduces the rebuild blast radius to "just the touched root" — typically 100-500ms vs 30s full.
 
@@ -529,36 +545,32 @@ Raw `rm` is supported but doesn't coordinate with the running shell — mmap han
 
 **Naming:** `zcache` follows the zsh `z*` convention (`zmv`, `zparseopts`, `zformat`, `zstyle`, `zprof`, `zstat`) without colliding with any upstream zsh `z*` builtin. `cache` was rejected as a name due to high collision risk with user PATH commands and zpwr subcommands.
 
-**Sync vs async:** all write operations dispatch to the worker pool and return immediately (per the "nothing blocks the shell" invariant). Read-only operations stay synchronous since they're fast (mmap stat, SQLite SELECT). Pass `--wait` to any async verb to explicitly block until completion.
+**Sync vs async (as shipped):** every `zcache` verb is a synchronous request to the daemon; the reply is printed when the operation finishes. `--wait` is accepted by `zcache clean` for compatibility and is a no-op (`daemon/builtins.rs::zcache_clean`). The file-only `clean` targets (`all`, `shards`, `shard`, `index`, `shell`, `log` — `daemon/ops.rs::FILE_CLEAN_TARGETS`) also run with no daemon; the rest need it.
 
 ```
-zcache                          # SYNC, read-only — info: shard sizes, entry counts,
-                                # hot/cold breakdown, in-flight worker jobs
+zcache                          # info: shard sizes, entry counts, in-flight jobs
 zcache info                     # same as bare `zcache`
-zcache jobs                     # SYNC — list active worker jobs (compile, hydrate, vacuum)
+zcache jobs                     # alias of `info` in v1
 
-zcache clean [--wait]           # ASYNC — regenerable only (preserves history + entry_stats)
-zcache clean --all [--wait]     # ASYNC — everything (no prompt; user is root)
-zcache clean shards [--wait]    # ASYNC — rm -rf images/ ; index marked stale
-zcache clean shard <name> [--wait]   # ASYNC — rm one shard, mark its index entries stale
-zcache clean catalog [--wait]   # ASYNC — rm catalog.db, preserve entry_stats via dump+reimport
-zcache clean catalog --no-stats # ASYNC — rm catalog.db wholesale (loses entry_stats)
-zcache clean index [--wait]     # ASYNC — rm index.rkyv, force re-link from existing shards
-zcache clean stats              # SYNC — DELETE FROM entry_stats only (single SQL stmt, fast)
-zcache clean log                # SYNC — truncate zshrs.log (single fs op, fast)
+zcache clean [--all] [--dry-run]   # default target `all`: every shard + index.rkyv +
+                                   # shell rkyv caches (autoloads/deparse/scripts);
+                                   # history and entry_stats are kept
+zcache clean shards             # rm every images/*.rkyv
+zcache clean shard <name>       # rm one shard
+zcache clean catalog [--no-stats]  # reset catalog.db (needs daemon)
+zcache clean index              # rm index.rkyv
+zcache clean shell              # rm autoloads.rkyv / deparse.rkyv / scripts.rkyv
+zcache clean stats              # DELETE FROM entry_stats (needs daemon)
+zcache clean log                # truncate the zshrs*.log files in place
+zcache clean zwc | zcompdump | legacy [--dry-run]   # remove legacy zsh artifacts
 
-zcache rebuild [--wait]         # ASYNC — full corpus rebuild (worker pool fan-out)
-zcache rebuild shard <name> [--wait]  # ASYNC — surgical
-zcache rebuild --parallel N     # ASYNC — control worker pool fan-out for this rebuild
-# NOT SHIPPED: the rebuild verbs and their daemon ops were removed (daemon/builtins.rs); re-run zshrs-recorder to re-index (docs/RECORDER.md)
-
-zcache verify                   # SYNC — integrity scan: shard hashes vs catalog header,
+zcache verify                   # integrity scan: shard hashes vs catalog header,
                                 # PRAGMA integrity_check on catalog.db, report drift /
                                 # corruption / orphaned .tmp files; suggested recovery cmds
-zcache compact [--wait]         # ASYNC — SQLite VACUUM on catalog.db + history.db
+zcache compact                  # SQLite VACUUM on catalog.db + history.db
 ```
 
-Default behavior of every async verb: enqueue job(s) into the worker pool, print job ID(s) to stdout, return immediately. Subsequent `zcache jobs` shows progress; `tail -f ~/.zshrs/zshrs.log` shows worker output. `--wait` is the explicit opt-in for blocking semantics (useful in scripts that need ordering guarantees).
+`zcache rebuild` (all forms, incl. `--parallel N` and `shard <name>`) is **not implemented**: the rebuild verbs and their daemon ops were removed with the AST walker (`daemon/builtins.rs::zcache`). Re-indexing is done by re-running `zshrs-recorder` (see [`RECORDER.md`](./RECORDER.md)). The original design below — async verbs that enqueue jobs, print job IDs, and block only under `--wait` — was not built.
 
 **Custom-builtin namespace convention:** all zshrs-introduced builtins use the `z` prefix to match zsh's existing `z*` family (`zmv`, `zparseopts`, etc.) but never overlap a name already used by upstream zsh. Anti-collision check is part of the build: if upstream zsh adds a `z*` builtin in a future release that we shadow, our build fails until we rename. Current zshrs `z*` additions: `zcache`. Future zshrs additions follow the same rule.
 

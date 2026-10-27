@@ -20,14 +20,15 @@ fallback path expects the binary pre-built; without it they fail for a
 harness reason, not a code gap. Build the daemon before reading this suite.
 
 zshrs keeps zsh's lexer tokens (the bytes `0x84`–`0xA2`, `Src/zsh.h:159-224`)
-as Private Use Area chars at U+E084–U+E0A2 (`src/token_char.rs`), so real
-U+0084–U+00A2 text (NBSP, `¡`, `¢`, NEL, C1 controls) never reads as a token.
+as Private Use Area chars at `TOKEN_BASE` (U+E100) + the C byte, U+E184–U+E1A2
+(`src/token_char.rs`; the base clears the Powerline glyphs U+E0A0–U+E0A2), so
+real U+0084–U+00A2 text (NBSP, `¡`, `¢`, NEL, C1 controls) never reads as a token.
 The older U+0084–U+00A1 encoding mangled those chars under `(q)`, `(V)` and
 `(qqqq)`, and on the line-at-a-time stdin path.
 
 ## Relationship to the other measurements
 
-This suite is zshrs's own parity corpus. Three other measurements look at
+This suite is zshrs's own parity corpus. Four other measurements look at
 compatibility from different angles; read them together (the Compatibility
 measurement section of `README.md` carries the current figures):
 

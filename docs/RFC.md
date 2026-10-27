@@ -102,27 +102,27 @@ Current default shells (`bash`, `zsh`, `dash`) share fundamental architectural l
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                         zshrs                                │
+│                         zshrs                               │
 ├─────────────────────────────────────────────────────────────┤
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
 │  │   Lexer     │→ │   Parser    │→ │   ShellCompiler     │  │
 │  └─────────────┘  └─────────────┘  └──────────┬──────────┘  │
-│                                               ↓              │
+│                                               ↓             │
 │  ┌─────────────────────────────────────────────────────────┐│
 │  │                    fusevm (Bytecode VM)                 ││
-│  │  ┌──────────┐  ┌────────────┐  ┌─────────────────────┐ ││
-│  │  │ Bytecode │→ │ Interpreter│→ │ Cranelift JIT       │ ││
-│  │  │ (129 ops)│  │            │  │ (Block/Linear)      │ ││
-│  │  └──────────┘  └────────────┘  └─────────────────────┘ ││
+│  │  ┌──────────┐  ┌────────────┐  ┌─────────────────────┐  ││
+│  │  │ Bytecode │→ │ Interpreter│→ │ Cranelift JIT       │  ││
+│  │  │          │  │            │  │ (Block/Linear)      │  ││
+│  │  └──────────┘  └────────────┘  └─────────────────────┘  ││
 │  └─────────────────────────────────────────────────────────┘│
-│                           ↓                                  │
+│                           ↓                                 │
 │  ┌─────────────────────────────────────────────────────────┐│
 │  │              Builtin Dispatch (3200+ commands)          ││
 │  │  Shell: cd, echo, export, source, eval, trap, ...       ││
 │  │  Coreutils: cat, head, tail, wc, grep, sed, find, ...   ││
-│  │  Extended: jq, yq, http, async/await, pmap, ...         ││
+│  │  Extended: async/await, pmap, peach, zjob, ...          ││
 │  └─────────────────────────────────────────────────────────┘│
-│                           ↓                                  │
+│                           ↓                                 │
 └─────────────────────────────────────────────────────────────┘
 
       ↑ data plane: direct mmap, ~150-200ns, NO IPC per call
@@ -143,26 +143,27 @@ Current default shells (`bash`, `zsh`, `dash`) share fundamental architectural l
       │
       ↓ control plane: JSON-over-Unix-socket IPC, ~µs, rare events
 ┌─────────────────────────────────────────────────────────────┐
-│  zshrs-daemon  (singleton; spawned on demand by first client) │
-│                                                                │
-│  fsnotify thread (ONE watcher across the machine)             │
-│  cache worker pool (compile / hydrate / vacuum / verify)       │
-│  accept() socket thread (serves N clients)                     │
-│  ticker thread (compact + log rotation)                        │
-│                                                                │
-│  Owns: ALL bytecode-cache mutation, image writes, index        │
-│        rewrites, catalog hydration, log rotation, integrity    │
-│        scans, shell registry, IPC routing, federation          │
-│                                                                │
-│  Future expansion: supervised long-running jobs (zjob), cross-│
-│  shell pub/sub (zsend/zsubscribe), cross-host federation      │
+│  zshrs-daemon  (singleton; started explicitly, never by a   │
+│                 client)                                     │
+│                                                             │
+│  fsnotify thread (ONE watcher across the machine)           │
+│  cache worker pool (compile / hydrate / vacuum / verify)    │
+│  accept() socket thread (serves N clients)                  │
+│  ticker thread (compact + log rotation)                     │
+│                                                             │
+│  Owns: ALL bytecode-cache mutation, image writes, index     │
+│        rewrites, catalog hydration, log rotation, integrity │
+│        scans, shell registry, IPC routing, federation       │
+│                                                             │
+│  Also owns: supervised jobs (zjob), cross-shell pub/sub     │
+│  (zpublish/zsubscribe/zsend), cross-host federation         │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 **Architectural commitments visible in this diagram:**
 
 - **Client/server with data-plane / control-plane split.** Clients (the N zshrs interpreter processes) read bytecode via direct mmap — sub-µs lookups, no IPC per call. The daemon never sits in the lookup path. IPC is reserved for cache mutation, configuration changes, cross-shell coordination, and job supervision.
-- **Singleton daemon, N thin clients.** First zshrs to launch spawns the daemon (`flock` on `daemon.pid` enforces singleton). 99 subsequent clients just connect to the running daemon. Tested at 100x scale (user's typical tmux workload).
+- **Singleton daemon, N thin clients.** The daemon is started explicitly (systemd, launchd, brew services, or by hand; `flock` on `daemon.pid` enforces singleton). Every zshrs client only connects to it and never spawns it (`daemon/client.rs`, connect-only model). Tested at 100x scale (user's typical tmux workload).
 - **POSIX mode gates entire layer off.** `--posix` / `emulate sh` / argv[0] basename `sh`/`dash`/`bash` → no daemon spawn, no `~/.zshrs/` created, no `z*` builtins. Pure POSIX shell, lean drop-in for `/bin/sh`.
 - **Three personality modes share one binary:** POSIX, Vanilla zsh, Turbocharged zshrs. Cache + daemon active only in turbocharged mode.
 
@@ -180,13 +181,13 @@ The canonical register is [`INVENTIONS.md`](INVENTIONS.md): twenty-nine entries,
 | **Native LSP server + DAP debug adapter built into the shell binary** | **First in the Bourne lineage.** Two non-Bourne shells already ship an in-binary language server — Nushell (`nu --lsp`) and Elvish (`elvish -lsp`, added in 0.18.0) — and Endo (v0.1.0, `contour-terminal/endo`, F#-inspired, not POSIX) ships both LSP and DAP. None of them are Bourne-family. **No shell in the Bourne lineage (bash, zsh, ksh, dash, and fish alongside it) ships `--lsp` or `--dap` in its own binary:** `bash-language-server` is a separate Node/TypeScript project, `fish-lsp` is a separate npm package, zsh has no mainstream server at all, and `vscode-bash-debug` is a VS Code extension that drives the external `bashdb` script. zshrs ships `zshrs --lsp` (stdio, hand-rolled JSON-RPC, dependency-free) and `zshrs --dap [HOST:PORT]` (TCP or stdio, full Debug Adapter Protocol) in `src/extensions/lsp.rs` + `src/extensions/dap.rs`, dispatched from `bins/zshrs.rs`; the JetBrains plugin at `editors/intellij/` drives both. **First Bourne shell with editor tooling as a native subsystem — and the first shell of any lineage whose LSP completes through its own live compsys completers.** |
 | **Plugin-manager state exposed as IDE External Libraries** | **No — bash-language-server, fish-shell.vscode, and every other shell editor integration treat plugins as opaque user scripts. zshrs ships `zshrs --dump-plugins` (reads the `plugin_cache` SQLite, groups every sourced file by inferred manager: zinit / oh-my-zsh / prezto / antidote / antigen / zplug / zsh-more-completions / zpwr / loose) and the JetBrains plugin's `AdditionalLibraryRootsProvider` turns each entry into a navigable, indexable, find-usages-able library root. First shell whose IDE integration surfaces plugin-manager state as first-class IDE library entries (v0.11.41+).** |
 
-The combination of all six in one shell is what's defended in the patent strategy (`memory/aot_patent_strategy.md`) as three omnibus claims: (1) unified-AOT, (2) daemon architecture, (3) native editor-tooling subsystem (LSP + DAP + plugin-manager-state as IDE library roots) — the last scoped to the Bourne lineage for LSP/DAP, unscoped for compsys-backed completion and plugin-manager library roots.
+The combination of all seven in one shell is what's defended as three omnibus claims: (1) unified-AOT, (2) daemon architecture, (3) native editor-tooling subsystem (LSP + DAP + plugin-manager-state as IDE library roots) — the last scoped to the Bourne lineage for LSP/DAP, unscoped for compsys-backed completion and plugin-manager library roots.
 
 ### Execution Modes
 
 #### Default Mode
 - Full zsh compatibility
-- All extensions enabled (`async`, `await`, `pmap`, `@` prefix for Stryke)
+- All extensions enabled (`async`, `await`, `pmap`; the `@` prefix for Stryke only in a fat build that registers `set_stryke_handler` — the lean `zshrs` treats `@` as an ordinary character)
 - All builtins active (anti-fork)
 
 #### POSIX Mode (`--posix` / `emulate sh`)
@@ -198,19 +199,18 @@ The combination of all six in one shell is what's defended in the patent strateg
 ### Bytecode Cache
 
 ```
-Location: ~/.zshrs/bytecode.db (XDG compliant)
+Location: ~/.zshrs/scripts.rkyv (one rkyv shard, mmap'd; src/extensions/script_cache.rs)
 
-Schema:
-  script_bytecode (
-    path TEXT PRIMARY KEY,
-    mtime_secs INTEGER,
-    mtime_nsecs INTEGER,
-    bytecode BLOB,
-    cached_at INTEGER
-  )
+Layout:
+  header { magic, format_version, zshrs_version, pointer_width, built_at_secs }
+  ScriptEntry { mtime_secs, mtime_nsecs, binary_mtime_at_cache, binary_len_at_cache, … }
 
-Invalidation: Automatic on mtime change
-Integrity: Optional HMAC signing for security-critical deployments
+Validation: rkyv::check_archived_root; header magic / format_version /
+            zshrs_version / pointer_width
+Invalidation: automatic on source mtime change, and on any rebuilt zshrs
+              binary (entry's recorded binary mtime + len must equal the
+              running binary's)
+Writes: flock on scripts.rkyv.lock, write tmp file, fsync, atomic rename
 ```
 
 ### Builtin Categories
@@ -222,9 +222,7 @@ Integrity: Optional HMAC signing for security-critical deployments
 | Completion | 15+ | compgen, complete, compadd, compdef |
 | **Coreutils (anti-fork)** | **48** | base64, basename, cat, cksum, comm, cut, date, dircolors, dirname, env, expand, expr, factor, fold, groups, head, id, link, logname, mkfifo, mktemp, nice, nl, nproc, paste, printenv, realpath, seq, sha256sum, shuf, sleep, sort, sum, tac, tail, tee, touch, tr, tsort, tty, uname, unexpand, uniq, unlink, users, wc, whoami, yes |
 | **xattr (direct syscall)** | 4 | zgetattr, zsetattr, zdelattr, zlistattr |
-| Text processing | 50+ | jq, yq, awk-equivalent, regex |
 | **Parallel (worker pool)** | 13 | async, await, pmap, pgrep, peach, barrier, puniq, psort, pfirst, pany, pmap_chunked, par_lines, par_walk |
-| Network | 10+ | http, curl-equivalent, socket |
 | Zsh compat | 40+ | zstyle, zmodload, bindkey, zle |
 
 ### Anti-Fork Architecture
@@ -321,7 +319,7 @@ programs.zshrs = {
 - [x] crates.io (source)
 - [ ] nixpkgs (PR in progress)
 - [ ] AUR
-- [ ] Homebrew
+- [x] Homebrew (tap `MenkeTechnologies/menketech`: `zshrs`, `zshrs-all`)
 - [ ] Debian/Ubuntu PPA
 - [ ] Fedora COPR
 - [ ] Alpine apk
@@ -526,7 +524,7 @@ flow, and [CREATORS.md](../CREATORS.md) for the historical record.
 | xattr ops | ext | ext | zsh/attr | **builtin** | Direct syscall |
 | pmap/pgrep/peach + puniq/psort/pfirst/pany/pmap_chunked/par_lines/par_walk | ✗ | ✗ | ✗ | **builtin** | Worker pool, fresh zshrs per item/chunk |
 | async/await | ✗ | ✗ | ✗ | **builtin** | Extension |
-| jq | ext | ext | ext | **builtin** | Native JSON (via Stryke) |
+| jq | ext | ext | ext | ext | Not a zshrs builtin; available in-process only through Stryke in a fat build that registers `set_stryke_handler` |
 
 ---
 
@@ -542,7 +540,7 @@ A: Behavior is identical. `cat file` produces the same output whether it forks t
 
 **Q: How do I know my scripts will work?**
 
-A: Run `zshrs --check script.sh` for compatibility analysis. Run `zshrs --posix script.sh` for strict POSIX mode.
+A: Run `zshrs -n script.sh` to parse it without executing (`NO_EXEC`). Run `zshrs --posix script.sh` for strict POSIX mode.
 
 **Q: What's the disk space cost?**
 

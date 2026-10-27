@@ -134,23 +134,34 @@ move.
 is a global `RwLock`/`Mutex` locked per access, where C uses an unlocked
 single-threaded hash:
 
-- `paramtab` — `RwLock` (params.rs:13002), **108** lock sites → every `$var`.
-  `getsparam` (params.rs:4654) takes two `RwLock::read()` (its own + `is_nameref`
-  at 16736) plus a value clone per read. C: one hash probe returning a pointer.
-- `shfunctab` — `RwLock` (hashtable.rs:3229), ~36 sites → every function call.
-- `aliastab` — `RwLock` (hashtable.rs:3172), ~18 sites (incl. `lex.rs`) → every
-  command word.
-- `cmdnamtab` — `RwLock`, ~15 sites → every external command.
+- `paramtab` — `RwLock` (`params.rs::PARAMTAB_INNER`, reached through
+  `params.rs::paramtab`), **401** lock sites (as of 2026-10-27, v0.13.56) → every `$var`.
+  `getsparam` (`params.rs::getsparam`) takes two `RwLock::read()` (its own +
+  `params.rs::is_nameref`) plus a value clone per read. C: one hash probe
+  returning a pointer.
+- `shfunctab` — `RwLock` (`hashtable.rs::shfunctab_lock`), **91** sites (as of 2026-10-27, v0.13.56) →
+  every function call.
+- `aliastab` — `RwLock` (`hashtable.rs::aliastab_lock`), **28** sites (as of 2026-10-27, v0.13.56,
+  incl. `lex.rs`) → every command word.
+- `cmdnamtab` — `RwLock` (`hashtable.rs::cmdnamtab_lock`), **28** sites (as of 2026-10-27, v0.13.56) →
+  every external command.
+
+Lock-site counts are `.read()`/`.write()` call expressions on the accessor:
+`rg -o 'paramtab\(\)\s*\.\s*(read|write)\(\)' -g'*.rs' src | wc -l` (substitute
+`shfunctab_lock`, `cmdnamtab_lock`, or `(^|[^f])aliastab_lock` to exclude
+`sufaliastab_lock`).
 
 Even uncontended, a `RwLock::read` is an atomic RMW + fences (~30-80 ns) vs C's
 ~2 ns load. *Target:* per-context owned tables, unlocked; reads return `&str`
 borrows, not clones.
 
 **#12 — Function-call frame under a lock.** Each call locks `shfunctab` for
-lookup and pushes/pops `FUNCSTACK` behind a `Mutex` (exec.rs:5867/5892/6027). C:
+lookup and pushes/pops `FUNCSTACK` behind a `Mutex` (`exec.rs::doshfunc`; the static is
+`modules/parameter.rs::FUNCSTACK`, a `thread_shell_state::ThreadMutex` that holds
+one `Mutex` for the shell thread and one per worker thread). C:
 a bare linked-list push/pop. *Target:* owner-thread funcstack, no lock.
 
-**#13 — An allocation per expansion.** `singsub`/`multsub` (subst.rs:1452/1530)
+**#13 — An allocation per expansion.** `singsub`/`multsub` (`subst.rs::singsub` / `subst.rs::multsub`)
 allocate a fresh `LinkList` + `push_back(s.to_string())` per `${…}`/`$(…)`. C
 reuses a per-command list and works on metafied bytes in place. *Target:*
 reused list / in-place bytes.
@@ -158,59 +169,68 @@ reused list / in-place bytes.
 ### Startup dominators (why p10k precmd specifically is slow)
 
 **#1 — Whole-table materialization of magic assocs.** `assoc_get`
-(subst.rs:17046) builds the entire magic-assoc `IndexMap` (for `functions`,
+(`subst.rs::assoc_get`) builds the entire magic-assoc `IndexMap` (for `functions`,
 enumerate ~50k names + reconstruct every body) to serve a single-key or
-existence access, with an O(N) bucket-reorder. **34** call sites; only the
-`${+…[key]}` existence path (7807) is done. C: `getnode(ht,key)`, one probe.
+existence access, with an O(N) bucket-reorder. **71** call sites (as of 2026-10-27, v0.13.56;
+non-comment lines outside `src/compsys`:
+`rg -n '\bassoc_get\(' -g'*.rs' src --glob '!src/compsys/**' | rg -v '^\S+:\d+:\s*//' | rg -v 'fn assoc_get\(' | wc -l`);
+only the `${+…[key]}` existence path (in `subst.rs::paramsubst`) is done. C: `getnode(ht,key)`, one probe.
 
-**#2 — Function-body reconstruct per read.** `${functions[name]}` re-parses and
-re-deparses the body every read (`parse_string`+`getpermtext`,
-parameter.rs:1100-1103). C keeps the compiled `Eprog` and deparses from the
-arena.
+**#2 — Function-body reconstruct on first read.** zshrs stores a function body
+as source text, so `${functions[name]}` must re-parse and re-deparse it
+(`parse_string`+`getpermtext`, `modules/parameter.rs::getfunction`). Repeat reads
+are served from the per-process `FN_DEPARSE_CACHE` memo and the cross-process
+`extensions/deparse_cache.rs` shard (see "Already taken"); a read that misses
+both still pays the full re-parse. C keeps the compiled `Eprog` and
+deparses from the arena.
 
 **#3 — Pattern compile under global locks with `Mutex` static buffers.** All
-**65** `patcompile` callers recompile; the compile takes `PATCOMPILE_LOCK`
-(pattern.rs:3834) and uses global `Mutex` statics `patout` (214) / `patparse`
-(3839) as shared buffers, plus a fresh `String` decode per compile.
+**116** `patcompile` call sites (as of 2026-10-27, v0.13.56; same `rg` filter as #1 with `patcompile`)
+recompile; the compile takes `pattern.rs::PATCOMPILE_LOCK` and uses global
+`Mutex` statics `pattern.rs::patout` / `pattern.rs::patparse` as shared buffers, plus a fresh `String` decode per compile.
 *Mitigated* by the extension cache for repeats; the first-seen compile is still
 fat. *Target:* per-call arena, thread-confined compile state.
 
 ### The rest
 
-**#4 — Double-compile per `[[ … ]]`** — validate (fusevm_bridge.rs:7252,
-discarded) then match (vm_helper.rs:4250). C compiles once.
+**#4 — Double-compile per `[[ … ]]`** — validate (the `BUILTIN_COND_STRMATCH`
+handler in `fusevm_bridge.rs`, result discarded) then match
+(`vm_helper.rs::glob_match_static`). C compiles once.
 
-**#5 — Whole-array clone for single-index reads** — `arrays_get(&var_name)`,
-**63** sites, clones the array then often takes one element. C indexes in place.
+**#5 — Whole-array clone for single-index reads** — `arrays_get(&var_name)`
+(`subst.rs::arrays_get`), **119** sites (as of 2026-10-27, v0.13.56; same `rg` filter as #1 with
+`arrays_get`), clones the array then often takes one element. C indexes in place.
 
 **#7 — Global-option thrash per pattern match** — `matchpat`
-(glob.rs:2054-2072) does 4 `opt_state_set` (+ opts-cache invalidations) per
+(`glob.rs::matchpat`) does 4 `opt_state_set` (+ opts-cache invalidations) per
 `[[ ]]` to pass case/extended sensitivity through globals. C passes them as
 arguments.
 
 **#8 — O(N log N) sort per magic-assoc enumeration** — `${(k)functions}` etc.
-`names.sort()` at **9** sites (subst.rs:8326…8470). ~50k entries per
+`names.sort()` at **4** sites in `subst.rs` (as of 2026-10-27, v0.13.56;
+`rg -c 'names\.sort\(\)' src/ported/subst.rs`). ~50k entries per
 enumeration; also diverges from zsh's hash order.
 
 **#9 — Re-tokenize the pattern per match** — `glob::tokenize` again before
-compile, **32** sites in subst.rs, **25** in pattern.rs. C tokenizes once at
+compile, **33** sites in subst.rs, **25** in pattern.rs (as of 2026-10-27, v0.13.56;
+`rg -o 'glob::tokenize\(' src/ported/subst.rs | wc -l`). C tokenizes once at
 parse time.
 
 ### Inventory at a glance
 
 | # | Site | C cost | Port cost (deferred) |
 |---|---|---|---|
-| 1 | `assoc_get` magic-assoc (34) | 1 hash probe | materialize whole table + reconstruct bodies |
-| 2 | `${functions[name]}` read | arena deparse | re-parse + re-deparse body |
-| 3 | `patcompile` (65 callers) | arena ~1µs, no lock | global lock + `Mutex` static buffers + realloc |
+| 1 | `assoc_get` magic-assoc (71) | 1 hash probe | materialize whole table + reconstruct bodies |
+| 2 | `${functions[name]}` read | arena deparse | re-parse + re-deparse body on first read (memoized after) |
+| 3 | `patcompile` (116 callers) | arena ~1µs, no lock | global lock + `Mutex` static buffers + realloc |
 | 4 | `[[ … ]]` compile | once | twice (validate + match) |
-| 5 | `arrays_get` (63) | index in place | clone whole array |
+| 5 | `arrays_get` (119) | index in place | clone whole array |
 | 6 | fine-grained op dispatch | inline call | worker-thread hand-off |
 | 7 | `matchpat` options | pass as args | 4 `opt_state_set` + invalidations / match |
-| 8 | `${(k)…}` enum (9) | walk buckets | O(N log N) sort |
-| 9 | pattern re-tokenize (57) | tokenized at parse | re-tokenize per match |
+| 8 | `${(k)…}` enum (4) | walk buckets | O(N log N) sort |
+| 9 | pattern re-tokenize (58) | tokenized at parse | re-tokenize per match |
 | 10 | `$var` read (`getsparam`) | 1 hash probe, no lock | 2 `RwLock` + clone |
-| 11 | any symbol lookup | unlocked hash | global `RwLock` per access (108/36/18/15) |
+| 11 | any symbol lookup | unlocked hash | global `RwLock` per access (401/91/28/28) |
 | 12 | function-call frame | linked-list push/pop | `FUNCSTACK` `Mutex` push + pop |
 | 13 | any `${…}`/`$(…)` expansion | reuse list, in-place bytes | fresh `LinkList` + string clone |
 
@@ -231,5 +251,9 @@ parse time.
 - `${+functions/parameters[key]}` O(n²) → O(1) (subst.rs) — #1's existence path.
 - Compiled-pattern cache, two-level L1/L2 (`extensions/pat_cache.rs`) — mitigates
   #3 for repeated patterns; halves p10k precmd CPU.
+- Function-body deparse memo — mitigates #2 for repeat reads: per-process
+  `FN_DEPARSE_CACHE` (`modules/parameter.rs`, keyed by name, invalidated when
+  the body text changes) plus the cross-process rkyv shard
+  `extensions/deparse_cache.rs` (`$ZSHRS_HOME/deparse.rkyv`).
 
-Both changed implementation only, certified by an unchanged parity result.
+All three changed implementation only, certified by an unchanged parity result.

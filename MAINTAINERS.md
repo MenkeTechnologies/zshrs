@@ -20,7 +20,7 @@ _To be populated when the maintainer team is assembled._
 | (TBD) | Lead maintainer | release management, CI |
 | (TBD) | Shell core / executor | `src/ported/exec.rs`, `src/extensions/canonical_apply.rs`, `bins/zshrs.rs` |
 | (TBD) | Strict-port surface (FROZEN) | `src/ported/**` (106 files), `tests/port_purity.rs`, `docs/PORT.md`, `docs/zsh_c_functions.txt` |
-| (TBD) | Extensions / non-port | `src/extensions/**` (88 files) — non-C-ancestor features |
+| (TBD) | Extensions / non-port | `src/extensions/**` — non-C-ancestor features |
 | (TBD) | Daemon / IPC | `daemon/server.rs`, `daemon/ops.rs`, `daemon/state.rs` |
 | (TBD) | Recorder / canonical | `bins/zshrs-recorder.rs`, `src/recorder/`, `daemon/canonical.rs` |
 | (TBD) | Job supervisor / pty | `daemon/jobs.rs`, `daemon/zjob_builtin.rs` |
@@ -52,7 +52,7 @@ on the official upstream. Forks are not bound by this step.
 Run `cargo test` (workspace-wide) before opening a PR. CI runs
 the full suite (lib + integration + the ztst corpus harness). PRs
 that touch the daemon op dispatch must add the new op to
-`daemon/ops.rs::OP_NAMES` (alphabetically sorted) so `/openapi`
+`daemon/ops.rs::OP_NAMES` so `/openapi`
 and `zd ops` stay in sync. PRs that touch `src/extensions/canonical_apply.rs`
 must include a smoke run of `zsync up --all` against a fresh
 `$ZSHRS_HOME` so the round-trip stays clean. PRs that touch
@@ -61,7 +61,7 @@ strict-port directory is FROZEN per `docs/PORT.md` (no new
 files; no new fn names that don't exist in upstream zsh C
 source).
 
-The 96-test invariant (`tests/tree_walker_absent.rs` +
+The tree-walker invariant tests (`tests/tree_walker_absent.rs` +
 `tests/no_tree_walker_dispatch.rs`) is load-bearing — add to
 those tests when you add a new state-mutation path; never
 weaken them.

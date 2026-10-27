@@ -12,23 +12,26 @@ identity.** Those globals must become `Arc<Mutex/RwLock<…>>`, not
 
 ---
 
-## Progress Summary (updated 2026-05-28)
+## Progress Summary (updated 2026-10-24, v0.13.56)
 
 | Phase | Total Items | Done | Remaining |
 |-------|-------------|------|-----------|
 | Phase 1 — Bucket-1 Mutex→TLS | 16 | 16 | 0 |
-| Phase 2 — Bag-of-globals structs | 20 | 20 | 0 |
+| Phase 2 — Bag-of-globals structs | 20 | 19 | 1 (`RefreshState` back in `src/ported/`) |
 | Phase 3 — Bucket-2 shared holders | 11 | 11 | 0 |
 | Phase 4 — Daemon image holders | 5 | 0 | 5 |
 | Phase 5 — Test invariants | 3 | 3 | 0 |
-| Phase 6 — ShellExecutor field dissolution | ~57 | ~20 | ~37 |
+| Phase 6 — ShellExecutor field dissolution | 61 at extraction (`a8353f17d4`) | 12 net | 49 (as of 2026-10-24, v0.13.56) |
 
-**Phase 2 remaining structs to dissolve:** none
+**Phase 2 remaining structs to dissolve:** `zle/zle_refresh.rs`
+`RefreshState` family and `zle/zle_hist.rs` `HistEntry`/`History`
+(relocation to `src/extensions/` reverted in `489ebe26f3`; see Phase 2).
 
-**Phase 6 in flight:** `pub struct ShellExecutor` relocated to
-`src/vm_helper.rs:338` (was `src/exec.rs:345`); current field count
-is 49 per `awk '/^pub struct ShellExecutor/,/^}/' src/vm_helper.rs |
-grep -cE '^\s*(pub )?[a-z_]+:'`. Each remaining field maps to a
+**Phase 6 in flight:** `pub struct ShellExecutor` lives in
+`src/vm_helper.rs` (was `src/exec.rs`, which no longer exists); field
+count is derived by `awk '/^pub struct ShellExecutor/,/^}/'
+src/vm_helper.rs | grep -cE '^\s*(pub )?[a-z_]+:'` (49 as of
+2026-10-24, v0.13.56). Each remaining field maps to a
 canonical zsh C global that callers should reach directly. Recent
 deletions (older→newer): `autoload_pending`, `options`, `cmd_stack`,
 `hook_functions`, `command_hash`, `named_dirs`, `readonly_vars`,
@@ -40,8 +43,8 @@ globals with no `struct executor` in C).
 
 **Phase 2 final-batch dissolutions (verified 2026-05-12):**
 - `init.rs` `ShellState` — verified absent via `grep -rn 'struct
-  ShellState' src/`. The init.c file-statics live directly at
-  `init.rs:13-113` as individual `static AtomicI32/AtomicUsize/
+  ShellState' src/`. The init.c file-statics live directly in
+  `init.rs` (`noexitct` … `use_exit_printed`) as individual `static AtomicI32/AtomicUsize/
   Mutex<...>` mirrors of `noexitct`, `zunderscore`, `underscorelen`,
   `underscoreused`, `sourcelevel`, `SHTTY`, `shout`, `tcstr`,
   `tclen`, `tclines`, `tccolumns`, `hasam`, `hasxn`, `tccolours`,
@@ -49,17 +52,17 @@ globals with no `struct executor` in C).
   `compctlreadptr`, `use_exit_printed`. No aggregator struct.
 - `subst.rs` `SubstState` — verified absent via grep.
 - `modules/parameter.rs` `JobState` — verified absent via grep.
-  (The `JobState` enum at `src/exec_jobs.rs:101` is a separate type
+  (The `JobState` enum in `src/exec_jobs.rs` is a separate type
   modeling job lifecycle states Running/Stopped/Done — not the
   bag-of-globals JobState the plan called out.)
-- `glob.rs` `GlobState` — renamed to `GlobData` at `glob.rs:402`,
-  port of `Src/glob.c:168 struct globdata`. Field parity is
-  partial-but-documented: `gd_matchsz`/`gd_matchct`/`gd_matchbuf`/
-  `gd_matchptr` collapse into `matches: Vec<GlobMatch>` (Rust-idiom
-  ownership); `gd_gf_*` flags fold into `GlobOptions` (carried at
-  function-call sites rather than on the struct). Doc-comment at
-  `glob.rs:392-400` explicitly notes the collapses; rename leaves
-  trace-to-C obvious.
+- `glob.rs` `GlobState` — now `glob.rs` `globdata` (the interim
+  `GlobData` name was dissolved in `ac53b7b696`), port of
+  `Src/glob.c:168 struct globdata`. Field parity is partial:
+  `gd_matchsz`/`gd_matchbuf`/`gd_matchptr` collapse into
+  `matches: Vec<gmatch>`; `matchct`, `pathbuf`/`pathpos`/`pathbufsz`/
+  `pathbufcwd`, `gf_nullglob`/`gf_markdirs`/`gf_noglobdots`/
+  `gf_listtypes`/`gf_pre_words`/`gf_post_words` are fields. The
+  doc-comment above `globdata` notes the collapses.
 
 **Phase 2 landed since previous update:**
 - `zle/zle_tricky.rs` `CompletionState` — deleted; the eight
@@ -76,52 +79,52 @@ globals with no `struct executor` in C).
 
 - `expandorcomplete` (the default `^I` binding per `EMACSBIND[9]`
   / `VIINSBIND[9]` mirroring `zle_bindings.c:97,265`) → `docomplete(
-  COMP_EXPAND_COMPLETE)` → real 3-way switch on `lst` at
-  `zle_tricky.rs:497-535` mirroring C `zle_tricky.c:817-870`:
+  COMP_EXPAND_COMPLETE)` → real 3-way switch on `lst` in
+  `zle_tricky.rs::docomplete` mirroring C `zle_tricky.c:817-870`:
   `COMP_SPELL` → `spckword` path, `COMP_ISEXPAND` → `doexpansion`
   with `COMP_EXPAND_COMPLETE` fall-through to `docompletion`, else
   → `docompletion`. Earlier versions short-circuited the entire
   dispatch to `do_completion`, leaving `doexpansion` unreachable.
 - `doexpansion(s, lst, olst, explincmd)` and `docompletion(s, lst,
   incmd)` are now real ports (was 1-arg / 0-arg stubs).
-- `lincmd` is now a real file-scope `AtomicI32` at
-  `zle_tricky.rs:LINCMD` (mirrors C `c:139`), set by
-  `get_comp_string` via a command-position heuristic
-  (start-of-line or first word after `;`/`\n`/`&`/`|`/`(`/`{`)
-  pending the full lexer-driven `incmdpos` substrate. Threaded
-  through `docomplete` → `compldat.incmd` per C `c:805`.
+- `lincmd` is a file-scope `AtomicI32` `zle_tricky.rs` `LINCMD`
+  (mirrors C `c:139`), set by `get_comp_string` from the lexer's
+  `incmdpos()` per C `c:1160` and the `c:1198-1202` command-position
+  expression (`inredir()`/`incmdpos()`/`incond()`), landed in
+  `d54efb42be`. Threaded through `docomplete` → `compldat.incmd`
+  per C `c:805`.
 - All six C COMPLETEHOOK Hookfns from `complete.c:1762-1767` are
-  registered via `(Hookdef, void*) -> i32` thunks in
-  `complete.rs:boot_`: `complete` → `do_completion`,
+  registered in `complete.rs::boot_`: `complete` → `do_completion`,
   `before_complete` → `before_complete`, `after_complete` →
   `after_complete`, `list_matches` → `list_matches`,
-  `invalidate_list` → `invalidate_list`. Only
-  `accept_completion` → `accept_last` remains unregistered (its
-  multi-arg sig has no compldat-style C payload struct; called
-  directly from `compresult.rs` for now). User-installed
-  `complete` Hookfns now fire correctly.
-- `zle/zle_keymap.rs` `BindState` — deleted; the C `struct bindstate`
-  is only used as a stack-local in `printbinding()` /
-  `scanbindings()` / `bin_bindkey -L`. Those ports model it as a
-  local struct when they land.
-- `zle/zle_refresh.rs` `RefreshState` — relocated to
-  `src/extensions/zle_refresh_state.rs` alongside `TextAttr`,
-  `RefreshElement`, `VideoBuffer`, `RegionHighlight`,
-  `HighlightCategory`, `HighlightManager`. Full unification with
-  C's flat `zattr u64` + `nbuf[]`/`obuf[]` arrays + discrete
-  `winw`/`winh`/`vcs`/`vln`/`lpromptw`/`rpromptw` statics is a
-  separate work item — entangled in the zrefresh paint loop with
-  ~100+ internal sites in zle_refresh.rs to rewire.
+  `invalidate_list` → `invalidate_list` via `(Hookdef, void*) -> i32`
+  thunks, and `accept_completion` → `accept_last` via a `transmute`
+  of `fn() -> i32` to `Hookfn`, mirroring C's `(Hookfn) accept_last`
+  cast (`8530797a0f`). User-installed `complete` Hookfns fire.
+- `zle/zle_keymap.rs` `BindState` — fake deleted (`d20c5a14bd`); the
+  C-faithful `struct bindstate` (`Src/Zle/zle_keymap.c:95-104`) is
+  ported as `zle_keymap.rs` `bindstate` and used by `scanbindlist` /
+  `bindlistout`.
+- `zle/zle_refresh.rs` `RefreshState` — **NOT relocated.** It was moved
+  to `src/extensions/zle_refresh_state.rs` in `cc2b57d31d`, then moved
+  back in `489ebe26f3`; `RefreshState`, `TextAttr`, `VideoBuffer`,
+  `HighlightManager` live in `src/ported/zle/zle_refresh.rs` again.
+  The C-faithful `rparams` (`Src/Zle/zle_refresh.c:815`) is also in
+  `zle_refresh.rs`. Full unification with C's flat `zattr u64` +
+  `nbuf[]`/`obuf[]` arrays + discrete `winw`/`winh`/`vcs`/`vln`/
+  `lpromptw`/`rpromptw` statics is a separate work item, entangled
+  in the zrefresh paint loop.
 - `zle/computil.rs` `CompState` — relocated; the bash-complete
   branch (`CompSpec`/`CompMatch`/`CompGroup`/`CompState`) moved
   to `src/extensions/bash_complete.rs`.
 
 **Adjacent zle cascades landed (not in original Phase 2 list):**
 
-- `zle/zle_keymap.rs` `KeymapManager` — all six fields dropped
-  (`keymaps`/`current`/`current_name`/`local`/`keybuf`/`lastnamed`).
-  The struct is now zero-sized; method bodies route through the
-  file-scope statics that already mirror zsh's C globals
+- `zle/zle_keymap.rs` `KeymapManager` — deleted entirely
+  (`79c34d3e66`: unit struct and its 32-method impl → 3 free fns).
+  Its six fields (`keymaps`/`current`/`current_name`/`local`/`keybuf`/
+  `lastnamed`) were dropped first; callers route through the
+  file-scope statics that mirror zsh's C globals
   (`keymapnamtab`, `curkeymap`, `curkeymapname`, `LOCALKEYMAP`,
   `keybuf`, `lastnamed`). `selectkeymap()` now actually writes
   `curkeymap` + `curkeymapname` (was a no-op stub matching the
@@ -130,28 +133,33 @@ globals with no `struct executor` in C).
   method-call sites (`.select(X)`, `.is_emacs()`, `.is_vi_cmd()`,
   `.is_vi_insert()`, `.lookup_key(c)`) inlined to direct static
   reads / `selectkeymap()` calls.
-- `zle/zle_hist.rs` `HistEntry`/`History` — relocated to
-  `src/extensions/zle_history.rs` (Rust-only types; zsh's per-ZLE
-  history state lives in scattered file-statics — `hist_ring`,
-  `histline`, `searchstr`, `have_edits`, `hist_skip_flags`). Full
-  unification with `crate::ported::hist::hist_ring` deferred.
+- `zle/zle_hist.rs` `HistEntry`/`History` — **NOT relocated.** Moved
+  to `src/extensions/zle_history.rs` in `6afa290d90`, then moved back
+  in `489ebe26f3`; both Rust-only types live in
+  `src/ported/zle/zle_hist.rs` again (zsh's per-ZLE history state
+  lives in scattered file-statics — `hist_ring`, `histline`,
+  `searchstr`, `have_edits`, `hist_skip_flags`). Full unification
+  with `crate::ported::hist::hist_ring` deferred.
 
-**Zle struct cascade — COMPLETE (2026-05-12, 6 commits):**
+**Zle struct cascade — COMPLETE (2026-05-12, 5 commits):**
 
 The field-bearing `pub struct Zle { ~50 fields }` is fully dissolved.
 All fields migrated to file-scope statics matching the C source's
 file-`static`s (bucket 1 per the rule above). Methods hoisted to
 free fns. `pub struct Zle;` unit marker and `impl Default for Zle`
 deleted. `Zle::new()` replaced with free `zle_reset()`. All 556 zle
-tests pass under both serial and parallel cargo test.
+tests passed under both serial and parallel cargo test (2026-05-12).
+
+Hashes below are the post-rewrite commits on `main`; the original
+hashes recorded here no longer resolve.
 
 | Phase | Commit | What landed |
 |---|---|---|
-| Field migration | `6c2707de7c` | 50 statics added, ~4,100 call sites rewritten |
-| Method hoist | `20125871ea` | 213 impl-Zle methods → free fns; 42 duplicates deduped |
-| Test compile | `f63f23717c` | restored real bodies for uplineorhistory/downlineorhistory |
-| Unit-marker delete | `c1da1e0bd1` | `pub struct Zle;` + `impl Default` + `Zle::new()` (193 callers) |
-| Test serialise + OOB fix | `c5d59d305d` | `zle_test_setup()` helper, 19 OOB loop reorders, vi_yank_whole_line N-line fix |
+| Field migration | `800523595d` | 50 statics added, ~4,100 call sites rewritten |
+| Method hoist | `cf7c9ca8dc` | 213 impl-Zle methods → free fns; 42 duplicates deduped |
+| Test compile | `3a3359624f` | restored real bodies for uplineorhistory/downlineorhistory |
+| Unit-marker delete | `32433a1a4a` | `pub struct Zle;` + `impl Default` + `Zle::new()` (193 callers) |
+| Test serialise + OOB fix | `5ef5bc1559` | `zle_test_setup()` helper, 19 OOB loop reorders, vi_yank_whole_line N-line fix |
 
 The full static list (all 50 + the 16 already-migrated): `ZLELINE`,
 `ZLECS`, `ZLELL`, `MARK`, `LBINDK`, `BINDK`, `ZMOD`, `STATUSLINE`,
@@ -177,23 +185,18 @@ touching tests. No new external dep (no `serial_test` crate). Both
 helpers allowlisted with WARNING-form rationale (C is single-
 threaded, no C counterpart).
 
-**compctl.rs Mutex count (verified 2026-05-12):** 35 `Mutex<...>` usages
-in `src/ported/zle/compctl.rs` (down from 37). 18 listed in the
-bucket-1 conversion table are now `thread_local!` per Phase 1; the
-remaining 35 cover bucket-2 holders (CMATCHER/COMPCTL_TAB/PATCOMPS) +
-several per-evaluator statics that haven't been re-classified yet
-(ZLEMETALL, ZLEMETALINE, NOERRS, NOALIASES, INSTRING, INBACKT, AUTOQ,
-COMPQSTACK, QIPRE, QISUF, etc.). Re-classification is bucket-by-
-bucket follow-up work, not blocking.
-
-**Outstanding build break (pre-existing, not from Phase 1–6):** the
-`clean lex` commit `674fc48d19` left `src/ported/lex.rs` with an
-unclosed delimiter (rustc reports `error: this file contains an
-unclosed delimiter` at line 4610, pointing at `fn dquote_parse` at
-line 3096). Build also fails the drift gate: `parsestr_inner` at
-`lex.rs:3895` has no C counterpart per `tests/data/fake_fn_allowlist
-.txt`. Both must be fixed before `cargo build --lib` will succeed.
-Neither is a Phase 1–6 regression — the file shipped broken.
+**compctl.rs Mutex holders:** count with
+`rg -c '^\s*(pub(\(crate\))? )?static \w+: (std::sync::)?Mutex<'
+src/ported/zle/compctl.rs` (20 as of 2026-10-24, v0.13.56). The
+bucket-1 statics in the Phase 1 table are `thread_local!` (or were
+deduped into other files — see Phase 1); bucket-2 `CMATCHER`/
+`COMPCTL_TAB`/`PATCOMPS` are `RwLock`. The `Mutex` statics still in
+compctl.rs — `COMPQIPREFIX`, `COMPQISUFFIX`, `COMPISUFFIX`, `ISUF`,
+`CLWORDS`, `CLWSIZE`, `CLWNUM`, `CLWPOS`, `BRANGE`, `ERANGE`,
+`LINWHAT`, `LINREDIR`, `INSUBSCR`, `CC_COMPOS`/`CC_DEFAULT`/
+`CC_FIRST`/`CC_DUMMY`, `LASTCCUSED`, `COMPCTLREAD_INSTALLED` — have
+not been re-classified yet. Re-classification is bucket-by-bucket
+follow-up work, not blocking.
 
 ---
 
@@ -207,8 +210,8 @@ checklist below stays within them:
 |---|---|
 | `src/ported/` is FROZEN — no new files | All work modifies existing files in the 106-file set. |
 | No new `fn` names not in `docs/zsh_c_functions.txt` | All work modifies state holders (`static …` declarations); no new `fn` introduced. |
-| Rule 2: every `fn` must carry `/// Port of … from Src/…:NNNN` | All converted holders keep their existing `/// Port of file-static <c_name> from Src/<file>.c:<NNNN>` doc-comment (already present at e.g. `zle/compctl.rs:212-213, 220-221`). Same form applies to converted statics. |
-| Rule 1: no abstractions without C counterpart | "Bag-of-globals" structs that aggregate file-`static`s with no matching C struct (e.g. former `MathState` at `math.rs:539`, deleted at `math.rs:599`) are explicit anti-pattern below. |
+| Rule 2: every `fn` must carry `/// Port of … from Src/…:NNNN` | All converted holders keep their existing `/// Port of file-static <c_name> from Src/<file>.c:<NNNN>` doc-comment (already present at e.g. `zle/compctl.rs` `CMATCHER`, `COMPCTL_TAB`). Same form applies to converted statics. |
+| Rule 1: no abstractions without C counterpart | "Bag-of-globals" structs that aggregate file-`static`s with no matching C struct (e.g. former `MathState` in `math.rs`, see the "MathState struct DELETED" comment there) are explicit anti-pattern below. |
 | Globals: "Mirror as static mut / Mutex<...> / thread-locals as needed for parity" | This document is the parity rubric — when each is correct vs wrong. |
 | Workflow step 8: refresh `docs/port_report.html` | Each phase ends with `python3 scripts/gen_port_report.py` and `python3 scripts/match_or_warn_modules.py`. |
 
@@ -370,13 +373,13 @@ majority of `src/ported/`:
 
 | Area | C source | Rust port |
 |---|---|---|
-| math eval | `Src/math.c` (file-statics) | `math.rs:334` thread_local set |
-| input stack | `Src/input.c` | `input.rs:607` thread_local |
-| heap arena | `Src/mem.c` | `mem.rs:111` thread_local |
-| exec context | `Src/exec.c` | `context.rs:159` thread_local |
-| history build cursor | `Src/hist.c chline` | `hist.rs:2624` thread_local |
-| ZLE keymap state | `Src/zle_main.c` | `keymaps.rs:466` thread_local |
-| fusevm bridge | (extension) | `fusevm_bridge.rs:45` thread_local |
+| math eval | `Src/math.c` (file-statics) | `math.rs` `M_*` thread_local set |
+| input stack | `Src/input.c` | `input.rs` thread_local (`SHIN`, …) |
+| heap arena | `Src/mem.c` | `mem.rs` thread_local |
+| exec context | `Src/context.c` | `context.rs` per-thread leaked `Mutex` slot (thread_local) |
+| history build cursor | `Src/hist.c chline`/`chwords` | `hist.rs` `chline`/`chwords` — shared static `Mutex`, not thread_local |
+| ZLE keymap state | `Src/Zle/zle_keymap.c` | `zle/zle_keymap.rs` file-scope `Mutex`/`OnceLock` statics (`curkeymap`, `KEYMAPNAMTAB`), not thread_local |
+| fusevm bridge | (extension) | `fusevm_bridge.rs` thread_local |
 | parser/lex/glob compile | `Src/parse.c`, `Src/lex.c`, `Src/glob.c` | TLS where ported |
 | jobs operations | `Src/jobs.c` helpers | `jobs.rs` `&mut [Job]` parameter (bucket 3) |
 
@@ -405,49 +408,51 @@ site to C source remains obvious.
 
 | C state | Rust file | Holder primitive | Status |
 |---|---|---|---|
-| `paramtab` | `params.rs` | needed: `Arc<RwLock<HashMap<…>>>` | stub fns only — `params.rs:7164,7169,7189,7404` |
-| `jobtab` | `jobs.rs` | currently `&mut [Job]` parameter | thread-safe by parameter; promote to `Arc<Mutex<JobTable>>` when daemon owns jobs |
-| `cmdnamtab`, `shfunctab`, `aliastab`, `reswdtab` | `hashtable.rs` | needed: `Arc<RwLock<…>>` each | stub fns — `hashtable.rs:1340,1361,1409,1414` |
-| `histlist` | `hist.rs` | needed: shared list; `chline`/`chwords` already `Mutex` | partial — `hist.rs:1692,1698` correct for cursors, histlist itself TBD |
-| `opts[]` | `options.rs` | needed: `Arc<RwLock<[u8; OPT_SIZE]>>` if threads `setopt` | not surveyed |
-| `sigtrapped`, `traps` | `signals.rs` | `OnceLock<TrapHandler>` | correct — `signals.rs:412` |
-| builtin table | `builtin.rs` | `OnceLock<HashMap>` | correct — `builtin.rs:292` |
+| `paramtab` | `params.rs` `PARAMTAB_INNER` (accessor `paramtab()`) | `OnceLock<RwLock<hashtable_nodes<Param>>>` | done (Phase 3) |
+| `jobtab` | `jobs.rs` `JOBTAB` | `OnceLock<Mutex<Vec<job>>>`; helpers such as `update_job`/`freejob` still take `&mut [job]` | holder done (Phase 3); call-site migration deferred |
+| `cmdnamtab`, `shfunctab`, `aliastab`, `sufaliastab`, `reswdtab`, `histtab` | `hashtable.rs` `cmdnamtab_lock()`/`shfunctab_lock()`/`aliastab_lock()`/`sufaliastab_lock()`/`reswdtab_lock()`/`histtab_lock()` | `OnceLock<RwLock<…>>` each | done (Phase 3) |
+| `hist_ring` (histlist) | `hist.rs` `hist_ring` | `Mutex<Vec<histent>>`; `chline`/`chwords` also `Mutex` | done (Phase 3) |
+| `opts[]` | `options.rs` `OPTS_LIVE` | `OnceLock<RwLock<opt_state_store>>` (`flat: [i8; OPT_SIZE]` + `extra` map) | done (Phase 3) |
+| `sigtrapped`, `siglists` | `signals.rs` `sigtrapped`/`siglists` | `LazyLock<Mutex<Vec<…>>>` | shared static; correct for bucket 2 |
+| builtin table | `builtin.rs` `builtintab` | `OnceLock<HashMap<String, &'static builtin>>` | correct |
 
 ---
 
-## Current Mismatches — Bucket 1 State Stored as `Mutex`
+## Historical — Bucket 1 State Stored as `Mutex` (resolved in Phase 1)
 
-These sites currently use `static Mutex<…>` for state that is
-logically per-evaluator (bucket 1). The Mutex is correct under
-single-threaded execution but (a) needlessly serializes worker
-threads doing parallel parse/completion work, and (b) drifts from
-the C semantics — these were file-`static`s in C, not lock-protected
-shared state. Convert to `thread_local!`.
+These sites used `static Mutex<…>` for state that is logically
+per-evaluator (bucket 1). The Mutex was correct under single-threaded
+execution but (a) needlessly serialized worker threads doing parallel
+parse/completion work, and (b) drifted from the C semantics — these
+were file-`static`s in C, not lock-protected shared state. All are
+resolved; current holders below.
 
-| File:line | Symbol | Bucket-1 reason |
+| Symbol | Bucket-1 reason | Resolution |
 |---|---|---|
-| `prompt.rs:1883` | `CMDSTACK` | per-evaluator parser context (case/if/for nesting) |
-| `pattern.rs:1229` | `PATTERN_SCOPES` | per-pattern-compile scope stack |
-| `zle/compctl.rs:214` | `CMATCHER` | per-completion-invocation matcher |
-| `zle/compctl.rs:218` | `COMPCTL_TAB` | per-completion compctl set |
-| `zle/compctl.rs:222` | `PATCOMPS` | per-completion pattern compls |
-| `zle/compctl.rs:226` | `CCLIST` | per-completion result list mode |
-| `zle/compctl.rs:230` | `SHOWMASK` | per-completion show mask |
-| `zle/compctl.rs:1272` | `INCOMPFUNC` | per-completion in-function flag |
-| `zle/compctl.rs:1349` | `INCOMPCTLFUNC` | per-completion in-compctl flag |
-| `zle/compctl.rs:1423` | `ADDWHAT` | per-completion add-what flag |
-| `zle/compctl.rs:1428` | `MATCH_LIST` | per-completion match buffer |
-| `zle/compctl.rs:1698` | `PRPRE` | per-completion prefix-prefix |
-| `zle/compctl.rs:1715` | `CDEPTH` | per-completion recursion depth |
-| `zle/compctl.rs:1725` | `CCONT` | per-completion continuation flag |
-| `zle/compctl.rs:1867` | `CMDSTR` | per-completion command string |
-| `zle/compctl.rs:1921` | `CCUSED` | per-completion used set |
-| `zle/compctl.rs:1990` | `WE` | per-completion word-end |
-| `zle/compctl.rs:1991` | `WB` | per-completion word-begin |
-| `zle/compctl.rs:1994` | `ZLEMETACS` | per-completion meta cursor |
+| `prompt.rs` `CMDSTACK` | per-evaluator parser context (case/if/for nesting) | `thread_local!` |
+| `pattern.rs` `PATTERN_SCOPES` | per-pattern-compile scope stack | replaced by `thread_local!` `PATSCOPE_STACK` |
+| `zle/compctl.rs` `CMATCHER` | (reclassified) | bucket 2, `RwLock` |
+| `zle/compctl.rs` `COMPCTL_TAB` | (reclassified) | bucket 2, `RwLock` |
+| `zle/compctl.rs` `PATCOMPS` | (reclassified) | bucket 2, `RwLock` |
+| `zle/compctl.rs` `CCLIST` | per-completion result list mode | `thread_local!` |
+| `zle/compctl.rs` `SHOWMASK` | per-completion show mask | `thread_local!` |
+| `INCOMPFUNC` | per-completion in-function flag | unified `utils.rs` `INCOMPFUNC` `AtomicI32` |
+| `zle/compctl.rs` `INCOMPCTLFUNC` | per-completion in-compctl flag | `thread_local!` |
+| `zle/compctl.rs` `ADDWHAT` | per-completion add-what flag | `thread_local!` |
+| `zle/compctl.rs` `MATCH_LIST` | per-completion match buffer | `thread_local!` |
+| `zle/compctl.rs` `PRPRE` | per-completion prefix-prefix | `thread_local!` |
+| `zle/compctl.rs` `CDEPTH` | per-completion recursion depth | `thread_local!` |
+| `zle/compctl.rs` `CCONT` | per-completion continuation flag | `thread_local!` |
+| `zle/compctl.rs` `CMDSTR` | per-completion command string | `thread_local!` |
+| `zle/compctl.rs` `CCUSED` | per-completion used set | `thread_local!` |
+| `WE` | per-completion word-end | deduped to `zle/compcore.rs` `WE` `AtomicI32` |
+| `WB` | per-completion word-begin | deduped to `zle/compcore.rs` `WB` `AtomicI32` |
+| `ZLEMETACS` | per-completion meta cursor | deduped to `zle/compcore.rs` `ZLEMETACS` `AtomicI32` |
 
-18 conversion sites. None of these are read by other threads in C;
-all are file-`static`s in `Src/zle_compctl.c` etc.
+19 sites: 16 converted in Phase 1, 3 reclassified to bucket 2.
+`WE`/`WB`/`ZLEMETACS` were later deduped (`530e9e481f`) into the
+`compcore.rs` `AtomicI32` statics (C lex.c globals), and `INCOMPFUNC`
+was unified in `93d0d33b23`.
 
 ---
 
@@ -484,15 +489,21 @@ Required fields:
   Vague justifications ("cleaner API", "idiomatic") are rejected
   on review and the helper is deleted.
 
-### Canonical example (`math.rs`)
+### Canonical example (`math.rs::save_state`)
+
+`math.rs` uses the `// !!! WARNING: RUST-ONLY HELPER !!!` header variant
+of this marker; both header forms occur in `src/ported/` (count with
+`rg -c 'WARNING: RUST-ONLY HELPER' src/ported` and
+`rg -c '// WARNING: NOT IN [A-Z_]+\.C' src/ported`).
 
 ```rust
-// WARNING: NOT IN MATH.C — Rust-only helper. C inlines the
+// !!! WARNING: RUST-ONLY HELPER !!! — no counterpart in Src/math.c.
+// Rust-only helper. C inlines the
 // xyy* save/restore directly inside `mathevall()`'s body
 // (math.c:367 onward); the Rust port factors it out because two
 // callsites (callmathfunc arg parsing, getmathparam indirect-string
 // eval) would each duplicate ~17 lines of save/restore code.
-pub(crate) fn extract_string_variables() -> HashMap<String, String> {
+fn save_state() -> xyy_locals {
     ...
 }
 ```
@@ -501,9 +512,11 @@ pub(crate) fn extract_string_variables() -> HashMap<String, String> {
 
 PORT.md prescribes `/// WARNING: THIS IS ADHOC IMPLEMENTATION AND
 NOT A FAITHFUL PORT` for fns the adhoc detector flags as having no
-C counterpart at all (e.g. `modules/termcap.rs:67,92,218,231,244`).
-That marker means *"this whole fn is unported placeholder code,
-delete or port me."*
+C counterpart at all. That marker means *"this whole fn is unported
+placeholder code, delete or port me."* No `src/` fn carries it as of
+2026-10-24 (v0.13.56): `rg -n 'THIS IS ADHOC' src/` matches only the
+prohibition in `src/ported/mod.rs`, and `modules/termcap.rs` carries
+only `// WARNING: NOT IN TERMCAP.C` markers.
 
 The shorter `// WARNING: NOT IN <FILE>.C` marker means
 *"deliberate, justified Rust-only helper, do not delete."* Use the
@@ -515,7 +528,7 @@ long form when the fn is a stub waiting for a real port. They are
 
 ```sh
 # List all ported under src/ported/ whose name is NOT in C:
-rg -nE '^\s*(pub\s+)?(pub\(crate\)\s+)?fn\s+(\w+)' src/ported/ \
+rg -n '^\s*(pub\s+)?(pub\(crate\)\s+)?fn\s+(\w+)' src/ported/ \
   | awk -F'fn ' '{print $2}' | awk '{print $1}' | tr -d '(' \
   | sort -u > /tmp/rust_fns.txt
 comm -23 /tmp/rust_fns.txt docs/zsh_c_functions.txt \
@@ -538,16 +551,16 @@ duplicates the corresponding TLS set.
 
 **Rule:** if C declares N file-`static`s, Rust declares N
 `thread_local!` entries. No aggregation struct unless C has a
-`struct foo` to point at. `math.rs:599` ("MathState struct
-DELETED") is the reference for how to undo this anti-pattern when
+`struct foo` to point at. The `math.rs` "MathState struct
+DELETED" comment is the reference for how to undo this anti-pattern when
 it appears.
 
 ### 2. `Mutex` for per-evaluator state
 
 Using `Mutex` because "it works" under single-threaded test runs.
 Once worker threads run in parallel, every parser/completion
-invocation contends on the same lock. The 18 sites above are this
-anti-pattern.
+invocation contends on the same lock. The 19 historical sites above
+were this anti-pattern (all resolved).
 
 **Rule:** if the C source has it as a file-`static`, the Rust port
 has it as `thread_local!`. `Mutex` is reserved for bucket 2.
@@ -591,11 +604,11 @@ is committed and `cargo build` is green.
 ### Phase 1 — Mechanical bucket-1 fixes (no semantic change)
 
 Convert `static Mutex<…>` to `thread_local!` for state that is
-per-evaluator in C. Each line includes the file:line of the current
-Mutex declaration plus the C source citation. Each converted holder
+per-evaluator in C. Each line names the Rust holder plus the C source
+citation. Each converted holder
 **must keep** its `/// Port of file-static <c_name> from
 Src/<file>.c:<NNNN>` doc-comment per PORT.md Rule 2 (the citation
-form already in place — see e.g. `zle/compctl.rs:212-213`).
+form already in place — see e.g. `zle/compctl.rs` `CMATCHER`).
 
 PORT.md compliance: no new files, no new `fn` names. Only the
 *holder primitive* changes (`Mutex` → `thread_local!`). Keep the
@@ -604,61 +617,62 @@ SCREAMING_SNAKE name verbatim from the C identifier.
 **Verified bucket-1 (file-`static` in C, per-completion-call /
 per-evaluator):**
 
-- [x] `prompt.rs:2010` `CMDSTACK` ← `Src/init.c:53` `cmdstack` (parser
+- [x] `prompt.rs` `CMDSTACK` ← `Src/prompt.c:56` `cmdstack` (parser
       context stack) — `thread_local! RefCell<Vec<u8>>`
-- [x] `pattern.rs:1734` `PATSCOPE_STACK` ← `Src/pattern.c:4244`
+- [x] `pattern.rs` `PATSCOPE_STACK` ← `Src/pattern.c:274`
       `zpc_disables_stack` per-evaluator function-scope disable
-      save-stack — `thread_local! RefCell<Vec<Vec<String>>>`
-- [x] `zle/compctl.rs:106` `CCLIST` ← `Src/Zle/compctl.c:63`
+      save-stack — `thread_local! RefCell<Vec<u32>>`
+- [x] `zle/compctl.rs` `CCLIST` ← `Src/Zle/compctl.c:63`
       `static int cclist` — `thread_local! Cell<i32>`
-- [x] `zle/compctl.rs:113` `SHOWMASK` ← `Src/Zle/compctl.c:66`
+- [x] `zle/compctl.rs` `SHOWMASK` ← `Src/Zle/compctl.c:66`
       `static unsigned long showmask` — `thread_local! Cell<u64>`
-- [x] `zle/compctl.rs:1218` `INCOMPFUNC` ← `Src/Zle/zle_main.c:54`
-      `mod_export int incompfunc` — `thread_local! Cell<i32>` (note:
-      3-way fragmented across utils.rs/complete.rs/compctl.rs;
-      unification tracked separately)
-- [x] `zle/compctl.rs:1302` `INCOMPCTLFUNC` ← `Src/Zle/zle_main.c:54`
+- [x] `INCOMPFUNC` ← `Src/utils.c:46`
+      `mod_export int incompfunc` — converted to `thread_local!
+      Cell<i32>` in Phase 1; since unified as the single `utils.rs`
+      `INCOMPFUNC` `AtomicI32` (`93d0d33b23`), `complete.rs`
+      re-exports it
+- [x] `zle/compctl.rs` `INCOMPCTLFUNC` ← `Src/Zle/zle_main.c:54`
       `mod_export int incompctlfunc` — `thread_local! Cell<bool>`
       (converted from `AtomicBool`)
-- [x] `zle/compctl.rs:1366` `ADDWHAT` ← `Src/Zle/compctl.c:1749`
+- [x] `zle/compctl.rs` `ADDWHAT` ← `Src/Zle/compctl.c:1749`
       `static int addwhat` — `thread_local! Cell<i32>`
-- [x] `zle/compctl.rs:1371` `MATCH_LIST` ← `Src/Zle/compctl.c`
+- [x] `zle/compctl.rs` `MATCH_LIST` ← `Src/Zle/compctl.c`
       per-call match heap — `thread_local! RefCell<Vec<String>>`
-- [x] `zle/compctl.rs:1623` `PRPRE` ← `Src/Zle/compctl.c` per-call
+- [x] `zle/compctl.rs` `PRPRE` ← `Src/Zle/compctl.c` per-call
       prefix-prefix — `thread_local! RefCell<Option<String>>`
-- [x] `zle/compctl.rs:1640` `CDEPTH` ← `Src/Zle/compctl.c` per-call
+- [x] `zle/compctl.rs` `CDEPTH` ← `Src/Zle/compctl.c` per-call
       depth — `thread_local! Cell<i32>`
-- [x] `zle/compctl.rs:1650` `CCONT` ← `Src/Zle/compctl.c` per-call
+- [x] `zle/compctl.rs` `CCONT` ← `Src/Zle/compctl.c` per-call
       continuation — `thread_local! Cell<u64>`
-- [x] `zle/compctl.rs:1791` `CMDSTR` ← `Src/Zle/compctl.c` per-call
+- [x] `zle/compctl.rs` `CMDSTR` ← `Src/Zle/compctl.c` per-call
       command string — `thread_local! RefCell<Option<String>>`
-- [x] `zle/compctl.rs:1871` `CCUSED` ← `Src/Zle/compctl.c` per-call
+- [x] `zle/compctl.rs` `CCUSED` ← `Src/Zle/compctl.c` per-call
       used set — `thread_local! RefCell<Vec<Arc<Compctl>>>`
-- [x] `zle/compctl.rs:1973` `WE` ← `Src/Zle/compctl.c` per-call
-      word-end — `thread_local! Cell<i32>`
-- [x] `zle/compctl.rs:1974` `WB` ← `Src/Zle/compctl.c` per-call
-      word-begin — `thread_local! Cell<i32>`
-- [x] `zle/compctl.rs:1977` `ZLEMETACS` ← `Src/Zle/compctl.c` per-
-      call meta cursor — `thread_local! Cell<i32>`
+- [x] `WE` ← per-call word-end — converted to `thread_local! Cell<i32>`
+      in Phase 1; since deduped (`530e9e481f`) into `zle/compcore.rs`
+      `WE` `AtomicI32` (C lex.c global)
+- [x] `WB` ← per-call word-begin — same; now `zle/compcore.rs` `WB`
+      `AtomicI32`
+- [x] `ZLEMETACS` ← per-call meta cursor — same; now
+      `zle/compcore.rs` `ZLEMETACS` `AtomicI32`
 
 **Reclassified to bucket 2 (do NOT move to TLS — they are user-
 registered shared registries, not per-call scratch). Verified
 against `Src/Zle/compctl.c`:**
 
-- `zle/compctl.rs:214` `CMATCHER` — `Src/Zle/compctl.c:36
+- `zle/compctl.rs` `CMATCHER` — `Src/Zle/compctl.c:36
   static Cmlist cmatcher`. *File-static, but written by `compctl
   -M` (line 326-327: `freecmlist(cmatcher); cmatcher = cpcmlist(l);`)
   and read by every completion call.* User-registered matcher
-  registry → bucket 2. Keep `Mutex` (or promote to `RwLock` for
-  parallel reads).
-- `zle/compctl.rs:218` `COMPCTL_TAB` — `Src/Zle/compctl.c:46
+  registry → bucket 2. Now `RwLock` (Phase 3).
+- `zle/compctl.rs` `COMPCTL_TAB` — `Src/Zle/compctl.c:46
   HashTable compctltab`. *No `static` — extern global declared in
   zle.h, populated by `compctl name args`, read by every
-  completion call.* User registry → bucket 2. Keep `Mutex`.
-- `zle/compctl.rs:222` `PATCOMPS` — `Src/Zle/compctl.c:51
+  completion call.* User registry → bucket 2. Now `RwLock` (Phase 3).
+- `zle/compctl.rs` `PATCOMPS` — `Src/Zle/compctl.c:51
   Patcomp patcomps`. *No `static` — extern global, list of
   pattern compctls registered via `compctl -p`.* User registry →
-  bucket 2. Keep `Mutex`.
+  bucket 2. Now `RwLock` (Phase 3).
 
 These three move to Phase 3 (bucket-2 holders) — promote to
 `Arc<RwLock<…>>` when paramtab/hashtables get the same treatment.
@@ -666,7 +680,8 @@ These three move to Phase 3 (bucket-2 holders) — promote to
 **End of Phase 1:**
 
 - [x] `python3 scripts/gen_port_report.py` — refreshed
-      `docs/port_report.html` (2026-05-13: 4,757 rows, 2,392 ported)
+      `docs/port_report.html` (2026-05-13: 4,757 rows, 2,392 ported —
+      historical)
 - [x] `python3 scripts/match_or_warn_modules.py` — zero new
       WARNINGs from Phase 1 edits (pre-existing uncommitted WARNINGs
       in unrelated files are not Phase 1 work)

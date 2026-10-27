@@ -8,11 +8,13 @@ every copy of the source and with every binary distribution.
 ## The Z Shell (zsh)
 
 **Derived material.** `src/ported/` is a function-by-function port of the zsh C
-source (`Src/*.c`, `Src/Zle/*.c`, `Src/Modules/*.c`, `Src/*.h`). Each ported
-item cites the C file and line it follows (`c:NNN`). The port keeps zsh's
-function names, structures, constants, control flow and many of its comments,
-so it is a derivative work of zsh and is distributed under zsh's licence in
-addition to the MIT grant on zshrs's own code.
+source (`Src/*.c`, `Src/Zle/*.c`, `Src/Modules/*.c`, `Src/*.h`), and
+`src/compsys/ported/**/*.rs` ports zsh's shell completion functions
+(`Completion/`). Each ported item cites the zsh source file it follows
+(C items also by line, `c:NNN`). The port keeps zsh's function names,
+structures, constants, control flow and many of its comments, so it is a
+derivative work of zsh and is distributed under zsh's licence in addition to
+the MIT grant on zshrs's own code.
 
 **Bundled material.** `vendor/zsh/` (shell functions, completion functions,
 help files, man pages, info pages) is zsh's own and is packed into the zshrs
@@ -58,15 +60,21 @@ carry such a header are:
 
 | File | Terms stated in the file |
 | --- | --- |
-| `_darcs` | GNU GPL, version 2 or (at your option) any later version |
 | `_zypper` | GPLv2 |
 | `_qdbus` | GPLv2 |
 | `_osc` | GPLv2 |
 
 These files are separate, independently licensed works that zshrs packs as
 data and does not link against. Their copyright holders are named in each
-file's header. A distributor who omits them loses only those four completions;
+file's header. A distributor who omits them loses only those three completions;
 none of the core functions are affected.
+
+The upstream completion sources kept beside their Rust ports under
+`src/compsys/ported/` are in the git source tree only: they are excluded from
+the published crate (`Cargo.toml` `exclude`) and are not packed into the
+binary. Besides copies of the three files above, they include `_darcs`
+(`src/compsys/ported/Unix/Command/_darcs`, GNU GPL version 2 or, at your
+option, any later version), which zshrs no longer bundles.
 
 ## fish-shell
 

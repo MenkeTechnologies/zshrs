@@ -1,6 +1,6 @@
 # zshrs roadmap — endgame shell
 
-**Status:** Phase F complete (tree-walker dispatch deleted, 96 hand-crafted tests pin "no tree walker" as load-bearing invariant). Phases G–O are the path from "no tree walker" to "v1.0 endgame shell, daily-driver replacement for zsh."
+**Status:** Phase F complete (tree-walker dispatch deleted; hand-crafted tests in `tests/no_tree_walker_dispatch.rs` and `tests/tree_walker_absent.rs` pin "no tree walker" as a load-bearing invariant). Phases G–O are the path from "no tree walker" to "v1.0 endgame shell, daily-driver replacement for zsh."
 
 **Audience:** the maintainer (one person, planning in decades). Every phase has discrete acceptance criteria. No phase is complete until its tests pass.
 
@@ -10,13 +10,13 @@
 
 These are the design constraints. Violations are bugs.
 
-1. **No tree walker, ever.** `execute_command` compiles to `fusevm::Chunk` and runs on `fusevm::VM`. The deleted dispatch tree (`execute_simple/pipeline/list/compound/command_bg`) does not return. `tests/tree_walker_absent.rs` enforces.
+1. **No tree walker, ever.** Every `ShellCommand` compiles to `fusevm::Chunk` (`src/extensions/compile_zsh.rs`) and runs on `fusevm::VM`. The deleted dispatch tree (`execute_simple/pipeline/list/compound/command_bg`) does not return. `tests/tree_walker_absent.rs` enforces.
 
 2. **Power-user defaults are non-negotiable.** No startup banner, no init-progress to terminal, no deprecation nags, no "did you mean," no safety prompts on destructive ops, no tip-of-the-day, no `--help`-hints in errors. Errors stay on stderr in `zshrs: <cmd>: <reason>` format. Informational chatter goes to `~/.zshrs/zshrs.log` via `tracing::*`. One-way ratchet — never reintroduce removed banners. **This is not fish.**
 
-3. **Every PR ships behavioral tests.** Pin exact stdout + exit. The 96 tests from Phase F are the floor; this plan adds 400+. No invariant, no merge.
+3. **Every PR ships behavioral tests.** Pin exact stdout + exit. The Phase F tests are the floor; this plan adds 400+. No invariant, no merge.
 
-4. **Compat with the maintainer's existing world is sacred.** zpwr (172k LOC), zsh-more-completions (27,387 files), the .zshrc, all zinit plugins — these continue working as zshrs evolves. Compat-floor regressions are catastrophic; ship none.
+4. **Compat with the maintainer's existing world is sacred.** zpwr (172k LOC), zsh-more-completions (47,394 completion files as of 2026-10-27, v0.13.56), the .zshrc, all zinit plugins — these continue working as zshrs evolves. Compat-floor regressions are catastrophic; ship none.
 
 5. **Plan in decades.** This is the endgame shell for a 30+ year horizon. Every architectural decision must survive that. Bytecode formats versioned. SQLite schemas migration-safe. Dependencies vendorable. MSRV pinned. No fashionable churn.
 
@@ -52,41 +52,41 @@ Critical path. Until G is done, zshrs cannot replace zsh on the maintainer's mac
 - **Effort:** 3 days.
 
 ### G2 — Autoload + fpath scan via sharded rkyv image cache + zcache builtins
-- Per `AOT_DESIGN.md` §0x13: daily-driver bytecode lives in `~/.zshrs/images/{hash8}-{slug}.rkyv` (one image per source root, hash-prefix collision-proof) with top-level `~/.zshrs/index.rkyv` for two-level lookup. Wire `fn autoload_function` (exec.rs:2907) to: hash fq_name → `index.rkyv` lookup → `(shard_id, generation, byte_offset)` → get-or-mmap the shard image (LRU shard-handle cache; munmap+remmap on generation mismatch) → typed pointer → JIT/interp the chunk in place. ~150-200ns end-to-end. No SQLite hit on the hot path.
+- Per `AOT_DESIGN.md` §0x13: daily-driver bytecode lives in `~/.zshrs/images/{hash8}-{slug}.rkyv` (one image per source root, hash-prefix collision-proof) with top-level `~/.zshrs/index.rkyv` for two-level lookup. Wire `loadautofn` (`src/ported/exec.rs:704`) to: hash fq_name → `index.rkyv` lookup → `(shard_id, generation, byte_offset)` → get-or-mmap the shard image (LRU shard-handle cache; munmap+remmap on generation mismatch) → typed pointer → JIT/interp the chunk in place. ~150-200ns end-to-end. No SQLite hit on the hot path.
 - **Source-truth fallback:** image miss / malformed shard / version mismatch / file missing / corruption → main thread silently falls through to source-interp path AND enqueues compile job. User never blocked. Source files are authoritative; image is opportunistic accelerator.
 - **Single cache directory** — everything (images, index, catalog, history, log) under `~/.zshrs/`. No XDG split. Full nuke = `rm -rf ~/.zshrs/` (user accepts loss); surgical resets via per-file `rm` or `zcache clean` builtin.
 - **Hard invariant: nothing blocks the shell.** All rkyv shard compilation, image writes, index rewrites, catalog hydration, SQLite VACUUM run in the worker pool. Main thread NEVER calls compile pass synchronously. All `zcache` write operations are async by default; `--wait` opts in to blocking.
-- **NO fsnotify** — user runs 60+ parallel zshrs (Cursor workflow); fsnotify per process = 60+ watchers thundering-herding every edit. Cache rebuild is **explicit-only** via `zcache rebuild [shard <name>]`, matching existing `zpwr regen` workflow.
-- **Per-shard flock** — `images/{name}.rkyv.lock` advisory lock coordinates concurrent rebuilds across the 60-shell environment. Workers without the lock log "rebuild already in progress" and skip.
+- **No fsnotify in clients** — user runs 60+ parallel zshrs (Cursor workflow); fsnotify per process = 60+ watchers thundering-herding every edit. fsnotify lives in the daemon only (`daemon/fsnotify.rs`); clients run no watchers. State indexing is done by `zshrs-recorder` (`docs/RECORDER.md`); the `zcache rebuild` verb was removed.
+- **Per-shard flock** — `images/{hash8}-{slug}.rkyv.lock` advisory lock (`daemon/shard.rs::lock_shard`), held blocking-exclusive across serialize + `rename`, so concurrent writers of one shard serialize instead of last-rename-wins.
 - **Strict shard-rename-then-index-update ordering** — atomic-rename `{name}.rkyv.tmp.{pid}.{tid}` → `{name}.rkyv` FIRST, then rewrite `index.rkyv`. Reverse order would let main read new-index → deref into OLD mmap → corrupt reads. Generation counter on each shard header drives main's munmap+remmap on stale handles.
-- **Worker pool partitioned** — general pool (high-priority, `nproc - 1` threads) for user pipelines; cache pool (low-priority, 1-2 threads, yields between work units) for `zcache` jobs. Prevents `zcache rebuild` from starving `xargs -P 16` and vice versa.
+- **Worker pool partitioned** — general pool (high-priority, `nproc - 1` threads) for user pipelines; cache pool (low-priority, 1-2 threads, yields between work units) for `zcache` jobs. Prevents shard rebuilds from starving `xargs -P 16` and vice versa.
 - **Cross-shard JIT inlining DISABLED in v1** — inlining a callee from another shard creates stale-on-rebuild dependency. Cross-shard calls go through index lookup every time. Revisit only if benchmarked as hot.
 - **Orphaned `.tmp.{pid}.{tid}` cleanup at startup** — worker job scans `images/` for `.tmp.*` files older than 1 minute and unlinks. Surfaced in `zcache verify`.
-- **Log rotation built-in** — `zshrs.log` capped at 10 MB; rotates to `zshrs.log.1`. Configurable via `ZSHRS_LOG_MAX_SIZE` / `ZSHRS_LOG_MAX_FILES`.
+- **Log rotation built-in** — each log (`zshrs.log`, `zshrs-daemon.log`, `zshrs-recorder.log`) capped at 10 MB; rotates to `.1`. Configurable via `ZSHRS_LOG_MAX_BYTES` / `ZSHRS_LOG_MAX_ROTATIONS`.
 - **Personality vs emulation scope** — personality mode (POSIX / vanilla zsh / turbocharged) is process-lifetime immutable; controls cache activation. `emulate -L` is per-function parser-flag scope only — fully supported, doesn't tear down cache. Two separate code paths.
 - **POSIX mode gates entire layer off** — no `~/.zshrs/` created, no catalog open, no `zcache` builtins available, no worker cache jobs. Single `if !exec.posix_mode` check at each entry point.
-- Worker pool hydrates `~/.zshrs/catalog.db` per-shard (`DELETE FROM entries WHERE plugin_id = '{shard}'` then INSERT). `entry_stats` survives via `ON CONFLICT DO UPDATE` keyed on `fq_name`. Hydration logs to `~/.zshrs/zshrs.log` via `tracing::info!` with `zcache_op` event shape.
-- **`zcache <verb>` builtin family** — `info` / `jobs` / `clean [--all|shards|shard <name>|catalog|index|stats|log]` / `rebuild [shard <name>|--parallel N]` / `verify` / `compact`. All async write ops default to non-blocking; `--wait` for explicit sync. `zcache verify` runs `PRAGMA integrity_check` on demand (not every startup); on corruption prints `zcache clean catalog && zcache rebuild` recovery (entry_stats lost on recovery — single-dir trade).
+- Worker pool hydrates `~/.zshrs/catalog.db` per-shard (`DELETE FROM entries WHERE plugin_id = '{shard}'` then INSERT). `entry_stats` survives via `ON CONFLICT DO UPDATE` keyed on `fq_name`. Hydration logs to `~/.zshrs/zshrs-daemon.log` via `tracing::info!` with `zcache_op` event shape.
+- **`zcache <verb>` builtin family** — `info` / `jobs` / `clean [--all|shards|shard <name>|catalog|index|stats|log]` / `verify` / `compact`. All async write ops default to non-blocking; `--wait` for explicit sync. `zcache verify` runs `PRAGMA integrity_check` on demand (not every startup); on corruption prints `zcache clean catalog` recovery (then re-run `zshrs-recorder`) (entry_stats lost on recovery — single-dir trade).
 - **Custom builtin namespace = `z*` prefix, no upstream-zsh clash** — `zcache` is the first; all future zshrs builtins follow same rule. Build-time anti-collision check.
 - Legacy `plugin_cache.db` / `compsys.db` SQLite caches and `.zwc` reading paths are dead-on-arrival.
-- **Test:** install a plugin via `zcache rebuild shard plugin-foo`, call its function, verify it resolves through the rkyv path (index → shard mmap chain). dbview returns entry within ≤ shard rebuild duration. Edit one zpwr function, verify only `zpwr.rkyv` rebuilds. `zcache clean catalog` preserves `entry_stats` rows; `--no-stats` drops them. Spawn 60 parallel zshrs each calling `zcache rebuild shard plugin-foo` simultaneously; verify per-shard flock serializes (one rebuild, 59 skip-and-log) and final shard is intact.
+- **Test:** install a plugin and re-run `zshrs-recorder`, call its function, verify it resolves through the rkyv path (index → shard mmap chain). dbview returns entry within ≤ shard rebuild duration. Edit one zpwr function, verify only `zpwr.rkyv` rebuilds. `zcache clean catalog` preserves `entry_stats` rows; `--no-stats` drops them. Run 60 concurrent writers of shard `plugin-foo`; verify the per-shard flock serializes them and the final shard is intact.
 - **Acceptance:** full-corpus rebuild <30s clean; per-shard ~3-5s large / ~100-500ms small; cold shell launch <5ms; 60 parallel shells share <30 MB RSS attributable to images; lookup ~150-200ns; `zcache info` <100ms; `zcache verify` integrity scan in seconds.
 - **Effort:** 8 days (sharded image format + hash-prefix naming + index.rkyv + perfect-hash + LRU shard-handle cache + generation counter + per-shard flock + per-shard worker hydrate + worker pool partition + log rotation + tmp cleanup + dbview integration + `zcache <verb>` builtin family + POSIX gating).
 
 ### G2a — zshrs-daemon spawn + lifecycle + IPC protocol
 Per `AOT_DESIGN.md` §0x13 daemon architecture. G2 above ships the cache layer; G2a wires the daemon process around it.
-- New `zshrs --daemon` mode in `bins/zshrs.rs` — same binary, daemon-mode entry point.
-- Spawn-on-demand: in turbocharged mode, first client checks for `~/.zshrs/daemon.sock`; if absent or unresponsive, fork-spawns daemon, waits ~50ms, retries connect.
+- Separate `zshrs-daemon` binary (`daemon/bins/zshrs-daemon.rs`, workspace crate `daemon/`). Started by the user or a service manager (`examples/systemd/`, `examples/launchd/`, `examples/brew/`), never by the shell (`docs/DAEMON.md` "Daemon lifecycle").
+- Connect-only clients: zshrs probes `~/.zshrs/daemon.sock` once at startup (`src/extensions/daemon_presence.rs`) — no handshake, no spawn. Daemon absent → degraded mode (source-interp, cache features no-op).
 - Singleton: daemon takes `flock(LOCK_EX)` on `~/.zshrs/daemon.pid` at startup. Second instance sees lock held, exits.
 - IPC: length-prefixed JSON over Unix domain socket. Versioned protocol; daemon and client negotiate at connect.
 - POSIX-mode gating: zero daemon spawn under `--posix` / `emulate sh` / argv[0] basename `sh`/`dash`/`bash`. Single `if !exec.posix_mode` check at every cache entry point.
 - Migrate G2's compile worker pool from per-client to daemon-only. Clients become read-only mmap consumers + IPC senders.
 - Strict thin-client cap: per-client cache overhead <5 MB beyond zsh interpreter; ZERO cache-related background threads / polling loops / timers / SQLite handles in clients. Stats flush is event-driven (piggybacks on existing shell wake-ups).
-- Crash recovery: if daemon dies, next client to fail socket connect kills stale pidfile, respawns. No state loss — everything reproducible from sources + on-disk shards.
-- Logs to `~/.zshrs/zshrs.log` via `tracing::info!`. Built-in log rotation (10 MB cap, configurable via `ZSHRS_LOG_MAX_SIZE` / `ZSHRS_LOG_MAX_FILES`).
-- **Tests:** spawn daemon via first client; second client connects without spawning; kill daemon mid-session, verify clients fall through to source-interp without crashing; respawn via next client; 100 parallel clients each connect (no spawn race); POSIX-mode invocation never spawns daemon, never creates `~/.zshrs/`.
-- **Acceptance:** daemon spawn-on-demand <50ms; client connect <5ms; 100 parallel clients share <30 MB RSS attributable to images; daemon-down doesn't break shells; POSIX mode is daemon-free.
-- **Effort:** 5 days (daemon-mode binary + spawn-on-demand + flock singleton + IPC framing + POSIX gating + crash recovery + log rotation).
+- Crash recovery: clients never respawn the daemon. Shards + `catalog.db` are durable on disk; after the service manager (or user) restarts the daemon, clients reconnect and resume from cache. No state loss — everything reproducible from sources + on-disk shards.
+- Logs to `~/.zshrs/zshrs-daemon.log` via `tracing::info!`. Built-in log rotation (10 MB cap per log, configurable via `ZSHRS_LOG_MAX_BYTES` / `ZSHRS_LOG_MAX_ROTATIONS`, `daemon/ticker.rs`).
+- **Tests:** start daemon; N clients connect, none spawns; kill daemon mid-session, verify clients fall through to source-interp without crashing; restart daemon, verify clients reconnect; 100 parallel clients each connect; POSIX-mode invocation never probes the daemon, never creates `~/.zshrs/`.
+- **Acceptance:** client connect <5ms; 100 parallel clients share <30 MB RSS attributable to images; daemon-down doesn't break shells; POSIX mode is daemon-free.
+- **Effort:** 5 days (daemon binary + connect-only probe + flock singleton + IPC framing + POSIX gating + crash recovery + log rotation).
 
 ### G2b — Cross-shell coordination builtins (zconvey replacement)
 Per `AOT_DESIGN.md` §0x13 "Daemon as cross-shell coordinator". Adds the `z*` builtin family for cross-shell registry, dispatch, notification, and pub/sub. All thin IPC wrappers — clients send JSON to daemon, daemon does the work.
@@ -129,10 +129,10 @@ Per `AOT_DESIGN.md` §0x13 "Daemon as session-persistent supervisor".
 - **Effort:** 6 days (job-supervisor logic in daemon + IPC verbs + builtin family + output capture/streaming + retention + tests).
 
 ### G3 — ZLE hooks + user widgets + completion firing
-- `zle/main.rs:496` (hook system stub): implement `precmd`/`preexec`/`chpwd` hook dispatch — call `executor.hook_functions[name]` via `execute_command` (now bytecode).
-- `zle/main.rs:553` (user widget execution): when `bindkey '^X^E' my-widget` is bound, hitting that key invokes `my-widget` via `execute_command(ShellCommand::Simple([Word::Literal("my-widget")]))`.
-- `zle/main.rs:646` (prompt expansion): use `expand_prompt` from `prompt.rs` which exists; the gap is the wiring.
-- `zle/hist.rs:196` (incremental search UI): real `Ctrl+R` impl in the native ZLE.
+- `src/ported/zle/zle_main.rs` (hook system): implement `precmd`/`preexec`/`chpwd` hook dispatch — call the hook functions through the bytecode VM.
+- `src/ported/zle/zle_main.rs` (user widget execution): when `bindkey '^X^E' my-widget` is bound, hitting that key invokes `my-widget` through the bytecode VM.
+- `src/ported/zle/zle_main.rs` (prompt expansion): use the ported prompt expander; the gap is the wiring.
+- `src/ported/zle/zle_hist.rs` (incremental search UI): real `Ctrl+R` impl in the native ZLE.
 - Completion: when user types Tab in line editor, fire bound widget which calls the user's completion function (via `compdef name handler`); handler runs through bytecode VM, populates `executor.comp_matches`, line editor reads them.
 - **Tests:** keypress simulation tests that bindkey a widget, simulate the keystroke, assert widget ran and side effects landed.
 - **Acceptance:** tab-completing `git ` in zshrs produces the same matches as zsh (both backed by zsh-completions corpus).
@@ -143,7 +143,7 @@ Per `AOT_DESIGN.md` §0x13 "Daemon as session-persistent supervisor".
 - `zmv 'foo*.txt' 'bar*.txt'`: autoload from fpath, rebuild as bytecode.
 - `zparseopts -A opts -- a b: c::`: builtin exists (id 147), tests needed.
 - Parameter flags: `${(L)var}`, `${(U)var}`, `${(j: :)arr}`, `${(o)arr}`, `${(f)$(cmd)}`, `${(s. .)var}`, `${(@)arr}`, `${(k)hash}`, `${(v)hash}`, `${(P)var}`, `${(qqq)var}`.
-- Each flag: extend `ZshrsHost::expand_param` with new `param_mod` constants OR route through existing `BUILTIN_EXPAND_WORD_RUNTIME` (acceptable for less-hot flags).
+- Each flag: extend `ZshrsHost::expand_param` with new `param_mod` constants. (The `BUILTIN_EXPAND_WORD_RUNTIME` fallback is gone — G8.)
 - **Tests:** 50+ parameter-flag combinations.
 - **Acceptance:** zpwr's parameter-flag-heavy lines work identically.
 - **Effort:** 3 days.
@@ -156,9 +156,10 @@ Per `AOT_DESIGN.md` §0x13 "Daemon as session-persistent supervisor".
 - **Acceptance:** every qualifier zsh manual lists works.
 - **Effort:** 2 days.
 
-### G6 — Job control parity
+### G6 — Job control parity — landed
+- **Status:** landed 2026-10-18 (`28f7b6f766` ^Z suspend + `fg`/`bg` resume, `c6dd0c9929` superjobs for stops inside functions/`{ }`/loops, `3d882cb7b2` foreground `( … )` forked as the job). Behavioral pins: `tests/parity/jobs_parity.rs`.
 - `jobs`, `fg`, `bg`, `wait`, `disown`, `kill %1` — builtins exist (ids 50-56).
-- Background `&`: `compile_list` ListOp::Amp currently runs sync (TODO at line 404); emit a fork-or-thread that detaches, register PID/thread-handle in `executor.jobs`, return immediately.
+- Background `&` / `&!`: the list carries `Z_ASYNC` (`src/extensions/compile_zsh.rs`, c:Src/parse.c:660-667).
 - Job state transitions: SIGTSTP → Stopped, SIGCONT → Running, SIGCHLD → Done; `tcsetpgrp` for foreground swap.
 - Signal forwarding: SIGINT to foreground job only, SIGWINCH to all jobs.
 - **Tests:** spawn sleeping job, suspend with Ctrl+Z, list jobs, fg, verify state machine.
@@ -175,7 +176,8 @@ Per `AOT_DESIGN.md` §0x13 "Daemon as session-persistent supervisor".
 - **Acceptance:** zsh's `traps` testfile (W08traps) passes.
 - **Effort:** 2 days.
 
-### G8 — Kill `BUILTIN_EXPAND_WORD_RUNTIME` (the last residual dup)
+### G8 — Kill `BUILTIN_EXPAND_WORD_RUNTIME` (the last residual dup) — landed
+- **Status:** landed 2026-04-27. `BUILTIN_EXPAND_WORD_RUNTIME` (id 281) deleted in `593ad3432d`; `compile_word_runtime` went with `src/shell_compiler.rs` in `313481c810`. `rg 'BUILTIN_EXPAND_WORD_RUNTIME|compile_word_runtime' src bins daemon tests` returns nothing (2026-10-27). The plan below is kept as the record of what was removed.
 - After G1 (arrays) and G4 (parameter flags) land, the only remaining users of `BUILTIN_EXPAND_WORD_RUNTIME` (the JSON-AST runtime fallback that delegates to tree-walker-era `expand_word_glob`) should be: mixed `$VAR + glob` literals, and any edge cases discovered during dogfood.
 - Lower the mixed-literal case to ops: chain `Op::ExpandParam` + `Op::Glob` + `BUILTIN_ARRAY_JOIN` for literals containing both `$` triggers and glob chars.
 - Audit all remaining call sites of `compile_word_runtime`. Any that exist after the lowering should either get a native op or be a documented "this case can't happen" assertion.
@@ -185,7 +187,7 @@ Per `AOT_DESIGN.md` §0x13 "Daemon as session-persistent supervisor".
 - **Why this matters:** until G8 is done, zshrs has dual *implementations* of word expansion (native ops vs runtime fallback delegating to tree-walker code) even though dispatch is unified. That residual dup is the last debt from the rip-out. After G8, zshrs has literally one code path for every shell construct — no fallback, no alternative, no "if X then bytecode else tree walker" anywhere.
 - **Effort:** 2 days after G1+G4 land.
 
-**Phase G exit criteria:** maintainer's `.zshrc` + zpwr loads cleanly in zshrs with zero errors and zero behavioral differences from zsh. **Plus:** `BUILTIN_EXPAND_WORD_RUNTIME` is deleted from the codebase. zshrs has literally one code path for every shell construct.
+**Phase G exit criteria:** maintainer's `.zshrc` + zpwr loads cleanly in zshrs with zero errors and zero behavioral differences from zsh. **Plus (met by G8, 2026-04-27):** `BUILTIN_EXPAND_WORD_RUNTIME` is deleted from the codebase. zshrs has literally one code path for every shell construct.
 
 ---
 
@@ -202,7 +204,7 @@ Per `AOT_DESIGN.md` §0x13 "Daemon as session-persistent supervisor".
 - Bonus tests for the 50 most-used subcommands (from zsh history frequency): verify their actual functionality.
 - **Effort:** 3 days.
 
-### H3 — 27,387 completion smoke test
+### H3 — Completion-corpus smoke test (47,394 zsh-more-completions files as of 2026-10-27)
 - Iterate every `_*` completion file; ensure it loads (autoload + bytecode compile) without errors.
 - For 100 most-common commands, verify `compdef` registered the handler.
 - **Effort:** 1 day.
@@ -226,7 +228,7 @@ Per `AOT_DESIGN.md` §0x13 "Daemon as session-persistent supervisor".
 - **Effort:** 1 day.
 
 ### I2 — SQLite schema migrations
-- Each cache db (`compsys.db`, `plugins.db`, `bytecode.db`, `history.db`) gets a `schema_version` table.
+- Each cache db (`catalog.db`, `history.db`, `cache.db` under `~/.zshrs/`) gets a `schema_version` table.
 - On open: check version; if older, run migration scripts; if newer, fail loudly (downgrade is unsafe).
 - **Test:** open a v0 db with v1 zshrs, assert clean migration.
 - **Effort:** 1 day.
@@ -402,8 +404,8 @@ These features absorb the best of other shells. None ship before Phase G is done
 ## Today actions
 
 1. **G0 audit + lint** — sweep stops the friendly-output regression class permanently. 2 hours.
-2. **Phase G1 (arrays) — landed:** argv splice ships in the pinned fusevm series; zshrs tracks **0.26.7** (`fusevm` in root `Cargo.toml`, features `jit`, `jit-disk-cache`, `aot`, `ffi`, `rkyv-archive`). Next moves are assoc-edge cases + deleting `BUILTIN_EXPAND_WORD_RUNTIME` once parser coverage is complete (see `docs/TODO.md`).
-3. **Decide priority of Phase H1 dogfood** — can be started in parallel with remaining assoc / `BUILTIN_EXPAND_WORD_RUNTIME` tail work by using a stripped-down `.zshrc` that avoids the long tail of zpwr-only constructs. Surfaces more bugs sooner.
+2. **Phase G1 (arrays) — landed:** argv splice ships in the pinned fusevm series; zshrs tracks **0.26.7** (`fusevm` in root `Cargo.toml`, features `jit`, `jit-disk-cache`, `aot`, `ffi`, `rkyv-archive`). Next moves are assoc-edge cases (see `TODO.md`).
+3. **Decide priority of Phase H1 dogfood** — can be started in parallel with remaining assoc tail work by using a stripped-down `.zshrc` that avoids the long tail of zpwr-only constructs. Surfaces more bugs sooner.
 
 ---
 
@@ -428,9 +430,9 @@ These were on the "needs verification" list and are now measured, not estimated:
 | Builtins | **253** (152 + 101, disjoint) | `BUILTIN(` names in `src/ported/builtin.rs`, `EXT_BUILTIN_NAMES` in `src/extensions/ext_builtins.rs` |
 | fusevm opcodes | **235** | `Op` enum variants in `fusevm-0.26.7/src/op.rs` |
 | ZLE widgets | **193** | `IWIDGET_NAMES` in `src/ported/zle/zle_bindings.rs` |
-| Workspace Rust | **1,016 files / 1,075k lines** | every tracked `*.rs` (`git ls-files '*.rs'`) |
+| Workspace Rust | **1,019 files / 1,082,414 lines** (2026-10-27, `68bad8516b`) | every tracked `*.rs`: `git ls-files '*.rs' \| wc -l`; `git ls-files -z '*.rs' \| xargs -0 cat \| wc -l` |
 | `src/ported/` | **106 files** | frozen port directory |
-| `src/extensions/` | **135 files** | non-port directory |
+| `src/extensions/` | **138 files** (2026-10-27, `68bad8516b`) | non-port directory, tracked `*.rs` |
 | compsys mirror | **1,249 files** | `src/compsys/ported/` |
 | p10k engine | **28 files / 25,719 lines** | `src/extensions/p10k/` |
 | demo scripts | **375** | `examples/demos/*.zsh` |

@@ -13,7 +13,7 @@
 
 > *"One process owns the disk. Every shell is a client."*
 
-The daemon behind [zshrs](https://github.com/MenkeTechnologies/zshrs) — a single process per user that owns `~/.zshrs/`: fsnotify watching, rkyv shard images, catalog/history/cache SQLite, cross-shell coordination, pub/sub, job supervision, and an optional HTTP listener. Shells attach over a Unix socket and never re-derive state themselves. ~24k lines of Rust across 38 modules.
+The daemon behind [zshrs](https://github.com/MenkeTechnologies/zshrs) — a single process per user that owns `~/.zshrs/`: fsnotify watching, rkyv shard images, catalog/history/cache SQLite, cross-shell coordination, pub/sub, job supervision, and an optional HTTP listener. Shells attach over a Unix socket and never re-derive state themselves. (~30k lines of Rust across 41 source files as of 2026-10-27, v0.13.56; `fd -e rs . daemon | xargs cat | wc -l`.)
 
 ### [`zshrs`](https://github.com/MenkeTechnologies/zshrs) · [`fusevm`](https://github.com/MenkeTechnologies/fusevm) · [`strykelang`](https://github.com/MenkeTechnologies/strykelang)
 
@@ -44,9 +44,11 @@ process resolves state once, keeps it warm, and hands shells a mmap'd image.
 - **Singleton.** An `flock` on `daemon.pid` admits exactly one daemon per
   `$ZSHRS_HOME` ([`pidlock.rs`](pidlock.rs)). Second instance exits with
   `AlreadyRunning(pid)`.
-- **Spawn-on-demand.** Shells don't require a supervisor; `Client::connect`
-  starts the daemon if the socket is cold ([`client.rs`](client.rs)). systemd
-  and launchd units exist for those who want them
+- **Started independently, never by the shell.** `Client::connect` is
+  connect-only ([`client.rs`](client.rs)); the shell probes the socket once at
+  startup and runs in vanilla mode when it is absent
+  ([`src/extensions/daemon_presence.rs`](../src/extensions/daemon_presence.rs)).
+  Start it with `zshrs-daemon`, or with the systemd / launchd units
   ([`examples/systemd/`](../examples/systemd/), [`examples/launchd/`](../examples/launchd/)).
 - **fsnotify only, never re-walk.** The daemon watches, debounces, rebuilds the
   affected shard, bumps a generation, atomic-renames, and pushes
@@ -58,7 +60,7 @@ process resolves state once, keeps it warm, and hands shells a mmap'd image.
 - **No AST walk.** State attribution comes from `zshrs-recorder` (runtime AOP
   intercept, see [`docs/RECORDER.md`](../docs/RECORDER.md)), not from parsing
   user config. The daemon services cache ops and fsnotify broadcasts; it never
-  re-derives state by reading `.zshrc` ([`lib.rs:90`](lib.rs)).
+  re-derives state by reading `.zshrc` (see the comment after the `pub mod` list in [`lib.rs`](lib.rs)).
 
 Full design: [`docs/DAEMON.md`](../docs/DAEMON.md). Service/HTTP deployment:
 [`docs/DAEMON_AS_SERVICE.md`](../docs/DAEMON_AS_SERVICE.md).
@@ -102,12 +104,12 @@ Full design: [`docs/DAEMON.md`](../docs/DAEMON.md). Service/HTTP deployment:
 | Area | Modules |
 |------|---------|
 | **Lifecycle** | [`pidlock.rs`](pidlock.rs) singleton flock · [`server.rs`](server.rs) accept loop · [`firstrun.rs`](firstrun.rs) first-run notice · [`log.rs`](log.rs) rolling tracing appender · [`ticker.rs`](ticker.rs) 1/min housekeeping |
-| **Transport** | [`ipc.rs`](ipc.rs) framing + handshake · [`client.rs`](client.rs) client helpers + spawn-on-demand · [`http.rs`](http.rs) axum listener · [`auth.rs`](auth.rs) bearer tokens + scopes |
+| **Transport** | [`ipc.rs`](ipc.rs) framing + handshake · [`client.rs`](client.rs) connect-only client helpers · [`http.rs`](http.rs) axum listener · [`auth.rs`](auth.rs) bearer tokens + scopes |
 | **Dispatch** | [`ops.rs`](ops.rs) op table · [`builtins.rs`](builtins.rs) z\* builtin IPC wrappers · [`zd_dispatch.rs`](zd_dispatch.rs) transport-agnostic `zd` subcommands |
 | **State** | [`state.rs`](state.rs) sessions/tags/registry/broadcast · [`canonical.rs`](canonical.rs) canonical state · [`snapshot.rs`](snapshot.rs) save/load/diff · [`definitions.rs`](definitions.rs) definition index |
 | **Storage** | [`shard.rs`](shard.rs) rkyv images · [`catalog.rs`](catalog.rs) · [`history.rs`](history.rs) · [`cache.rs`](cache.rs) · [`artifact.rs`](artifact.rs) content-addressed blobs · [`paths.rs`](paths.rs) layout + 0700/0600 enforcement |
 | **Coordination** | [`pubsub.rs`](pubsub.rs) · [`lock.rs`](lock.rs) named locks · [`jobs.rs`](jobs.rs) supervision · [`schedule.rs`](schedule.rs) cron · [`zsync.rs`](zsync.rs) push/pull/diff canonical · [`zask.rs`](zask.rs) cross-shell prompts |
-| **Ingest** | [`fsnotify.rs`](fsnotify.rs) debounced watcher · [`source_resolver.rs`](source_resolver.rs) · [`export.rs`](export.rs) view/export/import · [`metrics.rs`](metrics.rs) |
+| **Ingest** | [`fsnotify.rs`](fsnotify.rs) debounced watcher · [`source_resolver.rs`](source_resolver.rs) · [`export.rs`](export.rs) view/export/import · [`metrics.rs`](metrics.rs) · [`recorder_shard.rs`](recorder_shard.rs) recorder bundle → canonical shard · [`plugins_db.rs`](plugins_db.rs) `plugins.db` registry writer |
 | **Builtin shims** | [`zask_builtin.rs`](zask_builtin.rs) · [`zcomplete_builtin.rs`](zcomplete_builtin.rs) · [`zhistory_builtin.rs`](zhistory_builtin.rs) · [`zjob_builtin.rs`](zjob_builtin.rs) · [`zsource_builtin.rs`](zsource_builtin.rs) · [`zsync_builtin.rs`](zsync_builtin.rs) |
 
 `zd_dispatch.rs` is shared by two callers over different transports: the `zd`
@@ -129,6 +131,8 @@ default `~/.zshrs/` ([`paths.rs`](paths.rs) `resolve` / `with_root`).
 ├── catalog.db               SQLite mirror — catalog
 ├── history.db               SQLite mirror — history
 ├── cache.db                 SQLite mirror — kv cache
+├── plugins.db               SQLite — plugin registry (written from recorder shards)
+├── autoloads.rkyv           shell-side caches (with deparse.rkyv, scripts.rkyv)
 ├── artifacts/               content-addressed blobs
 ├── snapshots/               saved canonical states
 ├── replay/                  replay logs
@@ -154,20 +158,22 @@ every startup.
 
 | Property | Value |
 |----------|-------|
-| Version | `PROTOCOL_VERSION = 1` ([`ipc.rs:25`](ipc.rs)) |
+| Version | `PROTOCOL_VERSION = 1` ([`ipc.rs`](ipc.rs) `PROTOCOL_VERSION`) |
 | Max frame | 64 MiB (`MAX_FRAME_BYTES`) — larger is rejected, not truncated |
 | Handshake | `Hello { version }` → `Welcome`; mismatch closes with `ProtocolMismatch` |
 | Framing | length-prefixed JSON, one op per frame |
 
 Errors are typed (`DaemonError` in [`lib.rs`](lib.rs)): protocol mismatch,
-malformed handshake, oversized frame, unknown opcode, bad args, timeout.
+malformed handshake, oversized frame, bad args, timeout. An unknown opcode is
+answered with an error frame whose code is `unknown_op` (`ops.rs::dispatch`).
 
 ---
 
 ## [0x05] OP SURFACE
 
-120+ ops, dispatched by string opcode in [`ops.rs`](ops.rs). Unknown opcodes
-return `UnknownOp`.
+Ops are dispatched by string opcode in [`ops.rs`](ops.rs); the authoritative
+list is `ops.rs::OP_NAMES` (108 as of 2026-10-27, v0.13.56), also served by
+`GET /ops`. Unknown opcodes return error code `unknown_op`.
 
 | Group | Ops |
 |-------|-----|
@@ -179,7 +185,8 @@ return `UnknownOp`.
 | Pub/sub | `subscribe` `unsubscribe` `subscription_set_paused` `publish` `subscribe_shard` |
 | Watch | `watch_subscribe` `watch_unsubscribe` `watch_list` `fpath_changed` `watcher_stats` |
 | Sync | `push_canonical` `pull_canonical` `diff_canonical` |
-| Export / import | `view` `export` `export_all` `export_catalog` `export_shard` `export_zcompdump` `import_*` `replay_log` |
+| Export / import | `view` `export` `export_all` `export_catalog` `export_shard` `export_zcompdump` `import_all` `import_catalog` `import_history` `import_shard` `import_zcompdump` `import_zwc` `replay_log` |
+| Shell caches | `autoload_prewarm` `load_script` `stats_flush` `keys` |
 | Jobs | `job_submit` `job_list` `job_status` `job_output` `job_kill` `job_cancel` `job_wait` `job_input` `job_resize` |
 | Locks | `lock_acquire` `lock_try_acquire` `lock_release` `lock_list` |
 | Artifacts | `artifact_put` `artifact_get` `artifact_get_by_digest` `artifact_list` `artifact_gc` |
@@ -192,14 +199,17 @@ return `UnknownOp`.
 
 Shell-side, these are reached through z\* builtins — `zcache`, `zls`, `zid`,
 `zping`, `ztag`, `zuntag`, `zsend`, `znotify`, `zsubscribe`, `zunsubscribe`,
-`zjob`, `zsync`, `zask` ([`builtins.rs`](builtins.rs)). Names owned by zsh
+`zjob`, `zsync`, `zask`, `zhistory`, `zsource`, `zcomplete`, `zsuggest`,
+`zcmd-result`, `zlog`, `zwhere`, `zd`, `zlock`, `zpublish`
+([`builtins.rs`](builtins.rs) `ZSHRS_BUILTIN_NAMES`). Names owned by zsh
 (`zmv`, `zparseopts`, `zstyle`, `zcompile`, …) are never shadowed.
 
 ---
 
 ## [0x06] HTTP SURFACE
 
-Off by default. Set `[http] listen` in `zshrs-daemon.toml` to enable. See
+On by default on loopback: the seeded `zshrs-daemon.toml` sets `[http] listen =
+"127.0.0.1:7733"` (`paths.rs` default config); remove the key to disable. See
 [`docs/DAEMON_AS_SERVICE.md`](../docs/DAEMON_AS_SERVICE.md) and
 [`examples/daemon-curl-cookbook.md`](../examples/daemon-curl-cookbook.md).
 
@@ -238,8 +248,8 @@ Client shims for eight shells ship in
 | `zshrs-daemon` | standalone daemon entrypoint — systemd/launchd, CI cache servers, debugging under a distinct process name |
 | `zshrs-daemon-bench` | daemon benchmark driver |
 
-The shell normally spawns the daemon itself (`zshrs --daemon`); this binary is
-the same `run()` packaged separately.
+The shell never spawns the daemon; `zshrs-daemon` is the entrypoint, started by
+the user or a service manager.
 
 ```
 zshrs-daemon [OPTIONS]
@@ -263,7 +273,7 @@ edit without restarting the daemon. Exits cleanly on SIGTERM, SIGINT, or
 ## [0x08] BUILD & TEST
 
 Workspace member of the [zshrs](https://github.com/MenkeTechnologies/zshrs) root
-crate (`members = [".", "daemon"]`).
+crate (`members = [".", "daemon", "znative", "runtime"]`).
 
 ```sh
 cargo build -p zshrs-daemon

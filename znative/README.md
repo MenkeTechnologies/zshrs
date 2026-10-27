@@ -48,7 +48,7 @@ Shells have two extension models: interpreted script plugins, and native modules
 crate-type = ["cdylib"]
 
 [dependencies]
-znative = "0.12"
+znative = "0.13"
 ```
 
 ---
@@ -96,12 +96,15 @@ Inside a handler, `Host` is the shell's callback table:
 | `host.register_builtin(name, fn)` | register a command handler dynamically |
 | `host.add_match(word)` | emit one completion candidate |
 | `host.install_completion(cmd, gen)` | wire a native (Rust) completion into compsys |
+| `host.register_compfn(name, f)` | override a compsys `_fn` with a native handler |
+| `host.comp_dispatch(name, args) -> i32` | invoke a compsys `_fn` (`_alternative`, …) |
+| `host.empty_command_hash()` | empty the command-name hash (`cmdnamtab`) |
 
 `Args` gives `.name()` (`argv[0]`), `.rest()` (the arguments), and `.to_vec()` (all of argv). A handler returns the command's exit status (`0` = success), like a shell builtin.
 
 `getfunction`/`addfunction` are the only structured access to shell *functions*. Because `addfunction` then `getfunction` round-trips a body through the shell's own parser and pretty-printer, the pair doubles as **deparse-as-a-service** — define a temp function from arbitrary source, read back its normalized form.
 
-A plugin can also ship **native (Rust) completions**: add a `completions:` block to `declare_plugin!` mapping a command to a generator that emits candidates with `host.add_match`.
+A plugin can also ship **native (Rust) completions**: add a `completions:` block to `declare_plugin!` mapping a command to a generator that emits candidates with `host.add_match`. A `compfns:` block replaces a compsys internal `_fn` (e.g. `_command_names`) with a native handler; see [`docs/PLUGINS.md`](https://github.com/MenkeTechnologies/zshrs/blob/main/docs/PLUGINS.md#compsys-function-overrides-abi-v4).
 
 ---
 

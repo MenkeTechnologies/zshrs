@@ -91,7 +91,7 @@ Originally probed 47 constructs from the `man zshall` reference. Each entry belo
 
 ## Closed (this session — subscript pass)
 
-Discovered as gaps when re-probing `man zshall` chapter 14 (Parameters → Array Subscripts). All implemented inside `BUILTIN_ARRAY_INDEX` and a small set of module-level helpers in `src/exec.rs`.
+Discovered as gaps when re-probing `man zshall` chapter 14 (Parameters → Array Subscripts). Originally implemented inside `BUILTIN_ARRAY_INDEX` and module-level helpers in `src/exec.rs`. Since `f350805c1c` `BUILTIN_ARRAY_INDEX` (`fusevm_bridge.rs`) is a pure passthrough to `subst.rs::paramsubst`; subscript-flag dispatch lives in `params.rs::getarg`.
 
 ### Array slice `${arr[N,M]}`
 
@@ -345,7 +345,7 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 ### `$pipestatus[N]` / `$PIPESTATUS[N]` after single command
 
-- `BUILTIN_ARRAY_INDEX` now special-cases `pipestatus`/`PIPESTATUS`: if no array has been populated (e.g. after a single non-pipeline command), synthesizes `[last_status]` so `true; echo $pipestatus[1]` returns `0`. Real pipelines continue to use the per-stage array set by `BUILTIN_PIPELINE_EXEC`.
+- `BUILTIN_ARRAY_INDEX` now special-cases `pipestatus`/`PIPESTATUS`: if no array has been populated (e.g. after a single non-pipeline command), synthesizes `[last_status]` so `true; echo $pipestatus[1]` returns `0`. Real pipelines continue to use the per-stage array set by the pipeline builtin (then `BUILTIN_PIPELINE_EXEC`, now `BUILTIN_RUN_PIPELINE` in `fusevm_bridge.rs`).
 
 ### `[[ -c path ]]`, `[[ -b path ]]`, `[[ -p path ]]`, `[[ -S path ]]` file-type tests
 
@@ -749,12 +749,12 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 ### User function overrides shadowed builtins (`r`, `echo`, `pwd`, `true`, `false`, `cd`, `print`, `printf`)
 
 - zsh dispatch order: alias → function → builtin → external. `name() { ... }; name args` must run the user function, not the builtin. zshrs's compile path emitted `Op::CallBuiltin` directly for any name in `fusevm::shell_builtins::builtin_id`, so a user function never had a chance to win. `r` was the most painful: `r() { echo $1; }; r 5` infinite-looped because `builtin_r` runs `fc -e -` (history-replay) and re-executed the previous script — every iteration re-registered the function and re-called itself.
-- Added a `try_user_fn_override(name, args)` helper (src/exec.rs) that consults `functions_compiled` + `function_exists`, then routes through `dispatch_function_call`. Wired into the `r`, `cd`, `pwd`, `echo`, `print`, `printf`, `true`, `false` builtin handlers. Tests: `test_user_function_overrides_r_builtin`, `test_user_function_overrides_echo_builtin`, `test_user_function_overrides_pwd_builtin`, `test_user_function_overrides_true_builtin`.
+- Added a `try_user_fn_override(name, args)` helper (now `fusevm_bridge.rs::try_user_fn_override`) that consults `functions_compiled` + `function_exists`, then routes through `dispatch_function_call`. Since `3bf8bf2f5d` and `4315b97906` it runs `intercept_alias_origin` and `run_command_intercepts` first; the function lookup moved to `fusevm_bridge.rs::user_fn_override_unadvised`. Wired into the `r`, `cd`, `pwd`, `echo`, `print`, `printf`, `true`, `false` builtin handlers. Tests: `test_user_function_overrides_r_builtin`, `test_user_function_overrides_echo_builtin`, `test_user_function_overrides_pwd_builtin`, `test_user_function_overrides_true_builtin`.
 
 ### `[ a -eq b ]` test-form always returned 0 (huge bug)
 
 - The compile-time "dynamic command name" check at `compile_zsh.rs:520` flagged any first word containing `[` as needing `Op::Exec` dispatch (so `cmd[$i]` etc. resolves through host.exec). When the first word was literally `[`, that diverted `[` away from `BUILTIN_TEST` and into external `/usr/bin/[` — which on macOS is a quirky BSD test that returned 0 for the malformed-arg shapes we passed (the `]` was being captured as another argv slot). Result: every `[ ... ]` test returned true unconditionally, breaking every script that used `if [ ... ]`, `while [ ... ]`, `until [ ... ]`, `[ ... ] && cmd`. Catastrophic.
-- Carved out `[` and `[[` from the dynamic-name check before the glob-char trigger fires (`first_is_test_builtin = first_untoked == "[" || first_untoked == "[["`). They now dispatch to `BUILTIN_TEST` / `BUILTIN_COND` like any other builtin. Tests: `test_test_builtin_bracket_form_returns_correct_status`, `test_if_elif_chain_with_bracket_test`, `test_until_loop_with_bracket_test`.
+- Carved out `[` and `[[` from the dynamic-name check before the glob-char trigger fires (`first_is_test_builtin = first_untoked == "[" || first_untoked == "[["`). They now dispatch like any other builtin (`[` reaches `BUILTIN_TEST`; the `BUILTIN_COND` id named here no longer exists). Tests: `test_test_builtin_bracket_form_returns_correct_status`, `test_if_elif_chain_with_bracket_test`, `test_until_loop_with_bracket_test`.
 
 ## Closed (thirty-second-pass — assoc append, sort sub-flags, printf %g)
 

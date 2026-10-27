@@ -1,6 +1,6 @@
 # DAEMON_AS_SERVICE.md — zshrs-daemon as a universal user-space service
 
-**Status:** design  
+**Status:** shipped (v1 op surface); client libraries and phases 3-8 pending  
 **Owner:** MenkeTechnologies  
 **Layer:** singleton daemon + versioned public IPC contract + multi-language client libraries  
 **Companion docs:** [DAEMON.md](DAEMON.md) (internal architecture), [RECORDER.md](RECORDER.md) (one application of the daemon)
@@ -114,8 +114,9 @@ needed.
 | `zd` binary (`bins/zd.rs`) | `cargo install --path . --bin zd --features zd` | Power users, scripts, editor integrations — single-purpose ~3MB binary, no shell dependency, structured arg parsing, exit codes |
 | `daemon-shell.<shell>` wrappers (`examples/daemon-shell.{sh,bash,zsh,fish,nu,elv,ksh,ps1}`) | `source examples/daemon-shell.bash` (or your shell) | Shell users — zero install, idiomatic per shell (`daemon-cache-put` / `daemon record alias` / `Daemon-RecordAlias`), 8 shells covered |
 
-Both target the same HTTP listener and accept identical env vars:
-`DAEMON_URL`, `DAEMON_TOKEN`, `DAEMON_SHELL_ID`. Pick whichever fits
+Both target the same HTTP listener and read `DAEMON_URL` and
+`DAEMON_TOKEN`; the wrappers also read `DAEMON_SHELL_ID` for record calls
+(`zd` takes `--shell-id` per command instead). Pick whichever fits
 the use site — they're interchangeable. The doc below uses `zd` in
 examples; substitute `daemon-cache-get` / `daemon record alias` /
 etc. if you're going wrapper-only.
@@ -198,9 +199,10 @@ Same from a vim plugin (rust-mode embedding LSP):
 nnoremap gd :call ZshrsGotoDefinition(expand('<cword>'))<CR>
 
 function! ZshrsGotoDefinition(name)
-    let result = system('zd definitions query alias '..a:name..' --json')
-    let r = json_decode(result)
-    if !empty(r)
+    let result = system('zd defs query --kind alias --name '..a:name)
+    let recs = json_decode(result).records
+    if !empty(recs)
+        let r = recs[0]
         execute 'edit ' .. r.file
         execute r.line
     endif
@@ -269,7 +271,7 @@ JOB — tokio-backed task queue with persistent state
   job_output  {id, stderr?}                     → {content, stderr: bool}                 ✅
   job_list    {state?, tag?, limit?}            → {jobs[], count}                         ✅
   job_kill    {id}                              → {killed: bool}                          ✅
-  job_cancel  {id}                              → {cancelled: bool}                       ✅
+  job_cancel  {id, grace_ms?}                   → {job_id, state, exit_code}              ✅
   job_wait    {id}                              → {state, exit_code}                      ✅
 
 SCHEDULE — cron-equivalent with persistent state (cache.db / table `schedule`)
@@ -381,7 +383,7 @@ add a reverse proxy for browser pages).
 | HEALTH | ✅ | `/health`, `/metrics` (Prom text), `metrics` op (JSON) |
 | CACHE | ✅ | sqlite-backed, TTL-aware, namespaced |
 | ARTIFACT | ✅ | sha256 dedup, base64 wire encoding, GC by age + size cap |
-| JOB | ✅ | tokio supervisor, per-job stdout/stderr files, terminal states `exited`/`failed`/`killed`/`cancelled` |
+| JOB | ✅ | tokio supervisor, per-job stdout/stderr files, terminal states `exited`/`failed`/`killed` (`job_cancel` ends in one of these) |
 | SCHEDULE | ✅ | cron 6-field format (5-field crontab lines accepted, second 0), sqlite-persisted, 1Hz tick, fires `job_submit` with `tags:["scheduled"]` |
 | WATCH | ✅ | refcounted per-path subscription via `watch_subscribe` (IPC) or `/stream/watch` (HTTP); same path subscribed N times stays armed until the Nth unsubscribe; SSE TCP-close auto-releases |
 | EVENT | ✅ | scope.topic patterns, `publish` requires session (HTTP `handler_op` registers per request) |
@@ -390,25 +392,27 @@ add a reverse proxy for browser pages).
 | SNAPSHOT | ✅ | save/list/load/diff via rkyv `CanonicalShard`; ed25519 sign/verify/publish |
 | SHELL | ✅ | pre-existing IPC ops surfaced over HTTP |
 | EXPORT (PDF) | ✅ | `printpdf`-rendered, base64-wire |
-| AUTH | ✅ | bearer tokens in `daemon.toml` (legacy flat string OR scoped table form); per-token scopes enforced against op→scope table in `daemon/auth.rs`; refuses non-loopback bind without tokens; unscoped tokens grant full access (backward compat) |
+| AUTH | ✅ | bearer tokens in `zshrs-daemon.toml` (legacy flat string OR scoped table form); per-token scopes enforced against op→scope table in `daemon/auth.rs`; refuses non-loopback bind without tokens; unscoped tokens grant full access (backward compat) |
 | METRICS | ✅ | Prom 0.0.4 text + JSON op |
 
 Deferred to a follow-up round, named here for forward compatibility:
 - per-namespace cache quotas, daemon-wide rate limits
 - artifact streaming for large blobs (octet-stream response)
-- OpenAPI / protobuf / cddl schema generation
+- protobuf / cddl schema generation (OpenAPI shipped: `GET /openapi.json`, `http.rs::handler_openapi`)
 
 ### Authentication / authorization
 
 **Defaults — single-user trust model.** The IPC unix socket is
 0600-mode in the user's own cache dir. The HTTP listener is
-**disabled by default** and refuses to bind anywhere except loopback
+**loopback-only by default** (the seeded `zshrs-daemon.toml` sets
+`listen = "127.0.0.1:7733"`) and refuses to bind anywhere except loopback
 unless at least one bearer token is configured (see
-`daemon/http.rs:95`). For solo use, leave `[http.tokens]` empty —
+`daemon/http.rs::serve_http`). For solo use, leave `[http.tokens]` empty —
 loopback HTTP needs no auth.
 
 **Multi-client opt-in.** Configure bearer tokens in
-`~/.zshrs/daemon.toml`. Two value shapes per token:
+`~/.zshrs/zshrs-daemon.toml` (a legacy `daemon.toml` is renamed to it on
+startup, `paths.rs`). Two value shapes per token:
 
 ```toml
 [http]
@@ -461,15 +465,13 @@ identity layer the operator wants in front of `127.0.0.1:7733`.
 
 ### Wire format
 
-Two formats supported in v1.0:
+One format in v1: u32 big-endian length-prefixed UTF-8 JSON frames on the
+unix socket (max 64 MiB, `ipc.rs::MAX_FRAME_BYTES`), opened by a
+`Hello { version }` → `Welcome` handshake (`ipc.rs::PROTOCOL_VERSION`).
+HTTP carries plain JSON bodies on `POST /op/<NAME>`.
 
-| Format | Use case | Trade-off |
-|---|---|---|
-| Length-prefixed CBOR (default) | high-perf clients (Rust, C, Go) | binary, smaller frames, schema-evolution-friendly |
-| Length-prefixed JSON-RPC 2.0 | universal interop (shells via `nc`/`curl`, Python/Node/Ruby with stdlib only) | text, larger frames, human-debuggable |
-
-Server speaks whichever the client opens with; no versioned format
-selection beyond the handshake.
+> Design only — not implemented: length-prefixed CBOR and JSON-RPC 2.0
+> framings with format selection by the client's opening frame.
 
 ## Comparison to existing user-space service infra
 
@@ -530,6 +532,7 @@ on macOS, systemd-user on Linux) so one command works on both.
 export PATH=$HOME/.cargo/bin:$PATH      # zd installed via cargo
 
 # Replace ~/.local/bin/sccache with daemon-backed cache
+# (Design only — not implemented: no zd-rustc-wrapper ships in the tree)
 export RUSTC_WRAPPER=zd-rustc-wrapper
 
 # Replace cron + anacron for personal jobs
@@ -547,17 +550,17 @@ deploy() {
 # Cross-shell notifications without external service
 build-and-notify() {
     if cargo build; then
-        zd event publish build "{ \"status\": \"ok\", \"target\": \"$1\" }"
+        zd publish build "{ \"status\": \"ok\", \"target\": \"$1\" }"
     fi
 }
 
-# Listen in another shell
-zd event subscribe build | while read msg; do
+# Listen in another shell (SSE; pattern is <scope>.<topic>)
+zd events '*.build' | while read msg; do
     notify-send "build" "$msg"
 done
 
 # Capture current bash state for diffing later
-zd snapshot save --tag laptop-bash-2026-05-02
+zd snapshot save laptop-bash-2026-05-02
 ```
 
 User has not changed shells. Has gained 5 capabilities that
@@ -569,7 +572,7 @@ notification setup.
 ```fish
 # fish-flavored config
 function on-rust-change
-    zd watch subscribe '~/src/**/*.rs' | while read changed
+    zd watch ~/src --recursive | while read changed
         echo "rebuild on $changed"
         cargo check
     end
@@ -579,7 +582,7 @@ end
 set -U DAEMON_NS my-fish-env
 
 # Save fish env state
-zd snapshot save --tag fish-baseline
+zd snapshot save fish-baseline
 ```
 
 ### Scenario 3: vim editing a shell script, jump-to-definition
@@ -591,8 +594,8 @@ nnoremap gd :ZshrsGotoDef<CR>
 command! ZshrsGotoDef call s:goto_def()
 function! s:goto_def() abort
     let name = expand('<cword>')
-    let json = system('zd definitions query --any --name '..shellescape(name)..' --json')
-    let recs = json_decode(json)
+    let json = system('zd defs query --name '..shellescape(name))
+    let recs = json_decode(json).records
     if empty(recs) | echo 'no definition' | return | endif
     " Pick most-recent record
     let r = recs[0]
@@ -625,6 +628,9 @@ Today: this requires `subprocess.run(['zsh', '-i', '-c', 'alias'])`
 which is slow, fragile, and gives strings, not structured data.
 
 ### Scenario 5: CI pipeline asserts shell environment
+
+> Design only — not implemented: `zd` has no `expect` command
+> (`daemon/zd_dispatch.rs` dispatch table).
 
 ```yaml
 # .github/workflows/deploy.yaml
@@ -682,13 +688,13 @@ filter by shell or aggregate across:
 
 ```
 # All aliases defined anywhere across all shells:
-zd definitions query --kind alias
+zd defs query --kind alias
 
 # Just fish-recorder records:
-zd definitions query --kind alias --shell-id fish
+zd defs query --kind alias --shell-id fish
 
-# Cross-shell diff: aliases in fish but not in zshrs:
-zd definitions diff --kind alias --shell-a fish --shell-b zshrs
+# Cross-shell diff of aliases, fish vs zshrs (SHELL_A SHELL_B [KIND]):
+zd defs diff fish zshrs alias
 ```
 
 The schema explicitly accommodates third-party recorders. The op
@@ -713,7 +719,7 @@ function alias --no-scope-shadowing
     set -l rec_chain (status stack-trace | string trim)
 
     # Emit to daemon
-    zd definitions emit \
+    zd defs emit \
         --shell-id fish \
         --kind alias \
         --name $argv[1] \
@@ -783,8 +789,8 @@ To make adoption concrete, the project ships:
   sensitive-flag conventions
 - **Reference implementations:**
     - `zshrs-recorder` (in-tree, AOP, full fidelity)
-    - `fish-recorder` (in-tree, function-shadowing, ~95% fidelity)
-    - `bash-recorder` (in-tree, function-shadowing + DEBUG trap, ~85%)
+    - `fish-recorder` (Design only — not implemented; function-shadowing, ~95% fidelity)
+    - `bash-recorder` (Design only — not implemented; function-shadowing + DEBUG trap, ~85%)
     - These serve as the canonical examples for any other shell
       community wanting to ship their own
 - **Conformance test suite:** input shell config → expected catalog
@@ -799,7 +805,7 @@ ship their recorder by:
 
 1. Reading `RECORDER_PROTOCOL.md`
 2. Implementing the intercept layer in their shell's idiomatic style
-3. Emitting records via `zd definitions emit` (or directly
+3. Emitting records via `zd defs emit` (or directly
    via the language client crate)
 4. Reserving a `shell_id` if not already in the registry
 5. Running the conformance tests
@@ -1000,20 +1006,20 @@ primitives; they must ship the full surface to compete.
 ### Phase 1 — protocol stabilization (1 week)
 
 - Spec v1.0 protocol in `proto/zshrs-daemon-v1.cddl`
-- Generate openapi.json + protobuf for client-side codegen
+- Generate protobuf for client-side codegen (openapi.json shipped: `GET /openapi.json`)
 - Write conformance test suite (test against in-process mock daemon)
 - Document semver policy + deprecation window
 - Versioned handshake op
 
 ### Phase 2 — public op surface promotion (2 weeks)
 
-- Audit existing daemon ops (per `daemon/lib.rs::ops`)
+- Audit existing daemon ops (per `daemon/ops.rs::OP_NAMES`)
 - Promote stable ops to public; rename if needed; document schema
-- Implement missing ops:
+- Ops implemented (shipped, dispatched by `daemon/ops.rs::dispatch`):
     - `cache.*` (sqlite-backed, namespaced)
-    - `artifact.*` (rkyv-backed, content-addressed)
-    - `job.*` (formalize zjob_builtin into general API)
-    - `schedule.*` (formalize ticker into cron parser + persistent state)
+    - `artifact.*` (sha256 blobs + `names.db` index)
+    - `job.*` (tokio supervisor; `zjob` builtin is a client of it)
+    - `schedule.*` (cron parser + persistent state, 1Hz tick)
     - `lock.*` (named, with PID-tied auto-release)
 - Per-namespace quotas + rate limiting
 - Schema validation on every op
@@ -1033,8 +1039,8 @@ primitives; they must ship the full surface to compete.
 
 ### Phase 5 — auth / authz hardening (1 week)
 
-- Per-client tokens in `~/.zshrs/daemon.toml`
-- Scope enforcement (read-only vs write, per-namespace)
+- Per-client tokens in `~/.zshrs/zshrs-daemon.toml` (shipped)
+- Scope enforcement (shipped: `daemon/auth.rs::op_scope`; per-namespace scoping not implemented)
 - Optional TCP listener with mutual TLS for cross-machine
 - Per-client request quotas + rate limits
 - Audit log

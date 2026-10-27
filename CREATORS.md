@@ -48,7 +48,8 @@ The short form, grouped as the register groups them:
   the native code persisted across processes; AOT compilation of the
   completion corpus keyed on compiler identity; JIT tier introspection
   (`--tiers`) that tells you why a chunk stayed interpreted; the
-  anti-fork architecture (worker pool + 23 in-process coreutils);
+  anti-fork architecture (worker pool + in-process coreutils, the
+  `EXT_BUILTIN_NAMES` entries GNU coreutils also installs);
   parallelism as VM-dispatched builtins (`pmap`, `pgrep`, `peach`,
   `barrier`, `async`, `await`) rather than as a library.
 - **State** — recorder-owns-rebuild, an AOP-intercept pass that
@@ -114,4 +115,4 @@ future engineers debugging your shell can follow the trail
 back to where the design came from. Drop a note, send a
 postcard, link it in the changelog. That's all.
 
-License: MIT (per `Cargo.toml`; LICENSE file pending).
+License: MIT. See [LICENSE](LICENSE).

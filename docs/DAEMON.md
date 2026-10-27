@@ -169,7 +169,7 @@ No client ever writes to:
 - `history.db`
 - `daemon.pid`
 - `daemon.sock`
-- `zshrs.log`
+- `zshrs-daemon.log`
 
 Client mutations land only in:
 
@@ -199,7 +199,16 @@ Atomic-rename per shard with strict ordering — shard rename FIRST, then `index
 │   └── {name}.rkyv.lock                ← per-shard advisory flock
 ├── catalog.db                          ← daemon-only writer; queryable mirror
 ├── history.db                          ← daemon-only writer; SQLite FTS
-├── zshrs.log                           ← tracing output, daemon-rotated, 10 MB cap
+├── cache.db                            ← daemon-as-service KV cache (DAEMON_AS_SERVICE.md)
+├── replay/                             ← per-shell non-deterministic .zshrc fragments
+├── artifacts/                          ← content-addressed artifact cache
+├── snapshots/                          ← tag-based canonical-state snapshots
+├── zshrs.log                           ← shell tracing log
+├── zshrs-daemon.log                    ← daemon tracing log
+├── zshrs-recorder.log                  ← recorder tracing log (all three daemon-rotated, 10 MB cap)
+├── zshrs.toml                          ← shell config
+├── zshrs-daemon.toml                   ← daemon config (seeded on first start)
+├── zshrs-recorder.toml                 ← recorder config
 ├── daemon.sock                         ← Unix socket for IPC
 └── daemon.pid                          ← singleton flock + daemon process ID
 ```
@@ -728,6 +737,13 @@ zcache clean log
 # catalog | stats | zwc | zcompdump | legacy need the running daemon.
 zcache verify                       # integrity scan + PRAGMA integrity_check on catalog.db
 zcache compact [--wait]             # vacuum + dedup
+zcache hydrate-view                 # refresh the SQLite `canonical` view table from in-memory state
+zcache watch <dir>...               # register directories with the daemon fsnotify watcher
+zcache log <verb> ...               # alias for `zlog <verb> ...`
+zcache config list                  # runtime knobs: long_cmd_threshold, log_max_bytes, log_max_rotations
+zcache config get <key>
+zcache config set <key> <value>
+zcache doctor                       # daemon-side health report
 
 # Universal cache dump/export/view — every named target is its own subcommand,
 # accepting common flags: [--format <fmt>] [--filter <pat>] [--out <path>] [--all]
@@ -874,14 +890,34 @@ zsync watch <subsystem…>            # subscribe to canonical_changed events
 zsync pull <subsystem>              # opt-in mid-session refresh from canonical (breaks snapshot rule on user request)
 
 # Daemon log inspection
-zlog                                # default: live tail of ~/.zshrs/zshrs.log
+zlog                                # default: print the newest log path (same as `zlog path`)
 zlog tail [-n N] [-f|--follow] [shell|daemon|recorder|all]
-zlog grep <pattern> [--rotated]
+zlog grep <pattern>                 # regex over every zshrs*.log family file, rotated copies included
 zlog level <directive>             # e.g. info | debug | info,fsnotify=trace
 zlog clear
 zlog rotate
 zlog path
 zlog stats
+
+# Pub/sub producer and named locks
+zpublish TOPIC [DATA] [--json '...']  # one-shot fan-out to zsubscribe streams
+zlock try NAME                      # acquire-or-busy, no wait
+zlock acquire NAME [--timeout S]    # poll-wait until taken or timeout
+zlock release NAME TOKEN            # release a held lock (token from acquire)
+zlock list                          # enumerate active locks
+
+# History, source cache, completion
+zhistory append <line> [--exit-code N] [--cwd DIR] [--duration-ns N] [--ts-ns N] [--shell-id N]
+zhistory query [--filter <pat>] [--mode match|fts|like|prefix|exact] [--cwd DIR] [--limit N] [--asc] [--after-ns N] [--before-ns N]
+zhistory count
+zsource [--stat] <path>             # resolve compiled-file cache for <path>
+zcomplete <prefix> [--limit N]
+zsuggest <prefix> [--cwd DIR]
+zcmd-result --id <delivery_id> [--exit-code N] [--stdout TEXT] [--stderr TEXT]  # responder side of zsend --wait
+
+# Definitions catalog (recorder) and the zd CLI surface
+zwhere KIND NAME | KIND --prefix STR | --kinds [--shell-id ID] [--limit N]  # see RECORDER.md
+zd <op> ...                         # in-process form of the `zd` binary (same USAGE; no SSE ops)
 ```
 
 #### Shell identity
@@ -1049,7 +1085,7 @@ zshrs first-run init — daemon spawning, cold cache building.
   scope: ~/.zshrc + transitive sources + $PATH + $FPATH + plugins
   estimated: 579 files, ~1.6M LOC, ~60s on this machine
   background: shells work via source-interp until cache is warm
-  log:        ~/.zshrs/zshrs.log
+  log:        ~/.zshrs/zshrs-daemon.log
   inspect:    zcache info | zcache jobs | zcache view <target>
   reset:      zcache clean | rm -rf ~/.zshrs/
 ```
@@ -1146,9 +1182,9 @@ zask dismiss [<id>|--all]                     # decline/cancel pending request(s
 zask inbox-clear                              # dismiss every pending request in this shell at once
 ```
 
-**Activation keybinding:** `Ctrl-X q` by default — chained Ctrl-prefix (Ctrl-X then q for "queue"), works identically in vi-insert, vi-cmd, and emacs-insert modes. Chosen to avoid colliding with zsh's existing `^Xu` (undo) and other established `^X*` bindings. **No default keybindings ever use Meta / Alt** — meta keys are unreliable across terminals (macOS Option-key special chars, tmux pass-through quirks, ssh meta-bit stripping, locale-dependent escape sequences). Ctrl combinations and chained-Ctrl chords pass through every terminal cleanly. Bound via `bindkey '^Xq' zask-take` shipped in zshrs's default keymap, plus `bindkey -M vicmd '^Xq' zask-take` so it works post-Esc too. User overrides via `bindkey '<key>' zask-take` or env var `ZSHRS_ZASK_TAKE_KEY=^G` to remap. The widget activates one pending request at a time. Status-line counter decrements on take or dismiss.
+**Activation keybinding (planned, not yet shipped; today run `zask take [--id ID]`):** `Ctrl-X q` by default — chained Ctrl-prefix (Ctrl-X then q for "queue"), works identically in vi-insert, vi-cmd, and emacs-insert modes. Chosen to avoid colliding with zsh's existing `^Xu` (undo) and other established `^X*` bindings. **No default keybindings ever use Meta / Alt** — meta keys are unreliable across terminals (macOS Option-key special chars, tmux pass-through quirks, ssh meta-bit stripping, locale-dependent escape sequences). Ctrl combinations and chained-Ctrl chords pass through every terminal cleanly. Planned binding: `bindkey '^Xq' zask-take` in the default keymap, plus `bindkey -M vicmd '^Xq' zask-take` so it works post-Esc too; user overrides via `bindkey '<key>' zask-take` or env var `ZSHRS_ZASK_TAKE_KEY=^G`. Neither the `zask-take` widget nor the env var exists yet. The widget activates one pending request at a time. Status-line counter decrements on take or dismiss.
 
-**Status-line presentation:** the only daemon→client UI surface that updates without user activation is the status-line / RPROMPT region — explicitly designed-as-passive area. Format: `[zask:N urgent:M]` where N is total pending and M is critical-urgency count. Updates in place, no prompt-line touch. Client treats this as a watched parameter that triggers a status-line redraw, not a prompt redraw.
+**Status-line presentation (planned, not yet shipped):** the only daemon→client UI surface that updates without user activation is the status-line / RPROMPT region — explicitly designed-as-passive area. Format: `[zask:N urgent:M]` where N is total pending and M is critical-urgency count. Updates in place, no prompt-line touch. Client treats this as a watched parameter that triggers a status-line redraw, not a prompt redraw.
 
 **Out-of-band rendering (planned):** integration hooks for tmux status-line, kitty's status bar, alacritty title-bar updates, and OSC-9 → macOS Notification Center / Linux libnotify. Daemon emits the same `ask:pending` event; client routes to whichever passive surface the user has configured. None of these touch the active prompt.
 
@@ -1162,11 +1198,11 @@ zask inbox-clear                              # dismiss every pending request in
 
 **Timeouts:** every queued UI request has a default 60-minute timeout. Originator gets `ask:timeout` event if user never engages. Configurable per-request via `--timeout <seconds>` or `--no-timeout`.
 
-**Visibility model:** `zask pending` shows this shell's queue (keyed on the stable shell id, so it persists across the one-shot builtin connections — see "Shell identity"). `zls --ask-pending` shows pending requests across all of the user's registered shells, as a per-shell count (ASK column; `ask_pending` in `list_shells`). Every push, take, dismiss, timeout logged to `~/.zshrs/zshrs.log`.
+**Visibility model:** `zask pending` shows this shell's queue (keyed on the stable shell id, so it persists across the one-shot builtin connections — see "Shell identity"). `zls --ask-pending` shows pending requests across all of the user's registered shells, as a per-shell count (ASK column; `ask_pending` in `list_shells`). Every push, take, dismiss, timeout logged to `~/.zshrs/zshrs-daemon.log`.
 
 ### Daemon logging (every action goes to logfile)
 
-Daemon is fully observable via `~/.zshrs/zshrs.log`. Every action it takes — every cache build, every fsnotify event, every IPC op handled, every shard rename, every error, every plugin discovery, every cross-shell dispatch — is logged. The log is the canonical record of "what did the daemon do" for debugging, post-mortem analysis, and behavior verification.
+Daemon is fully observable via `~/.zshrs/zshrs-daemon.log` (the shell logs to `zshrs.log`, the recorder to `zshrs-recorder.log`). Every action it takes — every cache build, every fsnotify event, every IPC op handled, every shard rename, every error, every plugin discovery, every cross-shell dispatch — is logged. The log is the canonical record of "what did the daemon do" for debugging, post-mortem analysis, and behavior verification.
 
 **What gets logged at INFO level (default):**
 
@@ -1181,7 +1217,7 @@ Daemon is fully observable via `~/.zshrs/zshrs.log`. Every action it takes — e
 - `zsend` / `znotify` dispatches: from, to, command/message, delivery status
 - Subscription matches: pattern, scope, topic, recipient_count
 - Integrity check results from `zcache verify`
-- Log rotation events (when rotating to `zshrs.log.1`, file sizes)
+- Log rotation events (when rotating a log to `.1`, file sizes)
 
 **Levels:**
 
@@ -1197,9 +1233,9 @@ Daemon is fully observable via `~/.zshrs/zshrs.log`. Every action it takes — e
 - Override via `ZSHRS_LOG=debug` env var or `--log-level <level>` flag at daemon spawn
 - Per-module override: `ZSHRS_LOG=info,fsnotify=debug,ipc=trace` (tracing-subscriber compatible)
 
-**Format:** structured `tracing` output. Each line: `[ISO-8601 timestamp] [LEVEL] [module] message {key=value, key=value, …}`. Compatible with `tail -f`, `grep`, and any log-aggregation pipeline. Optional `--log-format json` for structured ingestion.
+**Format:** structured `tracing` output. Each line: `[ISO-8601 timestamp] [LEVEL] [module] message {key=value, key=value, …}`. Compatible with `tail -f`, `grep`, and any log-aggregation pipeline.
 
-**Rotation:** ticker rotates `zshrs.log` to `zshrs.log.1` when size hits 10 MB (configurable via `ZSHRS_LOG_MAX_BYTES`). Up to 4 rotated copies kept (`.1` through `.4`); `.4` is purged when `.3` rotates in. Total disk footprint capped at ~50 MB.
+**Rotation:** ticker rotates each of `zshrs.log`, `zshrs-daemon.log` and `zshrs-recorder.log` to `.1` when its size hits 10 MB (configurable via `ZSHRS_LOG_MAX_BYTES`). Up to 4 rotated copies of each are kept (`.1` through `.4`, configurable via `ZSHRS_LOG_MAX_ROTATIONS`); the oldest is purged when the next one rotates in. Default footprint is capped at ~50 MB per log family.
 
 **Top-level builtin: `zlog`.** Dedicated builtin for log inspection — top-level for discoverability since this is a daily-use operation:
 

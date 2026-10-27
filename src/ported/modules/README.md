@@ -1,4 +1,4 @@
-# zshrs/src/modules
+# zshrs/src/ported/modules
 
 Direct ports of zsh's loadable modules from `Src/Modules/*.c`. Each
 file maps 1:1 to a single C source file; the names match `zsh/<modname>`
@@ -12,7 +12,7 @@ as exposed by `zmodload`.
 | `curses.rs`        | `curses.c`        | `zcurses` builtin                                                      |
 | `datetime.rs`      | `datetime.c`      | `strftime`, `$EPOCHSECONDS`, `$EPOCHREALTIME`                          |
 | `db_gdbm.rs`       | `db_gdbm.c`       | `ztie -d db/gdbm` GDBM-backed assoc                                    |
-| `example.rs`       | `example.c`       | documentation/template module — no runtime surface                     |
+| `example.rs`       | `example.c`       | template module — `example` builtin, `-len`/`-ex` conditions, `sum`/`length` math functions, `$exint`/`$exstr`/`$exarr` |
 | `files.rs`         | `files.c`         | builtin chmod / chown / chgrp / mv / ln / mkdir / rm / rmdir / sync    |
 | `hlgroup.rs`       | `hlgroup.c`       | ZLE highlight-group SGR conversion (`.zle.esc` / `.zle.sgr`)           |
 | `ksh93.rs`         | `ksh93.c`         | ksh93 emulation glue — `nameref` builtin, `${.sh.*}` specials          |
@@ -25,7 +25,7 @@ as exposed by `zmodload`.
 | `parameter.rs`     | `parameter.c`     | `$functions`, `$aliases`, `$parameters`, `$dirstack`, … special arrays |
 | `pcre.rs`          | `pcre.c`          | `pcre_compile` / `pcre_match` / `pcre_study`                           |
 | `random.rs`        | `random.c`        | `$SRANDOM`                                                             |
-| `random_real.rs`   | `random_real.c`   | `$RANDOM` 64-bit / high-precision RNG                                  |
+| `random_real.rs`   | `random_real.c`   | `random_64bit` / `random_real()` — uniform [0,1) double behind `zrand_float` |
 | `regex.rs`         | `regex.c`         | `[[ … -regex-match … ]]` POSIX-regex condition                         |
 | `socket.rs`        | `socket.c`        | `zsocket` Unix-domain socket                                           |
 | `stat.rs`          | `stat.c`          | `zstat` builtin                                                        |
@@ -43,9 +43,12 @@ as exposed by `zmodload`.
 
 ## Usage
 
-Reach for a module via `crate::modules::<modname>::…`. Backwards-compat
-flat re-exports (`crate::<modname>::…`) keep older call sites resolving
-during the migration; new code should use the `modules::` path.
+Reach for a module via `crate::ported::modules::<modname>::…` (the form
+in-tree code uses; `crate::modules::<modname>` also resolves through
+`lib.rs`'s `pub use ported::*`). Backwards-compat flat re-exports
+(`crate::<modname>::…`) in `src/lib.rs` keep older call sites resolving;
+`regex` is re-exported as `crate::regex_module`, and `tcp_h` has no flat
+re-export.
 
 ## Porting rule
 

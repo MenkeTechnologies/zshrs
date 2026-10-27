@@ -13,10 +13,28 @@ gate fails if the two shells stop matching again.
 
 ## Where the set stands
 
+The fixture set as of 2026-10-24, v0.13.56, read off the `expect` field of each
+fixture file (every `*.json` here except `groups.json` and `last_gate.json`,
+the two `NON_FIXTURE_FILES` in `scripts/compsys_regressions.py`):
+
+| | |
+| --- | --- |
+| fixtures pinned | 31 |
+| `diverges` | 14 |
+| `agrees` — retired as guards | 16 |
+| `reference-crash` | 1 |
+
+Re-derive it with `scripts/compsys_regressions.py --list`, which boots no
+shells. No full gate run has been checked in against this set yet.
+
+### The last checked-in gate run (2026-08-30)
+
 Every number below is read off `last_gate.json` — the full gate run checked in
 beside these fixtures — and none of it is typed from memory. It describes THAT
-run and nothing else; re-derive it any time with
-`scripts/compsys_regressions.py --json out.json`, or read the document.
+run and nothing else: it predates every retirement and fixture added after
+2026-08-30, so it covers 29 fixtures, not the current set. Re-derive it any
+time with `scripts/compsys_regressions.py --json out.json`, or read the
+document.
 
 The run it records: 2026-08-30, source at `44a3b4841c`, zshrs 0.12.49
 (`723088f811cdd366`) against zsh 5.9.2, `--jobs 1`, load average 5.8, 379.0s,
@@ -33,13 +51,33 @@ exit 0.
 | opt-in and skipped | 1 — the upstream zsh crash |
 | cells that needed a re-run | 0 |
 
-The six guards, and the commit each one now protects: `d555917f07` for
-`argv_append_discards_positionals`; `44a3b4841c` for
-`explanation_percent_escapes`, `format_style_percent_escapes`,
-`listing_row_erase_to_eol`, `listing_lost_on_window_shrink` and
-`transpose_words_panic`. Each was re-verified three times before its `expect`
-was flipped, and each was then run against a zshrs that still carries its bug
-to check that it fails there — see `guard_verified` in the fixture.
+That run had six guards. They were re-verified three times before their
+`expect` was flipped, and each was then run against a zshrs that still carries
+its bug to check that it fails there — see `guard_verified` in the fixture.
+
+The guards as of 2026-10-24, v0.13.56, and the commit each one protects, read
+off `retired.fix_commit`:
+
+| fix commit | guards |
+| --- | --- |
+| `d555917f07` | `argv_append_discards_positionals` |
+| `44a3b4841c` | `explanation_percent_escapes`, `format_style_percent_escapes`, `listing_row_erase_to_eol`, `listing_lost_on_window_shrink`, `transpose_words_panic` |
+| `2b99dd54a4` | `equals_word_arg_position`, `equals_word_line_rewrite` |
+| `5538e5f86b` | `alternative_nested_action_bad_option` |
+| `c67727aaa8` | `files_glob_from_zle_c_widget` |
+| `f799727619` | `complete_help_caller_frame` |
+
+Five `agrees` fixtures carry no `retired` block:
+
+* `multiline_backslash_continuation_cd`, `multiline_dquote_parameter_list`,
+  `multiline_squote_corrections` — the fix commit, `96382cfb71`, is named
+  only in each `title` (`GUARD (fixed in 96382cfb71) — was: ...`).
+* `equals_word_unique_prefix_expands` — added as an `agrees` cell
+  (`b40be08aa6`); it pins the other outcome of the rule `2b99dd54a4` fixed,
+  per its `why_this_fixture_exists`.
+* `second_completion_module_builtin_command` — pinned after the fact; the
+  fixture names no commit, and the commit that added it (`831d4082ac`)
+  attributes the fix to `dd61c02640`.
 
 ## Running it
 
@@ -130,6 +168,11 @@ recorded as a recommendation, not made here.
 
 Schema 1 files are still read; they simply carry no `controls` and no binary
 stamp.
+
+`groups.json` (`"schema": "compsys-fixture-groups/1"`) is not a fixture: it
+orders the surface groups (the `group` field each fixture carries) for the
+consolidated report. The runner skips it and `last_gate.json` as
+`NON_FIXTURE_FILES`.
 
 | field | meaning |
 | ----- | ------- |
@@ -224,11 +267,14 @@ one; a guard whose bug is present there reports `CONTROL-MOVED` and exits 1. A
 guard that stays green against a binary known to carry the bug is not a guard,
 and the flip that produced it was wrong.
 
-## The two fixtures that are not pty cells
+## The two harnesses that are not pty cells
 
 Most findings here are a screen: a buffer, some keys, and the rows the two
-shells drew. Two are not, and forcing them into a pty cell would have made them
-worse evidence.
+shells drew. The fixtures owned by two harnesses are not, and forcing them into
+a pty cell would have made them worse evidence. As of 2026-10-24, v0.13.56,
+`harness: shell_probe` owns `argv_append_discards_positionals`,
+`dotted_parameter_name_accepted` and `fpath_underscore_name_runs_undeclared`;
+`harness: winch_probe` owns `listing_lost_on_window_shrink`.
 
 `shell_probe.py` — one script, two shells, **no pty**. `argv+=( ... )` losing
 the positional parameters was a parameter bug in the shell core (fixed in

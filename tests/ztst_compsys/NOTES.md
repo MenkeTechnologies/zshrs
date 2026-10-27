@@ -16,13 +16,17 @@ Two suites are covered, and they must not be mixed:
 | **Y series** (`Y01`-`Y06`) | 6 | the completion system, driven through a pty by `Test/comptest` |
 | **core** (everything else) | 70 | shell parity — grammar, builtins, expansion, globbing, options, modules, ZLE |
 
-`ls <zsh-tree>/Test/*.ztst | wc -l` = 76 = 6 + 70 — **on the dev tree**. The
-default `--zsh-build` is a different, smaller corpus; see "Reference identity".
+`ls <zsh-tree>/Test/*.ztst | wc -l` = 76 = 6 + 70 — **on the dev tree at
+`599af4604f`**, the revision both pins reference. Later dev-tree revisions add
+`Y07call_program.ztst`, which the runner's `ALL_TESTS` list
+(`scripts/ztst_compsys.py`) does not include. The default `--zsh-build` is a
+different, smaller corpus; see "Reference identity".
 
 ## Why upstream's suite
 
-Every other compsys harness here (`compsys_parity.py`, `comptab_parity.py`,
-`compsys_spec_fuzz.py`) compares against cases we invented. `Test/comptest`
+The other compsys comparison harnesses under `scripts/` (`compsys_parity.py`,
+`comptab_parity.py`, `comptab_screen.py`, `compsys_regressions.py`,
+`compsys_spec_fuzz.py`) compare against cases we invented. `Test/comptest`
 takes `comptestinit -z <shell>` to choose which shell runs under the pty, so
 pointing it at zshrs makes upstream the oracle: a failure is a compatibility gap
 stated in upstream's own terms.
@@ -35,11 +39,11 @@ interpret `Test/ztst.zsh`, which is what makes that possible at all.
 
 | | |
 |---|---|
-| oracle tree | `~/forkedRepos/zsh` @ `599af4604f`, copied to scratch and built (`Util/preconfig && configure && make`) |
+| oracle tree | `~/forkedRepos/zsh` checked out at `599af4604f` (that checkout has since moved on; check the revision out explicitly), copied to scratch and built (`Util/preconfig && configure && make`) |
 | oracle version | `5.9.999.3-test` (`Config/version.mk`) |
 | baseline shell | that tree's `Src/zsh`; also the harness that interprets `ztst.zsh` for the Y series |
 | candidate shell | `target/debug/zshrs` |
-| date | 2026-08-30 |
+| date | 2026-08-30 (core pin, `gate_core.json`); 2026-09-15 (Y pin, `gate.json`) |
 
 The oracle tree must be *built*, and its `Completion/` must match its `Test/`: a
 5.9.999-era `Completion/compinit` uses `${ ... }` nofork command substitution,
@@ -62,8 +66,8 @@ verbatim output of every command in this section is in
 
 ### The default `--zsh-build` is a partial tree
 
-`src/zsh` (gitignored, always present, used when no `--zsh-build` is passed) is
-a **5.9.0.3-test** checkout at `e73499b372`. The dev tree is **5.9.999.3-test**
+`src/zsh` (gitignored, not tracked, so it may be absent; tried after
+`--zsh-build` and `$ZTST_ZSH_BUILD`) is, where present, a **5.9.0.3-test** checkout at `e73499b372`. The dev tree is **5.9.999.3-test**
 at `599af4604f`. They are not the same corpus:
 
 | | `src/zsh` (default) | dev tree |
@@ -128,11 +132,13 @@ Forced through with `--allow-cross-reference` that comparison reports
 `UNCHANGED=33`, which unlabelled reads as "the gate passed". It is not a result:
 the two trees' `Y01completion.ztst` are different files.
 
-The two committed pins (`gate.json`, `gate_core.json`) were taken before this
-block existed, so they gate as `UNVERIFIABLE` — their tree version is checked
-(and does catch the default-tree hazard), nothing else is. They are left as
-they are rather than silently retaken, because retaking a pin also rewrites the
-ledger of what is failing. Re-pin deliberately:
+`gate.json` was re-pinned on 2026-09-15 (zshrs 0.12.64, sha256
+`4c112e2f43f584ec`) and carries this block, so it gates as `SAME` or
+`CROSS-REFERENCE`. `gate_core.json` is still the 2026-08-30 pin, taken before
+this block existed, so it gates as `UNVERIFIABLE` — its tree version is checked
+(and does catch the default-tree hazard), nothing else is. It is left as it is
+rather than silently retaken, because retaking a pin also rewrites the ledger
+of what is failing. Re-pin deliberately:
 
     $P scripts/ztst_compsys.py --sut target/debug/zshrs --zsh-build $B --timeout 180 --pin
 
@@ -201,8 +207,14 @@ host-specific baseline failure to subtract.
 
 ### zshrs (`--fx off`)
 
-`tests/ztst_compsys/zshrs_0.12.49_dde99902_fxoff.txt` (current) and
-`..._29ee728e_fxoff.txt` (the previous pin), both over the full 229:
+Current pin: `gate.json`, pinned 2026-09-15 against zshrs 0.12.64 (sha256
+`4c112e2f43f584ec`) on the `599af4604f` tree — 222 pass, 7 xfail, nothing
+failing, identical to the zsh baseline. No `.txt`/`.json` run report for that
+binary is committed; the per-assertion statuses are in `gate.json` itself.
+
+Historical (as of 2026-08-30, v0.12.49):
+`tests/ztst_compsys/zshrs_0.12.49_dde99902_fxoff.txt` and
+`..._29ee728e_fxoff.txt`, both over the full 229:
 
     @29ee728e   files=6 assertions=229 fail=88 notrun=1 pass=37 unknown=96 xfail=7
     @dde99902   files=6 assertions=229 fail=37 notrun=1 pass=88 unknown=96 xfail=7
@@ -219,8 +231,10 @@ host-specific baseline failure to subtract.
 The 51 that moved are almost all the `lc=`/`rc=` fix; see "Yield" for the
 measurement that says so rather than assuming it.
 
-Y03arguments does not fail, it hangs: at assertion 4 the shell under test exits
-and the driver blocks forever waiting for its finish widget. `--timeout 180`
+Historical (as of 2026-08-30, v0.12.49; all 100 Y03arguments assertions pass
+on the 2026-09-15 pin): Y03arguments did not fail, it hung: at assertion 4 the
+shell under test exited and the driver blocked forever waiting for its finish
+widget. `--timeout 180`
 reproduces exactly the same per-assertion statuses as round 5's `--timeout 900`
 (verified by gating one against the other, below), so the pin uses 180 s and
 records the timeout as part of the pinned state.
@@ -233,9 +247,10 @@ in progress, so every number here names the binary it came from:
 | tag | mtime | what it is |
 |---|---|---|
 | `0.12.46` | round 5 | the first pin |
-| `0.12.49 @06:25` | 2026-08-30 06:25 | round 6's pin, `gate.json` / `gate_core.json` |
-| `0.12.49 @29ee728e` | 2026-08-30 07:58 | round 7's runs; `gate.json` |
+| `0.12.49 @06:25` | 2026-08-30 06:25 | round 6's pin of both `gate.json` and `gate_core.json` (commit 6ca13ce7bc); superseded |
+| `0.12.49 @29ee728e` | 2026-08-30 07:58 | round 7's runs; `gate.json` until 2026-09-14, and still `gate_core.json` |
 | `0.12.49 @dde99902` | 2026-08-30 10:38 | round 8's runs (sha256 `dde99902f0fa812d`, snapshotted before use so a peer relink cannot move it mid-run) |
+| `0.12.64 @4c112e2f` | 2026-09-15 01:22 | current `gate.json` (commit ff7a8d861c) |
 
 Between @06:25 and @29ee728e a peer landed a fix for `argv+=( ... )`, which
 round 5 and 6 had recorded as the top Y-series divergence:
@@ -244,8 +259,10 @@ round 5 and 6 had recorded as the top Y-series divergence:
     @06:25       n=1 1=<h:desc> 2=<>
     @29ee728e    n=2 1=<desc>   2=<h:desc>      (= zsh)
 
-Both pins were retaken against @29ee728e, so the pin and every number in this
-file describe the same bytes. The identity block records `sha256_prefix`,
+Both pins were retaken against @29ee728e (commit 51a5ee7d76), so at that point
+the pins and every number in this file described the same bytes. `gate.json`
+was later retaken twice (see "The pin has not gone stale"); `gate_core.json`
+was not. The identity block records `sha256_prefix`,
 `size` and `mtime`; the `path` it records is the copy in scratch the run used,
 because `target/debug/zshrs` moved again (to `97c9df54`) 50 minutes later. The
 sha256 is what makes the pin checkable, not the path.
@@ -255,7 +272,8 @@ binary again, `97c9df54` (08:48), and all five still reproduce there, so the
 findings are not tied to the snapshot even though the counts are.
 
 Y series moved `pass 32 -> 37`, `fail 93 -> 88`. The wider suite barely moved:
-of the 431 assertions `gate_core.json` pinned as failing, exactly 3 now pass
+of the 431 assertions the @06:25 core pin (commit 6ca13ce7bc) recorded as
+failing, exactly 3 now pass
 (`A01grammar#29`, `E01options#18`, `V04features#21`) and none regressed, so the
 reductions in `core_minimization.txt` -- taken against @06:25 -- still describe
 @29ee728e for 428 of the 431.
@@ -275,8 +293,18 @@ Through @06:25, none of round 5's 93 Y-series findings had been fixed out from
 under the ledger. @29ee728e is the first binary where that stopped being true:
 `argv+=` was fixed and five assertions moved to pass. That is exactly what the
 gate exists to report — exit `2`, "something moved without regressing" — and
-the pin has been retaken against @29ee728e, so a later gate run compares
-against the current truth rather than against a claim the shell has outgrown.
+the pin was retaken against @29ee728e, so a later gate run compares against the
+current truth rather than against a claim the shell has outgrown.
+
+`gate.json` has since been retaken twice more:
+
+| commit | binary | pinned result |
+|---|---|---|
+| 3d24d68198 (2026-09-14) | built from 6c803455b0 | pass 214, fail 8, xfail 7 |
+| ff7a8d861c (2026-09-15) | built from a8bca1a89d, 0.12.64 | pass 222, xfail 7 |
+
+The gate run before the second re-pin reported `FIXED 8`: Y01 #10 #16 #30 #31
+#33, Y02 #27 #40, Y05 #2 (commit message of ff7a8d861c).
 
 ### What the gate caught while it was being built
 
@@ -333,13 +361,14 @@ never silently the former when it was the latter.
 
 ### Coverage, stated honestly
 
-**Wider suite.** `gate_core.json` pins 433 assertions as `fail`/`xpass`. The
-reducer was pointed at all of them except the five pty-driven files, whose
+**Wider suite.** The @06:25 core pin (commit 6ca13ce7bc) recorded 433
+assertions as `fail`/`xpass`; the current `gate_core.json` (@29ee728e) records
+430. The reducer was pointed at all 433 of the @06:25 pin except the five pty-driven files, whose
 probes cost seconds rather than milliseconds:
 
 | | |
 |---|---|
-| pinned `fail`/`xpass` | 433 |
+| pinned `fail`/`xpass` (@06:25 pin) | 433 |
 | less the five pty-driven files (`X02zlevi`, `X04zlehighlight`, `X06termquery`, `W02jobs`, `V08zpty`) | −83 |
 | **attempted** | **350** |
 | reduced to a diverging standalone script | 323 (92%) |
@@ -367,7 +396,9 @@ small budget, and `X04zlehighlight`'s single root cause is above. `W02jobs` and
 The reductions were taken against @06:25; see "Which binary" for why that is
 still valid for 428 of the 431 core assertions.
 
-**Y series.** 88 failing assertions, sampled rather than reduced wholesale --
+**Y series** (historical, as of 2026-08-30, v0.12.49 @29ee728e; the
+2026-09-15 pin has no failing Y assertion). 88 failing assertions, sampled
+rather than reduced wholesale --
 a pty probe costs seconds and Y03arguments's probes cost the full timeout.
 The sampling rule: cluster first, then reduce one representative of every
 cluster with two or more members, plus every singleton. 11 assertions, all
@@ -375,7 +406,13 @@ converged. That gives a repro for each *distinct* shape rather than 88 repros
 of the same three bugs. Coverage: 11 of 88 reduced (13%), but the 9 clusters
 they represent cover all 88.
 
-### The repros
+### The repros (historical)
+
+Historical, as of 2026-08-30 (v0.12.49, @06:25 / @29ee728e). Every Y
+assertion these scripts were reduced from is `pass` or `xfail` in the
+2026-09-15 `gate.json` pin, so the "what it shows" column below records the
+divergence at reduction time, not current behaviour. The scripts are kept for
+provenance and have not been re-checked against a current binary.
 
 Round 6's five Y reductions are in `minimization.txt` (against @06:25; the
 `h:desc` output it records for `y05describe_001.zsh` and `y06values_001.zsh` is
@@ -411,8 +448,9 @@ between @06:25 and @29ee728e: `Y02compmatch#49`, `#53`, `#54`, `#56` and
 | `y05describe_003.zsh` | 29 | `_describe` with two `(...)` groups: no matches, buffer never reaches `tst bx` |
 | `y06values_001.zsh` | 27 | `_values`: matches missing from the listing |
 
-`y03arguments_004.zsh` reproduces a hang, so wrap the second command in
-`timeout 30` -- zsh exits 0 with four lines, zshrs never returns.
+`y03arguments_004.zsh` reproduced a hang (as of 2026-08-30, v0.12.49), so wrap
+the second command in `timeout 30` -- zsh exited 0 with four lines, zshrs never
+returned.
 
 Known limitations, both measured:
 
@@ -444,12 +482,18 @@ score.
 
     files=70 assertions=2523 fail=4 pass=2381 skip=2 unknown=115 xfail=21
 
-Five files are skipped by their own `%prep` on this host — process substitution
-unavailable, PRIVILEGED needs root, and `zsh/pcre`, `zsh/param/private`,
+Five files are skipped by their own `%prep` in this run (as of 2026-08-30) —
+process substitution reported unavailable, PRIVILEGED needs root, and `zsh/pcre`, `zsh/param/private`,
 `zsh/db/gdbm` were disabled by `configure`. The 4 baseline failures are all in
 V01zmodload and come from the module symlink farm this runner stages rather than
 a real `make install.modules` (e.g. `no such module zsh/regex`). Everything is
 scored against this baseline, never against 2523.
+
+The D03procsubst skip was the runner's fault, not the host's: its `%prep` greps
+`$ZTST_testdir/../config.h` for `PATH_DEV_FD`/`HAVE_FIFOS`, and the runner did
+not link `config.h` into the run root until commit b122837b16 (2026-10-01).
+Every core number in this file predates that fix; D03procsubst's assertions
+are absent from them.
 
 Two staging fixes were needed to get here, both of them things `make check`
 already does and this runner was not doing (round 5 never ran these files):
@@ -459,6 +503,9 @@ already does and this runner was not doing (round 5 never ran these files):
   baseline failures that were the runner's fault, not the shell's.
 * a `config.modules` symlink in the run root. Without it V01zmodload's whole
   `%prep` aborts and all 41 of its assertions never run.
+
+A third, added later (b122837b16): a `config.h` symlink in the run root, for
+D03procsubst's `%prep` (above).
 
 ### Scores
 
@@ -752,9 +799,11 @@ The mechanism, from a raw pty capture of the same completion in both shells:
     zsh    ^[[J<LC><NO><RC>alpha<EC>^M
     zshrs  ^[[J^[[<NO>malpha<EC>^M
 
-`ec=` is honoured; `lc=`/`rc=` are not -- the `\e[` and `m` around the colour
-are emitted literally instead (`src/ported/zle/complist.rs:738-743` documents
-why). Upstream's assertions therefore see no match lines at all.
+As of @29ee728e, `ec=` was honoured and `lc=`/`rc=` were not -- the `\e[` and
+`m` around the colour were emitted literally instead, so upstream's assertions
+saw no match lines at all. Fixed on @dde99902: `src/ported/zle/complist.rs::zlrputs`
+now takes `COL_LC`/`COL_RC` from `MCOLORS` (`Src/Zle/complist.c:569,571`), and
+its doc comment records why the hardcoded form looked right.
 
 ### Wider suite: the failures do NOT cluster tightly
 
@@ -848,8 +897,9 @@ shape in the corpus: one assertion corrupting the rest.
 Four files stop rather than fail. A hang hides every assertion after it, so it
 is worth more than any single failure: the four together swallow 152 of the 212
 assertions the run never announces, plus the four hanging assertions
-themselves. (Of the remaining 60, 32 are in files whose own `%prep` skips them
-on this host -- `D03procsubst` 20, `P01privileged` 8, `V15nearcolor` 4 -- and 28
+themselves. (Of the remaining 60, 32 are in files whose own `%prep` skipped
+them in this run -- `D03procsubst` 20 (a runner fault, fixed in b122837b16; see
+"The zsh baseline is not clean here"), `P01privileged` 8, `V15nearcolor` 4 -- and 28
 are behind `D10nofork`, which aborts rather than hangs.)
 
 The hang point is read straight out of the pin: `parse_run` marks an assertion
@@ -932,7 +982,8 @@ Nothing here edits, filters or relaxes an upstream assertion. `.ztst` files,
   measured difference. Verified: a byte-identical substitution moves nothing
   (`yield_patch_description.txt`, noop arm).
 * The shell binary is copied into the run directory once per run (see above).
-* `ZTST_exe` and `config.modules` are supplied as `make check` supplies them.
+* `ZTST_exe`, `config.modules` and `config.h` are supplied as `make check`
+  supplies them.
 * Modules are symlinked from the build tree rather than `make install.modules`;
   V01zmodload notices the difference (4 baseline failures).
 * A hung probe's shell escapes `killpg` — `zpty`'s child `setsid()`s to take the
@@ -940,20 +991,25 @@ Nothing here edits, filters or relaxes an upstream assertion. `.ztst` files,
   launched through. Without that it survives at ~100% CPU and slows every later
   probe.
 
-## Attributed divergences (Y series)
+## Attributed divergences (Y series, historical)
+
+Historical, as of 2026-08-30 (v0.12.49, @29ee728e / @dde99902). The
+2026-09-15 `gate.json` pin (0.12.64) records every Y assertion as `pass` or
+`xfail`, so none of the items below is a live divergence on that binary.
 
 The 88 failing assertions on @29ee728e, in blast-radius order. Full detail and
 expected-vs-actual diffs are in
 `zshrs_0.12.49_29ee728e_fxoff.failures.txt`; the grouping is
 `cluster_Y.txt`. The 37 that survive on @dde99902 are in
 `zshrs_0.12.49_dde99902_fxoff.failures.txt` and `cluster_Y_layers.txt` — items 2
-onwards below are what is left, which is the point of the layers column.
+onwards below were what was left at @dde99902, which is the point of the layers
+column.
 
 1. **`ZLS_COLORS` `lc=`/`rc=` are ignored when listing matches. FIXED on
    @dde99902.** 73 of the 88 mentioned it, 53 carried it as their only cause,
    and **51 actually flipped** (`yield_list_colors.txt`). `ec=` was honoured and
-   the `\e[`/`m` around the colour were hardcoded
-   (`src/ported/zle/complist.rs:738-743` documented why). Because upstream keys
+   the `\e[`/`m` around the colour were hardcoded (the fix is in
+   `src/ported/zle/complist.rs::zlrputs`). Because upstream keys
    every listed match on `<LC><xx><RC>...<EC>`, no match line survived into the
    captured output at all. Measured directly, same completion, both shells:
    zsh `^[[J<LC><NO><RC>alpha<EC>`, zshrs `^[[J^[[<NO>malpha<EC>`. 22 mentioned
@@ -1006,7 +1062,8 @@ in front of every description built by `_description`. Fixed between @06:25 and
 | file | what it is |
 |---|---|
 | `baseline_zsh_5.9.999.3-test.{txt,json}` | the zsh Y-series baseline, per assertion |
-| `zshrs_0.12.49_dde99902_fxoff.{txt,json,failures.txt}` | zshrs Y series on the current binary, and every failure's diff; the first run carrying a recorded reference identity |
+| `zshrs_0.12.49_dde99902_fxoff.{txt,json,failures.txt}` | zshrs Y series @dde99902 (2026-08-30), and every failure's diff; the first run carrying a recorded reference identity. Superseded by the 2026-09-15 `gate.json` pin, which has no committed run report |
+| `minimization_round7.{txt,json}` | round 7's Y reductions (@29ee728e), one per cluster plus every singleton |
 | `zshrs_0.12.49_29ee728e_fxoff.{txt,json,failures.txt}` | round 7's run, kept for provenance and as the yield "before" |
 | `reference_identity.txt` | `--identity` for the default tree and the dev tree, and the partial-corpus refusal |
 | `reference_gate_refusal.txt` | the gate refusing a cross-reference comparison, and the same run forced through with `--allow-cross-reference` |
@@ -1019,7 +1076,7 @@ in front of every description built by `_description`. Fixed between @06:25 and
 | `zshrs_0.12.46_fxoff.{txt,json,failures.txt}` | round 5's run, kept for provenance |
 | `zshrs_0.12.46_fxon_Y01_Y05_Y06.txt` | round 5's `--fx on` control |
 | `comparison_baseline_vs_zshrs.txt` | per-assertion baseline-vs-candidate verdicts |
-| `gate.json` | the Y-series pin: per-assertion status + binary identity |
+| `gate.json` | the Y-series pin: per-assertion status + binary identity + reference identity (re-pinned 2026-09-15, 0.12.64) |
 | `gate_0.12.46_to_0.12.48.txt` | the gate run proving round 5's pin is not stale |
 | `minimization.txt` | Y assertion → minimal repro, with before/after and budgets |
 | `repros/*.zsh` | the generated standalone Y repros |

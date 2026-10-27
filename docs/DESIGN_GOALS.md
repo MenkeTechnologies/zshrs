@@ -2,15 +2,15 @@
 
 This document is the foundational charter for zshrs. It captures WHY the project exists, WHAT the bar is, HOW design decisions get made, and what's explicitly out of scope. Read this before contributing, before opening an issue, before suggesting a feature, and before evaluating any tradeoff.
 
-Companion docs: [`ROADMAP.md`](./ROADMAP.md) for phase-by-phase execution plan; [`tests/no_tree_walker_dispatch.rs`](./tests/no_tree_walker_dispatch.rs) and [`tests/tree_walker_absent.rs`](./tests/tree_walker_absent.rs) for the load-bearing test invariants.
+Companion docs: [`ROADMAP.md`](./ROADMAP.md) for phase-by-phase execution plan; [`tests/no_tree_walker_dispatch.rs`](../tests/no_tree_walker_dispatch.rs) and [`tests/tree_walker_absent.rs`](../tests/tree_walker_absent.rs) for the load-bearing test invariants.
 
 ---
 
 ## [0x00] Mission
 
-zshrs is the **endgame shell for its maintainer's lifetime** — the substrate that hosts the most powerful single-author CLI environment ever assembled (zpwr at 172k LOC + 506+ subcommands, zsh-more-completions at 39,566 files, custom .zshrc spanning decades). It exists because zsh's 1970-era architecture cannot be patched into handling that scale, no matter how many userspace optimization layers (zinit turbo, p10k instant prompt, zwc, zcompile, BG_NICE) are stacked on it.
+zshrs is the **endgame shell for its maintainer's lifetime** — the substrate that hosts the most powerful single-author CLI environment ever assembled (zpwr at 172k LOC + 506+ subcommands, zsh-more-completions at 47,394 completion files as of 2026-10-27, v0.13.56, custom .zshrc spanning decades). It exists because zsh's 1970-era architecture cannot be patched into handling that scale, no matter how many userspace optimization layers (zinit turbo, p10k instant prompt, zwc, zcompile, BG_NICE) are stacked on it.
 
-**zshrs is not "Rust zsh."** It's the first JIT-compiled Unix shell — bytecode VM + Cranelift JIT to native x86-64/aarch64 (Nushell's IR, 0.96.0+, is bytecode but interpreted and never persisted) + persistent worker pool + **rkyv-mmapped** completion / autoload bytecode (the only persisted shell bytecode cache) + read-only SQLite **mirrors** for SQL inspection (no effect on cache hit/miss or execution) + AOP intercepts + native async/parallel ops + 24 in-process coreutils builtins + **first shell to expose its native-plugin interface as a stable, versioned, independently-published ABI** (a crates.io SDK crate + `cdylib`s via `zmodload -R`, version-gated — bash `enable -f` and zsh `zmodload` load native code too, but only against the shell's private build-tree headers with no stable ABI) + — through the [`zshrs-native`](https://github.com/MenkeTechnologies/zshrs-native) companion build — **the first shell with a version control system compiled into it as a builtin** (`git`, served natively, no fork/exec) and **the first with an fzf-compatible finder compiled in** (every other shell's fzf integration spawns the binary; see [§0x07b] for both) + **the first Bourne-lineage shell with a language server and a debug adapter in its own binary** (`zshrs --lsp` / `zshrs --dap` — Nushell's `nu --lsp` and Elvish's `elvish -lsp` got there first outside that lineage, but bash, zsh, ksh, dash and fish have neither, and `bash-language-server` / `fish-lsp` / `vscode-bash-debug` are separate Node/TypeScript projects re-deriving a parser the shell already owns; zshrs's server answers from the shell's own lexer, parser and live compsys completers). These are capabilities zsh's architecture cannot have at any speed. zshrs is the substrate that finally fits the workload. The filtered register of what originated here — twenty-nine entries, each with its near misses named, plus the claims that were cut — is [`INVENTIONS.md`](INVENTIONS.md).
+**zshrs is not "Rust zsh."** It's the first JIT-compiled Unix shell — bytecode VM + Cranelift JIT to native x86-64/aarch64 (Nushell's IR, 0.96.0+, is bytecode but interpreted and never persisted) + persistent worker pool + **rkyv-mmapped** completion / autoload bytecode (the only persisted shell bytecode cache) + read-only SQLite **mirrors** for SQL inspection (no effect on cache hit/miss or execution) + AOP intercepts + native async/parallel ops + 48 in-process coreutils builtins (the `EXT_BUILTIN_NAMES` entries GNU coreutils also installs; list in `README.md`) + **first shell to expose its native-plugin interface as a stable, versioned, independently-published ABI** (a crates.io SDK crate + `cdylib`s via `zmodload -R`, version-gated — bash `enable -f` and zsh `zmodload` load native code too, but only against the shell's private build-tree headers with no stable ABI) + — through the [`zshrs-native`](https://github.com/MenkeTechnologies/zshrs-native) companion build — **the first shell with a version control system compiled into it as a builtin** (`git`, served natively, no fork/exec) and **the first with an fzf-compatible finder compiled in** (every other shell's fzf integration spawns the binary; see [§0x07b] for both) + **the first Bourne-lineage shell with a language server and a debug adapter in its own binary** (`zshrs --lsp` / `zshrs --dap` — Nushell's `nu --lsp` and Elvish's `elvish -lsp` got there first outside that lineage, but bash, zsh, ksh, dash and fish have neither, and `bash-language-server` / `fish-lsp` / `vscode-bash-debug` are separate Node/TypeScript projects re-deriving a parser the shell already owns; zshrs's server answers from the shell's own lexer, parser and live compsys completers). These are capabilities zsh's architecture cannot have at any speed. zshrs is the substrate that finally fits the workload. The filtered register of what originated here — twenty-nine entries, each with its near misses named, plus the claims that were cut — is [`INVENTIONS.md`](INVENTIONS.md).
 
 ---
 
@@ -50,7 +50,7 @@ These are load-bearing numerical commitments, not aspirations.
 | Builtin dispatch | <1µs | — |
 | Multicore utilization (runtime) | All cores active during parallel work | — |
 
-"Fully featured" means: 39,566+ completions registered, full .zshrc loaded, full zpwr loaded (506+ subcommands), all hooks installed, prompt rendered. **NEVER instant-prompt fakery.** First paint = full functionality, period.
+"Fully featured" means: the full zsh-more-completions corpus registered (47,394 files as of 2026-10-27, v0.13.56), full .zshrc loaded, full zpwr loaded (506+ subcommands), all hooks installed, prompt rendered. **NEVER instant-prompt fakery.** First paint = full functionality, period.
 
 **Comparison to existing shells (M-series Apple Silicon, full config):**
 
@@ -98,7 +98,7 @@ Hard rules:
 
 **This is a one-way ratchet.** Removed banners and warnings never come back. Future PRs that reintroduce friendly verbiage are rejected.
 
-The G0 phase in `ROADMAP.md` ships a clippy lint (`#![deny(clippy::print_stdout, clippy::print_stderr)]`) on `bins/zshrs.rs` so the rule is enforced at build time, not just by code review.
+The G0 phase in `ROADMAP.md` adds a clippy lint (`#![deny(clippy::print_stdout, clippy::print_stderr)]`) on `bins/zshrs.rs` so the rule is enforced at build time, not just by code review. Not landed yet: the lint is absent from `bins/zshrs.rs` as of 2026-10-27.
 
 ---
 
@@ -106,9 +106,9 @@ The G0 phase in `ROADMAP.md` ships a clippy lint (`#![deny(clippy::print_stdout,
 
 Architectural hierarchy: **zshrs is the parent runtime, the process supervisor, the dispatch layer for everything else built around it.**
 
-- **stryke** runs INSIDE zshrs (`@`-prefix dispatch via `lib.rs:138-160`). When forced to choose between zshrs and stryke priorities, zshrs wins.
+- **stryke** runs INSIDE zshrs (`@`-prefix dispatch via `set_stryke_handler` / `try_stryke_dispatch` in `src/lib.rs`, registered by the fat binary). When forced to choose between zshrs and stryke priorities, zshrs wins.
 - **zpwr** lives inside zshrs (it's the `.zshrc`-tier user code that zshrs hosts).
-- **External tools** (fzf, ripgrep, eza, atuin, bat, etc.) run as either `host.exec` children or in-process builtins (24 coreutils already are).
+- **External tools** (fzf, ripgrep, eza, atuin, bat, etc.) run as either `host.exec` children or in-process builtins (48 coreutils already are; list in `README.md`).
 - **GUI applications** are a separate track, not part of the CLI substrate.
 
 When designing new features, default to "this lives inside zshrs as a builtin or host op" rather than "this is a separate process zshrs invokes." Builtins cost 0 forks; externals cost 2-5ms each. Millions of commands per day; every fork avoided is real wall time.
@@ -130,11 +130,11 @@ Locked 2026-04-28: zshrs's runtime is a **client/server architecture**. A single
 
 1. **Nothing blocks the shell** — all rkyv shard compilation, image writes, catalog hydration, log rotation, integrity scans run in the daemon's worker pool. Main client thread NEVER calls compile pass synchronously.
 2. **Thin clients only** — clients have ZERO cache-related background threads, polling loops, timers, or SQLite handles. Per-client cache overhead <5 MB beyond the zsh interpreter footprint. (Clients DO have a general worker pool for concurrent primitives — `async`/`await`/`pmap` — but never for cache work.)
-3. **Single cache directory** — `~/.zshrs/` holds index.rkyv + images/{hash8}-{slug}.rkyv shards + catalog.db + history.db + zshrs.log + daemon.sock + daemon.pid. Trade explicit: full `rm -rf ~/.zshrs/` nukes everything; user accepts the loss.
+3. **Single cache directory** — `~/.zshrs/` holds index.rkyv + images/{hash8}-{slug}.rkyv shards + catalog.db + history.db + cache.db + zshrs.log + zshrs-daemon.log + zshrs-recorder.log + daemon.sock + daemon.pid (full layout: `daemon/paths.rs`, `docs/DAEMON.md`). Trade explicit: full `rm -rf ~/.zshrs/` nukes everything; user accepts the loss.
 4. **POSIX mode gates the entire layer off** — `--posix` / `emulate sh` / argv[0] basename `sh`/`dash`/`bash` → no daemon spawn, no cache dir created, no `z*` builtins available. Critical for `/bin/sh → zshrs` symlink in containers / cron / init.
-5. **Custom builtin namespace = `z*` prefix, no clash with upstream zsh `z*`** — `zcache`, `zls`, `zid`, `zping`, `ztag`, `zsend`, `znotify`, `zsubscribe`, `zjob` (planned). Build-time anti-collision check vs upstream zsh's z-namespace.
+5. **Custom builtin namespace = `z*` prefix, no clash with upstream zsh `z*`** — `zcache`, `zls`, `zid`, `zping`, `ztag`, `zsend`, `znotify`, `zsubscribe`, `zjob`. Build-time anti-collision check vs upstream zsh's z-namespace.
 6. **Shard rebuild ordering is strict** — atomic-rename shard FIRST, then rewrite index. Generation counter on each shard header drives client re-mmap on stale handles. Reverse order = corrupt reads.
-7. **Daemon spawn-on-demand** — first zshrs client to launch checks for `daemon.sock`; if absent, fork-spawns daemon. Subsequent N clients just connect. `flock` on `daemon.pid` enforces singleton.
+7. **Daemon is a standalone binary, clients are connect-only** — `zshrs-daemon` is started by the user or a service manager (systemd / launchd / `brew services`), never by the shell. Each client probes `daemon.sock` once at startup (`src/extensions/daemon_presence.rs`): no handshake, no spawn, no respawn; daemon absent → degraded source-interp mode. `flock` on `daemon.pid` enforces singleton.
 8. **fsnotify exclusively daemon-side** — clients never run a fsnotify watcher. 100×-watcher thundering-herd is fatal.
 
 **Patent significance:** the daemon architecture is the **second omnibus claim** in the patent strategy, independently assertible from the unified-AOT claim. New work touching the daemon, IPC verbs, federation, or cross-shell semantics is patent-relevant dependent-claim material.
@@ -182,11 +182,11 @@ The default response to "should we add X" is "does X materially change what's po
 
 ### No tree walker, ever
 
-Phase F (committed `3c19003935`) deleted the tree-walker dispatch (`execute_simple/pipeline/list/compound/command_bg`, ~1,275 LOC) from `src/exec.rs`. Every `ShellCommand` variant now compiles to `fusevm::Chunk` and runs on `fusevm::VM`. `tests/tree_walker_absent.rs` enforces this at the source level — any reintroduction fails CI.
+Phase F (committed `3c19003935`) deleted the tree-walker dispatch (`execute_simple/pipeline/list/compound/command_bg`, ~1,275 LOC) from `src/exec.rs` (that file has since moved to `src/ported/exec.rs`). Every `ShellCommand` variant now compiles to `fusevm::Chunk` (`src/extensions/compile_zsh.rs`) and runs on `fusevm::VM`. `tests/tree_walker_absent.rs` enforces this at the source level — any reintroduction fails CI.
 
 ### Every PR ships behavioral tests
 
-Pin exact stdout + exit. The 96 tests from Phase F are the floor; Phase G–O adds 400+ more. **No invariant, no merge.** When a bug is found, the fix lands with a test that fails before the fix and passes after.
+Pin exact stdout + exit. The Phase F tests (`tests/no_tree_walker_dispatch.rs`, `tests/tree_walker_absent.rs`) are the floor; Phase G–O adds 400+ more. **No invariant, no merge.** When a bug is found, the fix lands with a test that fails before the fix and passes after.
 
 ### Compat with the existing world is sacred
 

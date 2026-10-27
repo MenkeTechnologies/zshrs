@@ -42,7 +42,7 @@ The first Unix shell to JIT-compile to native machine code. Bytecode alone is no
 
 ## [0x00] OVERVIEW
 
-zshrs replaces `fork + exec` with a persistent worker thread pool, compiles every command to [fusevm](https://github.com/MenkeTechnologies/fusevm) bytecodes, and **persists compiled chunks only in rkyv shards** under `~/.zshrs/images/` (single-directory rule — every zshrs file lives under `$ZSHRS_HOME` / `~/.zshrs/`; see [`docs/DAEMON.md`](docs/DAEMON.md)). Beside that tree, **`catalog.db` and related SQL views are read-only mirrors** for inspection (`dbview`, ad-hoc SQL): daemon-hydrated, **never authoritative for cache hit/miss or execution**. They are not a second shell cache. **`history.db`** holds history only — it is unrelated to bytecode caching. The result: shell startup, command dispatch, globbing, completion, and autoloading are all faster by orders of magnitude.
+zshrs replaces `fork + exec` with a persistent worker thread pool, compiles every command to [fusevm](https://github.com/MenkeTechnologies/fusevm) bytecodes, and **persists compiled chunks only in rkyv** under `~/.zshrs/` (`index.rkyv`, `autoloads.rkyv`, `scripts.rkyv`, `deparse.rkyv`, and the shards in `~/.zshrs/images/`; single-directory rule — every zshrs file lives under `$ZSHRS_HOME` / `~/.zshrs/`; see [`docs/DAEMON.md`](docs/DAEMON.md)). Beside that tree, **`catalog.db` and related SQL views are read-only mirrors** for inspection (`dbview`, ad-hoc SQL): daemon-hydrated, **never authoritative for cache hit/miss or execution**. They are not a second shell cache. **`history.db`** holds history only — it is unrelated to bytecode caching. The result: shell startup, command dispatch, globbing, completion, and autoloading are all faster by orders of magnitude.
 
 ```text
                  [ THE MENKE-TECH REVOLUTIONARY FLYWHEEL ]
@@ -158,8 +158,9 @@ Autoload function    ──► autoloads.rkyv ──► deserialize Chunk ──
                          (first call in a process compiles the definition
                           file and writes the chunk through; later processes
                           skip lex+parse+compile entirely. Each entry is
-                          stamped with the definition file's mtime + length,
-                          so an edited function recompiles.)
+                          stamped with the resolved fpath directory and a
+                          SHA-256 of the exact definition text, so an
+                          edited function recompiles.)
 ```
 
 Measured on `_git` (424 KB of shell, the largest completer in common use):
@@ -196,8 +197,9 @@ executable, then `$PATH`.
 `zshrs-recorder` runs the pass at the end of every recording (skip it
 with `--no-prewarm`), which is where it belongs: the parser walks
 process-global lexer state, so this must never run beside a live ZLE.
-Entries already current are skipped by mtime + length, so a re-run after
-installing one plugin costs one `stat` per completer. Budget roughly
+Entries already current are skipped by a SHA-256 of their text, so a re-run
+after installing one plugin reads and hashes each completer but compiles
+only the new ones. Budget roughly
 **6× the source size** — a 13k-completer directory compiles to 165 MB in
 35 s (debug build).
 
@@ -385,7 +387,7 @@ Persistent pool of [2-18] threads. Configurable:
 size = 8
 
 [completion]
-bytecode_cache = true
+ast_cache = true
 
 [history]
 async_writes = true
@@ -410,7 +412,7 @@ track_all = false          # true = arm every parameter and every shell
 
 ## [0x07] RKYV CACHE LAYOUT
 
-Compiled bytecode and plugin/autoload payloads live in **rkyv** under `~/.zshrs/images/`:
+Compiled bytecode and plugin/autoload payloads live in **rkyv** under `~/.zshrs/` (`$ZSHRS_HOME`); shards go in `~/.zshrs/images/`:
 
 | Path | Purpose |
 |------|---------|
@@ -718,7 +720,7 @@ ${var:u} / ${var:l}               # upper/lower case (zsh postfix)
 ### Background, async, coprocesses
 
 ```zsh
-sleep 30 &                        # fork + setsid; parent gets Status(0)
+sleep 30 &                        # fork; child runs entersubsh(ASYNC|PGRP); parent gets Status(0)
 jobs; fg %1; wait $!              # job control
 async 'expensive-task' | xargs await   # worker-pool, no fork
 coproc { body }                   # bidirectional pipe; $COPROC=[rd_fd, wr_fd]
@@ -771,7 +773,7 @@ cargo test --test examples_demos_ci          # full sweep, ~46s parallel
 - Full bash compatibility via emulation
 - **Native fish-ported line-editor engines** (ON by default; every engine is refused when `RCS` is unset, so bare `zshrs -f` stays byte-identical to `zsh -f` for parity, and per-feature `false` in `~/.zshrs/zshrs.toml` `[zle]` opts out): syntax highlighting (lexer-driven command/keyword/quote/redirection/path coloring with command-validity and file-existence checks; the engine is the fish port, the palette and word-level classification are `fast-syntax-highlighting`'s — command-type ladder, brackets-by-nesting-level pass, glob/variable/path/option/math/here-string/case styles, secondary theme inside `$(…)`, and the `autoload` / `source` / `printf` chromas — so the native pass renders the same as the plugin it replaces), history autosuggestions (ghost text, accept with →/End, word-wise accept with forward-word), prefix/substring up-arrow history search, and bracket/quote auto-pairing (zsh-autopair port) — ports of the fish-shell Rust engines that zsh-syntax-highlighting, zsh-autosuggestions, and zsh-history-substring-search recreate in script. Existing plugin config applies (`ZSH_HIGHLIGHT_STYLES`, `ZSH_AUTOSUGGEST_*`, `HISTORY_SUBSTRING_SEARCH_*`, `AUTOPAIR_*`); the native engines stay authoritative even with the script plugins loaded (their config honored, their widgets subsumed); `ZSHRS_NATIVE_ZLE_FX=0` force-disables. Per-keystroke passes are wall-clock budgeted (`ZSHRS_ZLE_{HIGHLIGHT,AUTOSUGGEST}_BUDGET_MS`, default 8) so huge directories or PATHs can never lag typing
 - Fish-style abbreviations
-- **Builtins**: zsh's own ports plus zshrs extensions (the latter including 48 coreutils and 6 parallel/async primitives) — see the [Reference](https://menketechnologies.github.io/zshrs/reference.html) for the full catalog
+- **Builtins**: zsh's own ports plus zshrs extensions (the latter including the in-process coreutils and the parallel/async primitives listed above) — see the [Reference](https://menketechnologies.github.io/zshrs/reference.html) for the full catalog
 - **Self-contained `fpath`** — zsh's whole function tree (`Completion/**` + `Functions/**`, flattened the way `make install` flattens it) is packed into the binary at build time and written to `~/.zshrs/functions` on first run, alongside zshrs's own per-builtin completions. That directory replaces the host zsh tree at that tree's index in an inherited `FPATH`, and sits last otherwise, so directories a config prepends out-rank it. The bundle is placed when the startup `fpath` is built (from the default or an inherited `FPATH`); a later `fpath=( … )` or `fpath+=( … )` stores exactly what was assigned, as in zsh. Host zsh installation directories are dropped — from the compiled-in default and from an inherited `FPATH` alike — so `<prefix>/share/zsh/<version>/functions` never shadows the bundle; `share/zsh/site-functions` (third-party completions) is kept. zshrs's `compinit`, `_git` and `_describe` are the ones it shipped with, and a Homebrew zsh upgrade cannot change how the shell completes. User and plugin directories are untouched. The tree is re-written when the bundle's content hash changes, not merely when the version does
 - **`async_precmd` hook** — precmd-style functions registered here run on a pool worker thread instead of blocking the prompt, so a slow vcs status or network check never delays the prompt paint. The batch is serialized against the shell thread's own shell code — parameter scopes are one counter and one table, shared — so a widget, hook or command waits for a batch that is already running, and withdraws one the pool has not started yet (its hooks run at the next prompt). Plain typing never waits: builtin widgets open no scope. Registered the normal way, `add-zsh-hook async_precmd my_fn`: zshrs ships an `add-zsh-hook` whose hook list knows the name, since upstream's fixed list rejects it
 - **Bundled `man` / `info`** — zsh's manual pages (`zsh`, `zshall`, `zshbuiltins`, `zshexpn`, `zshmisc`, `zshoptions`, `zshparam`, `zshzle`, `zshcompsys` …) and the Texinfo manual ship in the binary the same way, materialising to `~/.zshrs/man/man1` and `~/.zshrs/info`. Those directories are prepended to `MANPATH` and `INFOPATH` with an empty trailing entry, so the system's own search path is still spliced in and every other page on the machine keeps resolving. `man zshall` and `info zsh` work on a host with no zsh installed. zshrs's own pages (`zshrs`, `zshrsall`) ship beside them, and the bundled `zshall` `.so`-includes `zshrsall`, so `man zshall` documents the zshrs superset (zshrs-only builtins, daemon, AOT, intercepts, parity modes) after the zsh sections. `run-help`'s help database and the `newuser` script ship the same way, to `~/.zshrs/help` and `~/.zshrs/scripts`, with `HELPDIR` pointed at the former unless the user set one — zsh's own `run-help` hardcodes the help path of whichever zsh built it, which is dead on any other machine. `HELPDIR` is a shell parameter only, never exported: `run-help` is a shell function that reads it out of the parameter table, so there is nothing to put in a child's environment. Under `--zsh` none of this is published (no `MANPATH`/`INFOPATH` entries, no `HELPDIR`), matching zsh.
@@ -1083,8 +1085,10 @@ whole by `cargo test --test ztst_runner -- --ignored ztst_summary --nocapture` �
 is the real figure. On a loaded machine a file's `%prep` can exceed the timeout
 and report every chunk failed; rerun that file alone before believing it.
 
-`tests/gen/ztst_failures.rs` pins each failing chunk as an `#[ignore]`d test,
-regenerated by `cargo test --test ztst_runner -- --ignored gen_ztst_failures`.
+`tests/gen/ztst_failures.rs` pins the chunks that failed in the 2026-10-03 run
+(`179f500e66`) as `#[ignore]`d tests; it has not been regenerated for the
+`ac1f990a20` run below. Regenerate with
+`cargo test --test ztst_runner -- --ignored gen_ztst_failures`.
 Files with failing chunks in the `ac1f990a20` run: `A07control` 2, `C02cond` 2,
 `D04parameter` 1, `E03posix` 1, `K01nameref` 5, `V01zmodload` 41, `V10private` 1,
 `V12zparseopts` 12, `W02jobs` 7, `W03jobparameters` 2, `X04zlehighlight` 16,
@@ -1109,12 +1113,12 @@ The codebase is **structurally divided into ported code vs extensions**, with th
                   ┌────────────────────────────────────────────────────────────────┐
                   │            zshrs workspace: ., daemon, znative, runtime        │
                   ├──────────────────────────────────────────┬─────────────────────┤
-                  │          src/ (runtime crate)            │ vendor/zsh, fish    │
-                  │  ┌────────────────────────────────────┐  │ porting references  │
-                  │  │  src/ported/  — STRICT PORT        │  │ (excluded from the  │
-                  │  │  every .rs ↔ a real Src/<x>.c file │  │ published package,  │
-                  │  │  every fn carries `/// Port of …`  │  │ no build step reads │
-                  │  │  enforced by tests/port_purity.rs  │  │ them)               │
+                  │          src/ (runtime crate)            │ vendor/zsh: packed  │
+                  │  ┌────────────────────────────────────┐  │ into the binary by  │
+                  │  │  src/ported/  — STRICT PORT        │  │ build.rs (functions,│
+                  │  │  every .rs ↔ a real Src/<x>.c file │  │ man1, info, help)   │
+                  │  │  every fn carries `/// Port of …`  │  │ vendor/fish: porting│
+                  │  │  enforced by tests/port_purity.rs  │  │ ref only (unshipped)│
                   │  │  builtins/ · zle/ · modules/ ·     │  ├─────────────────────┤
                   │  │  hist · jobs · params · pattern ·  │  │  daemon/            │
                   │  │  signals · glob · subst · math ·   │  │  zshrs-daemon — IPC │
@@ -1289,23 +1293,26 @@ TCP listener (JetBrains; keeps stdout free for the script), while bare `--dap`
 serves DAP over stdio for clients that spawn the adapter as an executable
 (e.g. VS Code's `DebugAdapterExecutable`).
 
-| Request                               | Behaviour (v1)                          |
+| Request                               | Behaviour                               |
 |---------------------------------------|-----------------------------------------|
-| `initialize` / `configurationDone`    | full capability advertisement, emits `initialized` event |
-| `setBreakpoints`                      | stored per-file, ack with `verified: true` |
-| `launch`                              | spawn `zshrs <program> <args>` as a child process |
-| `threads` / `stackTrace` / `scopes`   | single-thread model, one synthetic frame |
-| `variables`                           | environment snapshot (scope ref 1)      |
-| `evaluate`                            | runs `zshrs -c <expr>` against current `cwd`, returns stdout |
-| `continue` / `next` / `stepIn` / `stepOut` | acked (no per-statement pause in v1) |
-| `pause`                               | emits `stopped { reason: "pause" }`     |
-| `disconnect` / `terminate`            | kills the child process                 |
-| program stdout / stderr               | streamed as DAP `output` events         |
-| child exit                            | fires `terminated` event                |
+| `initialize` / `configurationDone`    | capability advertisement (configurationDone, evaluate-for-hovers, terminate), emits `initialized` event |
+| `setBreakpoints`                      | line breakpoints stored per canonical path (matched against the launched program), ack with `verified: true` |
+| `setExceptionBreakpoints` / `source`  | acked, no effect                        |
+| `launch`                              | runs `<program>` **in-process** with `args` as `$@`, `cwd` applied; the compiler emits `BUILTIN_SET_LINENO` at every top-level statement and its handler calls `dap.rs::check_line`, which pauses the executor on a matching breakpoint; `stopOnEntry` pauses at the first statement |
+| `threads` / `stackTrace`              | one thread, one frame (the launched program at the current `$LINENO`) |
+| `scopes` / `variables`                | three scopes: Locals (ref 1), Specials (ref 2, zsh special parameters), Environment (ref 3) |
+| `evaluate`                            | runs `zshrs -c <expr>` in a fresh process, returns stdout (stderr on failure); does not see the paused script's locals |
+| `continue`                            | resumes the paused executor          |
+| `next` / `stepIn`                     | resumes and pauses at the next top-level statement (no frame-depth tracking) |
+| `stepOut`                             | resumes, same as `continue`          |
+| `pause`                               | pauses at the next statement, emits `stopped { reason: "pause" }` |
+| `disconnect` / `terminate`            | quits the script; after `launch`, a watchdog ends a debuggee blocked in a child when `terminateDebuggee` is true (the default) |
+| program stdout / stderr               | fd 1 / fd 2 captured and streamed as DAP `output` events |
+| script exit                           | `exited { exitCode }` then `terminated` |
 
-Deeper integration (per-statement pause, breakpoint honouring against the
-live interpreter, scope walk-back into the `Param` table) is scaffolded
-via `dap::install_hooks(DapHooks { … })` and lands incrementally.
+Remaining work: a multi-frame call stack (`stackTrace` synthesizes one frame;
+walk-back needs funcstack reflection), step-out and step-over with frame depth,
+and `evaluate` against the paused executor's scope.
 
 ### JetBrains plugin (`editors/intellij/`)
 
@@ -1338,7 +1345,7 @@ Plugin features:
 - **Settings → Tools → zshrs** — point at a non-PATH `zshrs` binary, set
   LSP extra args + env, configure file extensions, control auto-restart.
 
-Requires a paid JetBrains IDE on 2024.2+ (RustRover, IDEA Ultimate,
+Requires a paid JetBrains IDE on 2025.2+ (RustRover, IDEA Ultimate,
 GoLand, PyCharm Pro, WebStorm, RubyMine, PhpStorm, CLion, Rider,
 DataGrip, Aqua) because the platform LSP API is not in Community
 editions.

@@ -37,7 +37,7 @@ machine code, first to persist general bytecode across processes.
 
 The `.fjit` disk cache keeps JIT output warm between shell invocations, so
 hot chunks are not recompiled per process (`fusevm` features `jit`,
-`jit-disk-cache`, `aot` — `Cargo.toml`; blobs are `{op_hash:016x}.fjit`,
+`jit-disk-cache`, `aot` — `Cargo.toml`; blobs are `{op_hash:016x}.{sub:016x}.{tag}.fjit`,
 with slot-kind vectors folded into the cache key so float-specialized code is
 never reused for an integer slot). Strictly larger than entry 1. Managed
 runtimes have done this for years — Android ART's `.oat`, .NET ReadyToRun,
@@ -263,8 +263,9 @@ terminal.
 
 ### 24. Architectural invariants enforced mechanically in CI
 
-`tests/port_purity.rs` freezes the port directory: mirror a real
-`Src/<x>.c`, cite the C function, no new files, no invented helper names.
+`tests/port_purity.rs` requires every file under `src/ported/` to mirror a
+real `Src/<x>.c` and every top-level fn to cite its C source; `build.rs` and
+`tests/ported_fn_names_match_c.rs` reject fn names with no C counterpart.
 `tests/tree_walker_absent.rs` asserts at source level that the old interpreter
 is still gone, backed by 174 behavioral pins in
 `tests/no_tree_walker_dispatch.rs`. The stated reason is drift — contributors

@@ -21,7 +21,7 @@ captures to `zshrs-daemon` as a bundle of records. Two transports:
 
 | Transport | Op | Use case | Example |
 |---|---|---|---|
-| **Batch** | `POST /op/recorder_ingest` | End-of-run; one bundle = the entire init pass. Replaces all rows for `shell_id` in every kind the bundle touches. | `zshrs-recorder` (zsh AOP), a `fish-recorder` runner |
+| **Batch** | `POST /op/recorder_ingest` | End-of-run; one bundle = the entire init pass. Replaces all rows for `shell_id` in every kind the bundle touches. | a `fish-recorder` runner (`zshrs-recorder` folds the same bundle and writes its rkyv shard directly instead of POSTing it) |
 | **Single** | `POST /op/definitions_emit` | Live; one record per call, fired from inside a shadowed builtin / DEBUG trap. Idempotent per `(kind, name, shell_id)`. | bash `function alias { … }` shadow that emits as it sees each `alias` |
 
 Both transports write to the same canonical catalog and respect the
@@ -40,7 +40,7 @@ GET  {DAEMON_URL}/stream/definitions    # SSE — fired on every ingest
 
 Default `DAEMON_URL` = `http://127.0.0.1:7733`. Auth: bearer token in
 `Authorization: Bearer <tok>` if `[http.tokens]` is set in
-`~/.zshrs/daemon.toml`. See `docs/DAEMON_AS_SERVICE.md` §"Authentication".
+`~/.zshrs/zshrs-daemon.toml`. See `docs/DAEMON_AS_SERVICE.md` §"Authentication".
 
 ## Bundle wire format (`recorder_ingest`)
 
@@ -64,11 +64,13 @@ JSON object. Required fields are starred.
 **Bundle is end-state.** When the daemon receives a bundle, it
 *replaces* every row tagged with this `shell_id` in every kind the
 bundle touches. Existing rows from OTHER shells are untouched
-(scope-clear by `shell_id` — see `daemon/canonical.rs:replace_subsystem_tagged`).
+(scope-clear by `shell_id` — see `daemon/canonical.rs::replace_subsystem_with_attrs`).
 
-**`shell_id` precedence:** per-event `shell_id` overrides the
-bundle-level one. Both null = `"zshrs"` (the default for backwards
-compatibility with pre-federation bundles).
+**`shell_id` is bundle-level.** Every row the bundle writes is stamped
+with the bundle's `shell_id`; null = `"zshrs"` (the default for
+backwards compatibility with pre-federation bundles). The daemon's
+bundle-event type (`daemon/recorder_shard.rs` `BundleEvent`) has no
+`shell_id` field, so a per-event `shell_id` is ignored.
 
 ## Event wire format
 
@@ -91,8 +93,8 @@ Each element of `events[]` is a JSON object. Required fields starred:
                                               //  in declaration order
   "value_assoc": [["k1","v1"], ["k2","v2"]],  // array|null — assoc pairs
                                               //  in insertion order
-  "shell_id":    "fish"                       // string|null — per-event
-                                              //  override of bundle.shell_id
+  "shell_id":    "fish"                       // string|null — accepted but
+                                              //  ignored by the daemon
 }
 ```
 
@@ -107,21 +109,23 @@ correlation with `started_at_ns` and breaks cross-bundle merging.
 
 ## Kinds
 
-The `kind` discriminant maps 1:1 to a recorder DefKind in
-`src/recorder/mod.rs:DefKind` and to a canonical-engine subsystem in
-`daemon/definitions.rs:KNOWN_KINDS`. Use exactly these strings:
+The two transports use different `kind` vocabularies.
+
+**`recorder_ingest` events** are folded by
+`daemon/recorder_shard.rs::fold_bundle`. Use exactly these strings; any
+other `kind` is logged at debug level and dropped:
 
 | `kind` | Meaning | Typical shell construct(s) |
 |---|---|---|
 | `alias`       | Plain alias               | bash/zsh `alias name=value`, fish `alias name value` |
-| `g_alias`     | Global alias              | zsh `alias -g` |
-| `s_alias`     | Suffix alias              | zsh `alias -s ext=value` |
+| `galias` (or `alias -g`) | Global alias   | zsh `alias -g` |
+| `salias` (or `alias -s`) | Suffix alias   | zsh `alias -s ext=value` |
 | `function`    | Function definition       | bash/zsh `function name { … }`, fish `function name; …; end` |
 | `assign`      | Plain variable assignment | `name=value`; record EVERY assign of a non-local variable |
 | `typeset`     | Declared/typed assignment | zsh `typeset -aU`, bash `declare -A`, fish `set -gx` |
 | `export`      | Exported env var          | `export NAME=value` |
-| `path_mod`    | Edit to `$PATH` / `$FPATH`/ `$MANPATH` | `path+=(…)`, `export PATH=…` |
-| `hash_d`      | Named directory           | zsh `hash -d name=path` |
+| `path_mod`    | Edit to `$PATH` / `$FPATH` | `path+=(…)`, `export PATH=…`; `value: "fpath"` routes to fpath, anything else to path |
+| `hash_d` (or `hash -d`) | Named directory | zsh `hash -d name=path` |
 | `zstyle`      | zstyle pattern            | zsh `zstyle ':completion:*' …` |
 | `bindkey`     | Key sequence bind         | `bindkey '^R' history-search` |
 | `compdef`     | Completion binding        | `compdef _git git`, fish `complete -c …` |
@@ -131,14 +135,24 @@ The `kind` discriminant maps 1:1 to a recorder DefKind in
 | `trap`        | Signal handler            | `trap 'echo bye' EXIT` |
 | `sched`       | Scheduled callback        | zsh `sched +5 'do_thing'` |
 | `source`      | File sourced              | `source FILE`, `. FILE` |
-| `unalias`     | Alias removal             | `unalias ll` |
-| `unset`       | Variable removal          | `unset NAME` |
 | `zle`         | ZLE widget definition     | `zle -N my-widget` |
 | `completion`  | Discovery of `_completion-name` file | when an fpath dir is added |
 
+`src/recorder/mod.rs` `DefKind` also has `Unalias` and `Unset`; the
+fold has no arm for them, so `unalias` / `unset` events are accepted
+and dropped.
+
+**`definitions_emit`** writes straight into a canonical subsystem, so
+its `kind` must be one of `daemon/definitions.rs` `KNOWN_KINDS` (the
+subsystem names: `alias`, `galias`, `salias`, `function`, `env`,
+`params`, `named_dir`, `path`, `fpath`, …); anything else is rejected
+with `no_such_kind`, and the error message lists the accepted names.
+`definitions_kinds` returns the ones that currently hold rows.
+
 If your shell has a construct that doesn't fit one of these, **don't
 invent a new kind** — open an issue. Adding kinds is a daemon-side
-change (must update `KNOWN_KINDS` + the canonical store + replay).
+change (must update the fold, `KNOWN_KINDS`, the canonical store and
+replay).
 
 ## ParamAttrs (assign / typeset only)
 
@@ -176,8 +190,8 @@ Outermost call first, innermost last, separated by ` > `:
 
 Translation: `_main` was called, which called `_setup_aliases`, which
 called `_company_overrides` (which is the function that fired the
-event). This format matches `src/extensions/recorder.rs:59 recorder_ctx()` and is
-what `zwhere -l` / `zd defs query` consumers expect.
+event). This format matches `src/extensions/recorder.rs::recorder_ctx` and is
+what `zwhere` / `zd defs query` consumers expect.
 
 If your shell exposes call chain as a stack (innermost-first), reverse
 it before emitting. If you can't get the chain at all, leave the field
@@ -236,8 +250,11 @@ recorder responsibility.
 
 ## Single-record wire format (`definitions_emit`)
 
-Same field set as one `events[]` element, plus a required `shell_id`
-at the top level. Use this path when:
+A subset of one `events[]` element plus a required top-level
+`shell_id`. `kind` is a canonical subsystem name (see "Kinds" above).
+`op_definitions_emit` reads `shell_id`, `kind`, `name`, `value`, `file`,
+`line` and echoes `fn_chain`; `attrs`, `value_array` and `value_assoc`
+are not read. Use this path when:
 
 - Your shell can't easily collect end-of-run state (no atexit hook,
   no Drop, no equivalent — fire-and-forget bash DEBUG trap).
@@ -249,15 +266,12 @@ at the top level. Use this path when:
 ```jsonc
 {
   "shell_id": "bash",                 // *string — required at top level
-  "kind":     "alias",                // *string — see Kinds table
+  "kind":     "alias",                // *string — a KNOWN_KINDS name
   "name":     "ll",                   // *string
   "value":    "ls -al",               // string  — optional but typical
   "file":     "/home/jdoe/.bashrc",   // string  — optional
   "line":     42,                     // u32     — optional
-  "fn_chain": "main_setup",           // string  — optional
-  "attrs":    64,                     // u16     — optional, defaults to 0
-  "value_array": null,                // array   — optional, omit if scalar
-  "value_assoc": null                 // array   — optional, omit if scalar
+  "fn_chain": "main_setup"            // string  — optional, echoed back
 }
 ```
 
@@ -283,14 +297,14 @@ Every successful `recorder_ingest` fires a `defs` SSE event on the
 
 ```
 event: defs
-data: {"events_ingested": 142, "rows_written": 138, "elapsed_ms": 3, "shell_id": "fish", "started_at_ns": 1777777000000000000}
+data: {"events_ingested": 142, "rows_written": 138, "shard_path": "…", "elapsed_ms": 3, "started_at_ns": 1777777000000000000, "finished_at_ns": 1777777005000000000, "cmdline": "fish-recorder"}
 ```
 
 Use this to drive cache invalidation in clients that have already
 queried the catalog (`zd defs query`, editor extensions, etc.).
 `definitions_emit` does NOT currently fire SSE — single-record writes
-are silent. (Tracked: see DAEMON_AS_SERVICE.md audit item #3 —
-`definitions_subscribe` IPC op deferred.)
+are silent. IPC clients opt in to the same event with the
+`definitions_subscribe` op; `/stream/definitions` subscribes for you.
 
 ## End-to-end example: minimal fish recorder
 
@@ -329,7 +343,7 @@ end
 
 function set --no-scope-shadowing
     if contains -- -gx $argv
-        _zshrs_emit env $argv[3] $argv[4]
+        _zshrs_emit export $argv[3] $argv[4]
     end
     builtin set $argv
 end
@@ -377,7 +391,8 @@ conformance:
 - [ ] Bundle MUST include `started_at_ns`, `finished_at_ns`,
       `events[]` and SHOULD include `shell_id`.
 - [ ] Every event MUST include `order_idx`, `ts_ns`, `kind`, `name`.
-- [ ] `kind` MUST be one of the 22 enumerated DefKind strings.
+- [ ] `kind` MUST be one of the strings in the "Kinds" table for its
+      transport.
 - [ ] `shell_id` MUST be from the registry at `docs/SHELL_IDS.md`
       (open a PR adding it before shipping if your shell isn't listed).
 - [ ] `order_idx` MUST be monotonic and unique within the bundle.

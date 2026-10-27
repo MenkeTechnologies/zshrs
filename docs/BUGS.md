@@ -12,10 +12,42 @@ status as one of:
 - **`port-bug`** — zshrs diverges from C-zsh behavior; needs porting.
 - **`demo-error`** — the demo was wrong; real zsh fails identically.
 - **`fixed`** — port-bug already patched; entry left for posterity.
+- **`open`** — confirmed divergence, not yet fixed.
+- **`partially-fixed`** — some legs fixed; the entry names the open residual. Older entries spell
+  this `partial fix`, `partially fixed` or `fixed-partial`.
+- **`not-a-bug`** — zsh behaves the same, or the divergence is intentional and documented.
+- **`wont-fix-as-divergence`** — zshrs accepts something zsh rejects, kept as a deliberate extension.
+- **`perf-issue`** — output matches zsh; the cost does not.
+- **`known`** — a recorded cosmetic divergence (e.g. stderr wording only) with no fix scheduled.
+- **`ignored`** — not a port bug: the local oracle is older than the C the port follows, or the
+  difference is a property of the debug build.
+- **`invalid`** — the report itself was wrong and its fix was reverted.
+- **`fixed?`** — no longer reproduces; the fixing change was not identified.
 
 Status is the source of truth for "does this need to be fixed?" —
 not the demo's behavior, which may have been worked around to keep
 CI green pending the underlying fix.
+
+---
+
+## #1211 — under `LC_ALL=C` a scalar range subscript cut by Rust chars, not character units — fixed
+
+**Status:** `fixed` 2026-10-19 (`e82f5fa949`, "subst: a scalar range subscript cuts by character
+units, not Rust chars").
+
+```
+$ zsh   -fc 'LC_ALL=C; s=xé<ab; print -r -- ${s[2,3]}'   → é
+$ zshrs -fc 'LC_ALL=C; s=xé<ab; print -r -- ${s[2,3]}'   → \xc3  ✗   (before)
+```
+
+`getstrvalue` cuts a subscripted scalar in `MB_METACHARLEN` steps (c:Src/params.c:2510-2532), so
+under `LC_ALL=C` every byte is one character. The `paramsubst` range arm already split the value
+into those units (`mb_metacharlenconv`) but flattened them into Rust chars before cutting; a
+non-ASCII byte is one unit but more than one char of the port's metafied string, so the bounds
+landed inside a unit and every later range shifted. The cut now runs over the units
+(`scalar_range_cut::units_range_cut`, sharing `str_range_cut`'s bounds). Surfaced by
+`examples/demos/362_xml_parser_full.zsh`; pinned by
+`zsh_zshrs_demo_equivalence::eq362_xml_parser_full` (no dedicated unit test).
 
 ---
 
@@ -1258,7 +1290,7 @@ and are independent of it):
 
 ## #1111 — `${arr[i]:-DEFAULT}` takes the default when the subscript is a BARE name — fixed
 
-**Status:** `port-bug`, found 2026-08-28 via `358_zsh_funcfile`, fixed 2026-08-28. General
+**Status:** `fixed` 2026-08-28 (found the same day via `358_zsh_funcfile`). General
 parameter-expansion bug, not array-specific.
 
 ```
@@ -1419,9 +1451,15 @@ definition path sets the bit. `zsh_mode_function_traps_match_real_zsh` and the 1
 
 ---
 
-## #1113 — `resolvebuiltin` is ported TWICE, with incompatible signatures — open
+## #1113 — `resolvebuiltin` is ported TWICE, with incompatible signatures — fixed
 
-**Status:** `port-bug`, found 2026-08-29 during the file-mapping sweep. It is the LAST remaining
+**Status:** `fixed` 2026-10-07 (`23fb75999f`, "exec: resolvebuiltin lives in exec.rs, where
+Src/exec.c defines it"). One port remains, `exec.rs::resolvebuiltin`, in the ledger-keyed
+`(name: &str) -> Option<i32>` form; the `module.rs` copy is deleted and every caller names
+`crate::ported::exec::resolvebuiltin`. The C `(cmdarg, hn)` signature is not kept: callers still
+hold only a name. The analysis below is the pre-fix record.
+
+**Original status:** `port-bug`, found 2026-08-29 during the file-mapping sweep. It was the LAST remaining
 `ported_fn_names_match_c` violation (127 → 1) and is deliberately left, because the fix is
 de-duplication rather than a file move.
 
@@ -1467,8 +1505,8 @@ regresses the faithful port to accommodate the divergent one.
 
 ## #1112 — an in-process `( … )` leaks its trap table and rlimits — fixed
 
-**Status:** `port-bug`, found 2026-08-28 while repairing `283_zsh_traps_full`; **fixed
-2026-08-28**, both legs. `283_zsh_traps_full` now reports `usr1_cnt=4 zerr_cnt=2` and passes
+**Status:** `fixed` 2026-08-28, both legs (found the same day while repairing
+`283_zsh_traps_full`). `283_zsh_traps_full` now reports `usr1_cnt=4 zerr_cnt=2` and passes
 7/7. Pinned by `tests/parity/subshell_signal_limit_parity.rs` (20 cases; 9 of them failed
 before the fix).
 
@@ -1952,9 +1990,13 @@ to `files`; zshrs keeps going and adds 18 directories. Lives in
 
 ---
 
-## #1098 — an unquoted command substitution nested inside `${…}` is IFS-split twice — open
+## #1098 — an unquoted command substitution nested inside `${…}` is IFS-split twice — fixed
 
-**Status:** `open`, root cause proven 2026-08-24.
+**Status:** `fixed` — re-measured 2026-09-10 (`05e486d562`): all five cases below give n=2 in
+both shells, and `${(us:,:)$(fc-list -f '%{family},')}` gives 800 in both. The commit that
+changed the result was not identified; `05e486d562` itself needed no `subst.rs` work. The
+`fc-list `/`fc-match ` comptab cells were an `_xft_fonts` port defect, fixed in that commit.
+Originally `open`, root cause proven 2026-08-24; the record below is the pre-fix state.
 
 ```zsh
 s='Foo Bar,Baz Qux,'
@@ -1977,9 +2019,14 @@ cells `fc-list `, `fc-match `.
 
 ---
 
-## #1099 — a parse error while autoloading under `emulate ksh -c` is misattributed and not fatal — open
+## #1099 — a parse error while autoloading under `emulate ksh -c` is misattributed and not fatal — fixed
 
-**Status:** `open`, root cause proven 2026-08-24.
+**Status:** `fixed` 2026-09-06 (`120dcc870f`, "fix(autoload): four diagnostic defects when a parse
+fails under emulate ksh"): the repro is byte-identical to zsh (`_files:40: parse error: condition
+expected: "$glob"`, rc=1) — the error names the loadee, one diagnostic, no spurious
+`function not defined by file`, the token keeps its quoting. The `git-cvsserver` comptab cells still
+cannot match while `_arguments` is a native port (below). Originally `open`, root cause proven
+2026-08-24.
 
 ```zsh
 fpath=(/tmp/ksfp $fpath); autoload -Uz _files
@@ -3544,8 +3591,9 @@ its redirections are expanded in the forked child; its children go to the existi
 16 forms match the dev-tree oracle. Pinned by
 `shell_semantics_parity::process_substitution_output_is_waited_for`.
 
-**Status:** `port-bug` — found by discovery probing; NOT yet fixed (tree does not
-build, see the shared note below).
+**Status:** `fixed` 2026-10-18 (`e1ab22bac6`, "procsub: a shell command waits for its >(cmd)
+children (#1062)") — see Resolution above. Originally `port-bug`, found by discovery probing; the
+record below is the pre-fix state.
 
 ```
 $ zsh   -fc 'print x > >(cat); print rc=$?'   → x
@@ -3608,7 +3656,8 @@ on).
 Neither shell shows the child in `jobs` and `${#jobstates}` is 0 in both, so any
 fix must not make the aux child user-visible as a job.
 
-**Open design question, deliberately NOT decided here.** Making zshrs wait for
+**Design question — decided 2026-10-18 for zsh ordering (see Resolution above).** The pre-fix
+analysis follows. Making zshrs wait for
 `>(cmd)` children matches zsh and is what scripts like `cmd > >(tee log); cat log`
 depend on, but it trades away parallelism, and the WNOHANG reaper looks like a
 considered choice rather than an oversight (it is documented in terms of zombie
@@ -4725,8 +4774,8 @@ which share the file).
 
 ## #1039 — localizing a TIED / SPECIAL parameter (`local path=(…)`, `local -T V v`) — fixed
 
-**Status:** `port-bug` 2026-07-19 — surfaced probing scope/tie interaction.
-NOT fixed: all four symptoms below share one root — C's `typeset_single`
+**Status:** `fixed` 2026-07-19 — A, B, C and D (below) all fixed. Surfaced probing scope/tie
+interaction, originally filed as `port-bug`. The pre-fix diagnosis: all four symptoms share one root — C's `typeset_single`
 newspecial branch (Src/builtin.c:2381-2467) is an explicit no-op in zshrs
 (builtin.rs:3710-3721 computes `newspecial`, then discards the state with
 `let _ = (altpm, pname_owned, _keeplocal, _dont_set, _readonly)`), and the real
@@ -5064,10 +5113,12 @@ flag group sets no flag, so getarg goes on to the numeric operand (c:Src/params.
 all-`e` group), in `getarg` (subexp results) and for range operands. Pinned by
 `shell_semantics_parity::empty_parenthesised_operands`.
 
-**Status:** `partially-fixed` 2026-07-18 — the RANGE-bound cases (`${a[,N]}`,
+**Status:** `fixed` 2026-10-18 per the Update above (`f333402ce5`). The pin covers `${a[()]}`;
+`${a[ ]}`, `${a[(e)]}` and `${a[(n:2:)]}` have no dedicated pin. History: `partially-fixed`
+2026-07-18 — the RANGE-bound cases (`${a[,N]}`,
 `${a[N,]}`, `${a[,]}` for both arrays and scalar char-slices, incl. the nested
 `${${(P)n}[,N]}` forms) are FIXED; the single-subscript empty cases
-(`${a[]}`, `${a[ ]}`, `${a[()]}`, `${a[(e)]}`, `${a[(n:2:)]}`) remain open (a
+(`${a[]}`, `${a[ ]}`, `${a[()]}`, `${a[(e)]}`, `${a[(n:2:)]}`) remained open (a
 distinct single-index site with context-dependent error text — see bottom).
 
 **What was fixed.** The two primary range-slice arms (array slice at
@@ -5675,7 +5726,7 @@ operand fetch) and `${a:^h}` (assoc operand, C uses gethparam).
 
 ---
 
-## #1021 — multibyte (non-ASCII) identifier names rejected everywhere but `typeset` — fixed (UTF-8 locales)
+## #1021 — multibyte (non-ASCII) identifier names rejected everywhere but `typeset` — partially-fixed
 
 **Update (2026-10-18).** The non-ASCII identifier test is now libc's `iswalnum` everywhere zsh's
 `wcsitype` uses it (c:Src/utils.c:4350, 4353, 4370): typeset names, assignment-word detection in the
@@ -5689,7 +5740,9 @@ zshrs still decodes UTF-8 for its identifier scans.
 
 **Status:** `partially-fixed` 2026-07-18 — BRACED READ + BARE ASSIGNMENT legs
 FIXED and gated (`mbident` fuzz mode); bare `$日` READ (lexer) and
-`typeset 日=(…)` array creation legs remain (see "Remaining legs" below).
+`typeset 日=(…)` array creation legs remain (see "Remaining legs" below). Not
+verified as fixed at v0.13.56: no test pins bare `$日`, `typeset 日=(…)` or `$(( 日 + 1 ))`, and
+`bins/parity-fuzz.rs::gen_mbident` still excludes the first two as known gaps.
 
 **BARE-ASSIGNMENT leg — FIXED.** `日=x`, `café=y`, `変数=v a日=b`, `日+=z` now
 lex as assignments (matching zsh) instead of "command not found". The lexer's
@@ -7219,7 +7272,7 @@ print "\C-a"       # expect 0x01 (plain print has EMACS too)
 
 **Observed (before):** zshrs emitted the literal bytes `C-a` / `M-a` / `^A`.
 
-**Root cause:** `print`'s escape path (`getkeystring_with`, utils.rs) never
+**Root cause:** `print`'s escape path (`getkeystring`, utils.rs; then `getkeystring_with`, merged into it by `a097dd590c`) never
 implemented the bindkey-style `\C-` (control) / `\M-` (meta) / `^X` (caret)
 escapes. C selects the flag set at `Src/builtin.c:4754-4760`:
 
@@ -7230,10 +7283,10 @@ escapes. C selects the flag set at `Src/builtin.c:4754-4760`:
 | `echo` / `print -e` | `GETKEYS_ECHO` (no EMACS)                | no  | no  |
 
 `getkeystring` (utils.rs) and `getkeystring_dollar_quote` (lex.rs) already had
-the handler — only `getkeystring_with` (print's path) lacked it, so `$'\C-a'`
+the handler — only `getkeystring` (print's path) lacked it, so `$'\C-a'`
 worked but `print "\C-a"` did not, and `-b` fell through to `GETKEYS_PRINT`.
 
-**Fix:** ported the `\C`/`\M` arm into `getkeystring_with` (gated on
+**Fix:** ported the `\C`/`\M` arm into `getkeystring` (gated on
 `GETKEY_EMACS`, with optional `-` separator, chained `\C`/`\M`, nested base
 escapes) plus a `^X` caret handler (gated on `GETKEY_CTRL`); added the
 `GETKEYS_BINDKEY` const; wired `print -b` → `GETKEYS_BINDKEY` at the
@@ -7700,7 +7753,7 @@ needs every scalar-read path to fold, not just the store site — deferred.
 ## #638 — `$'\x'` with no hex digit drops the escape instead of emitting NUL
 
 **Status:** `port-bug` — the `print`/`printf`/`echo -e` escape paths are
-FIXED (getkeystring / getkeystring_with, utils.rs); only the `$'…'` LEXER
+FIXED (`getkeystring`, utils.rs; then `getkeystring_with`, merged into it by `a097dd590c`); only the `$'…'` LEXER
 path still drops the byte.
 
 C's `\x` arm always runs `*t++ = zstrtol(s+1, &s, 16)` even with no
@@ -44463,7 +44516,11 @@ bisect manually.
 
 ---
 
-## #423 — `PATH=str` assignment doesn't propagate to tied `path` array — one-way tie broken
+## #423 — `PATH=str` assignment doesn't propagate to tied `path` array — one-way tie broken — fixed
+
+**Status:** `fixed` 2026-06-12 — PATH/FPATH/CDPATH/MANPATH by the #424 fix (2026-06-03), the
+remaining IPDEF8 pairs by the follow-up below. Pinned by
+`zshrs_shell::test_tied_module_path_fignore_mailpath_psvar_both_directions`.
 
 (See diagnosis + verify block under #424 above — the same
 `assignsparam` tail cascade fixes both #423 and #424.)
@@ -50134,7 +50191,9 @@ zsh environment. Replacing with a different finding.
 
 ---
 
-## #501 — `disown -h` and pushd-empty-stack rc divergence — small dirstack/jobs builtin family
+## #1208 — `disown -h` and pushd-empty-stack rc divergence — small dirstack/jobs builtin family
+
+Filed as a second `#501`; renumbered to keep anchors unique.
 
 **Status:** `fixed` 2026-06-04 — `pushd` with empty dirstack now
 returns rc=0 (silent no-op) matching zsh. Likely landed via earlier
@@ -50164,7 +50223,7 @@ Confirms #487's broader scope — `pushd` no-args behavior
 diverges in multiple scenarios:
 - #487: re-pushes current instead of swapping (with
   non-empty stack)
-- #501 (this entry): rc=1 instead of 0 (with empty stack)
+- #1208 (this entry, filed as a second #501): rc=1 instead of 0 (with empty stack)
 
 **Where** — `src/ported/builtins/pushd.rs::no_args_path`:
 empty-stack case should rc=0 (no-op), not rc=1.
@@ -54654,9 +54713,14 @@ won't catch zshrs's error.
 
 ---
 
-## #564 — `\[pat\]` backslash-escaped brackets in `[[ == pat ]]` pattern don't match literal `[`/`]`
+## #564 — `\[pat\]` backslash-escaped brackets in `[[ == pat ]]` pattern don't match literal `[`/`]` — fixed
 
-**Status:** `partial fix` 2026-06-03 ([src/ported/pattern.rs](../src/ported/pattern.rs)) — single-`\[` cases without a closing `\]` now treat the `[` as literal. Paired `\[hi\]` still fails because the lexer strips both backslashes and patcompile can't distinguish from a real `[hi]` bracket-class.
+**Status:** `fixed` 2026-06-12 (`0375b8ab42`, "port(pattern,cond,exec): unclosed-class bad-pattern
+semantics …"): the escape now reaches patcompile's `\X` literal arm, and the commit records all
+three probes below passing (`pattern.rs::patcomppiece` history comment). No dedicated test pins
+`\[hi\]`. Earlier history:
+
+**Earlier status:** `partial fix` 2026-06-03 ([src/ported/pattern.rs](../src/ported/pattern.rs)) — single-`\[` cases without a closing `\]` now treat the `[` as literal. Paired `\[hi\]` still fails because the lexer strips both backslashes and patcompile can't distinguish from a real `[hi]` bracket-class.
 
 **Partial root cause** — `patcomppiece` (`src/ported/pattern.rs:1311`) dispatched on raw `b'['` as bracket-class start. C `Src/pattern.c:1438` only enters the bracket case on the `Inbrack` token (lexer-tokenized `[`), not raw `[`. An escaped `\[` reaches patcompile as raw `[` (the lexer dropped the `\`), and zshrs treated it as a bracket-class — emitting `P_ANYOF` with the bytes between `[` and `]`.
 
@@ -54729,7 +54793,7 @@ entirely.
 
 ## #565 — `echo -e "\0NNN"` octal escape passed through literally despite explicit `-e` flag
 
-**Status:** **fixed** 2026-05-31 — `getkeystring_with` in
+**Status:** **fixed** 2026-05-31 — `getkeystring` (then `getkeystring_with`, merged into `utils.rs::getkeystring` by `a097dd590c`) in
 `src/ported/utils.rs` gained a `Some('0') if (how & OCTAL_ESC) == 0`
 branch matching C `Src/utils.c:7156-7178`: skip the leading 0, read
 up to 3 octal digits, emit the byte. This activates on the echo path
@@ -54780,7 +54844,7 @@ its own format string) or `$'\NNN'` ANSI-C quoting
 
 ## #566 — `echo -e "\uNNNN"` / `echo -e "\UNNNNNNNN"` Unicode escapes passed through literally despite `-e`
 
-**Status:** **fixed** 2026-05-31 — `getkeystring_with` in
+**Status:** **fixed** 2026-05-31 — `getkeystring` (then `getkeystring_with`, merged into `utils.rs::getkeystring` by `a097dd590c`) in
 `src/ported/utils.rs` gained `Some('u')` (4-hex) and `Some('U')`
 (8-hex) branches mirroring C `Src/utils.c:7072-7138 case 'u': / case
 'U':`. These arms have no flag gate (the C source only uses
@@ -54835,7 +54899,7 @@ use `printf` if its decoder is more complete.
 **Status:** **fixed** 2026-05-31 — repro `zshrs --zsh -fc
 $'echo "\\U00000041"'` now emits `A`. The `getkeystring_dollar_quote`
 helper in `src/ported/lex.rs:4149-4168` already had `\u`/`\U`
-handling, but the `echo` arm calls `getkeystring_with` instead, which
+handling, but the `echo` arm calls `getkeystring` (then `getkeystring_with`, merged into `utils.rs::getkeystring` by `a097dd590c`) instead, which
 lacked Unicode arms. Adding `Some('u')`/`Some('U')` there (per #566's
 fix) also resolves this; the canonical `$'...'` path was never
 broken, only the double-quoted echo path that the repro exercised.
@@ -60749,7 +60813,9 @@ Pinned by `tests/parity/assoc_array_deep_parity.rs`
 
 ---
 
-## #1142 — re-declaring an association with `-a` kept the old pairs, so the new array could not be read back by index — fixed
+## #1209 — re-declaring an association with `-a` kept the old pairs, so the new array could not be read back by index — fixed
+
+Filed as a second `#1142`; renumbered to keep anchors unique.
 
 ```sh
 $ /opt/homebrew/bin/zsh -f -c 'typeset -A H; H[x]=1; typeset -a H; H=(p q); print "[${H[1]}][${H[2]}] t=${(t)H} n=${#H} k=[${(k)H}]"'
@@ -60791,7 +60857,9 @@ conversion (every access path, the bare declaration, `-g`, a local conversion,
 a local conversion under a global association, and `-g` from inside a function)
 plus eight controls for the transitions that always agreed.
 
-## #1143 — `$( … )` leaked what its forked child owns: aliases, named dirs, the command hash, exports, cwd, umask, rlimits, zstyles, modules, `sched`, `SECONDS`, traps and descriptors — fixed
+## #1210 — `$( … )` leaked what its forked child owns: aliases, named dirs, the command hash, exports, cwd, umask, rlimits, zstyles, modules, `sched`, `SECONDS`, traps and descriptors — fixed
+
+Filed as a second `#1143`; renumbered to keep anchors unique.
 
 A command substitution is a fork in C: `getoutput` (`Src/exec.c:4816`
 `zfork`) runs the body in a child, `entersubsh` (`c:1123-1261`) resets only
@@ -60862,7 +60930,7 @@ not set".
 It took an interactive shell to see it, twice over: a `-c` shell keeps
 the value in `u.str`, and only a prompt loop replays the parent's
 specials (`setsparam` per name) when a `( … )` ends, which is the
-assignment that re-exported the empty string. Before #1143 the
+assignment that re-exported the empty string. Before #1210 the
 `( … )` environment restore ran AFTER that replay and quietly put the
 right value back; the fork copy now restores the environment BEFORE
 paramtab — a module rollback has to look its parameters up in the live
@@ -61761,7 +61829,8 @@ around the `(q)` case by metafying such chars before quoting. It did not reach
 the other paths.
 
 **Fix.** The tokens moved to the Private Use Area at U+E000 + the C byte
-(U+E084..U+E0A2, `src/token_char.rs`). The low byte is still the C token byte
+(U+E084..U+E0A2, `src/token_char.rs`; later moved to base U+E100, i.e. U+E184..U+E1A2, by
+`46c2072cb7` so the Powerline glyphs U+E0A0..U+E0A2 are not tokens). The low byte is still the C token byte
 and the order is C's, so `Pound as u8` and the `ztokens` index arithmetic are
 unchanged. Byte buffers (wordcode, `.zwc` pools, `lextok2`, metafied
 quotestring units) keep the C byte. The conversions at their boundaries go
