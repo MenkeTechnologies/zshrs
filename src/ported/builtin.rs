@@ -18329,10 +18329,11 @@ pub fn bin_read(
                                 buf_bytes.push(nx);
                                 continue;
                             }
-                            Ok(None) => {
-                                buf_bytes.push(b'\\');
-                                break;
-                            }
+                            // c:6842-6844 — `bslash = c == '\\' …; if (bslash)
+                            // continue;`: the backslash is never stored, so
+                            // one met at EOF is dropped (`printf '\\' | read x`
+                            // leaves x empty).
+                            Ok(None) => break,
                             // c:7162-7188 zread — read error == EOF.
                             Err(_) => break,
                         }
@@ -18524,6 +18525,46 @@ pub fn bin_read(
         }
         end
     };
+    // !!! DROP-IN GATE (no C counterpart) !!! bash, ksh93, mksh, dash and
+    // /bin/sh assign the last variable the rest of the line, but when that
+    // rest is exactly ONE field followed by its terminator (IFS whitespace,
+    // at most one non-whitespace IFS delimiter, IFS whitespace) only the
+    // field is kept: `IFS=, read x y` on `a,b,` gives y=b, on `a,b,c,` gives
+    // y=`b,c,`, on `a,b,,` gives y=`b,,`; `IFS=', ' read y` on `b , ` gives b.
+    // bash read.def `get_word_from_string` + `if (*input_string == 0)`; POSIX
+    // read. ksh93 keeps the whole rest when the field holds a backslash
+    // escape (`a\:b:` → `a:b:`). zsh keeps the delimiter. `rest` has its
+    // leading and trailing IFS whitespace already removed.
+    let lone_field = |rest: &'_ str| -> usize {
+        let mut i = 0;
+        let mut escaped = false;
+        while i < rest.len() {
+            let l = unit_len(&rest[i..]);
+            if rest[i..].starts_with(rmark) {
+                escaped = true;
+                i += l;
+                if i < rest.len() {
+                    i += unit_len(&rest[i..]);
+                }
+                continue;
+            }
+            if unit_sep(&rest[i..i + l]).0 {
+                break;
+            }
+            i += l;
+        }
+        let word_end = i;
+        i += ws_prefix_len(&rest[i..]);
+        if i < rest.len() && unit_sep(&rest[i..i + unit_len(&rest[i..])]) == (true, false) {
+            i += unit_len(&rest[i..]);
+            i += ws_prefix_len(&rest[i..]);
+        }
+        if i >= rest.len() && !(escaped && crate::dash_mode::ksh93_mode()) {
+            word_end
+        } else {
+            rest.len()
+        }
+    };
     // c:Src/builtin.c:6772-6830 — read one word starting at byte `*cur`,
     // updating C's `first` (a non-whitespace separator was seen, so empty
     // fields count) and `gotnl` (the delimiter or EOF was reached). The
@@ -18594,8 +18635,22 @@ pub fn bin_read(
         let mut cur = 0usize;
         let mut first = true; // c:6763
         let mut gotnl = false;
+        // !!! DROP-IN GATE (no C counterpart) !!! bash `read -a` and the Korn
+        // `read -A` split the line like a word expansion: a final delimiter
+        // (or trailing IFS whitespace) ends the last field without opening an
+        // empty one (`IFS=: read -a a <<< 'a::b:'` is (a "" b), `'  a  b  '`
+        // is (a b), an empty line is ()). ksh93 still yields one empty element
+        // for an empty or blank line. zsh adds the empty word at end of line.
+        let split_like_fields = crate::dash_mode::bash_mode() || crate::dash_mode::korn_mode();
         while !gotnl {
             let word = read_word(&mut cur, &mut first, &mut gotnl);
+            if split_like_fields
+                && gotnl
+                && word.is_empty()
+                && !(crate::dash_mode::ksh93_mode() && parts.is_empty())
+            {
+                break;
+            }
             // c:6929 — `if (!OPT_ISSET(ops,'e') && (*buf || first || gotnl))`
             if !word.is_empty() || first || gotnl {
                 parts.push(unmark(&word)); // c:6931 addlinknode
@@ -18707,24 +18762,9 @@ pub fn bin_read(
         }
         // c:7078-7091 — strip trailing IFS whitespace.
         let mut tail = &rest[..ws_suffix_start(&rest)];
-        // !!! DROP-IN GATE (no C counterpart) !!! bash, ksh93, mksh, dash and
-        // /bin/sh also drop ONE trailing non-whitespace IFS delimiter from the last
-        // variable (`IFS=, read x y` on `a,b,` leaves y=b); zsh keeps it.
-        // (`a,b,,` keeps `b,,`: the delimiter is dropped only when the one before
-        // it is not a delimiter too.)
+        // See `lone_field`: a single trailing field drops its terminator.
         if crate::dash_mode::bash_mode() || crate::dash_mode::posix_faithful() {
-            if let Some(lc) = tail.chars().last() {
-                let unit = lc.to_string();
-                let before = &tail[..tail.len() - unit.len()];
-                let prev_is_sep = before
-                    .chars()
-                    .last()
-                    .is_some_and(|p| unit_sep(&p.to_string()) == (true, false));
-                if unit_sep(&unit) == (true, false) && !before.ends_with(rmark) && !prev_is_sep {
-                    tail = before;
-                    tail = &tail[..ws_suffix_start(tail)];
-                }
-            }
+            tail = &tail[..lone_field(tail)];
         }
         emit(last, tail);
     } else {
@@ -18740,40 +18780,10 @@ pub fn bin_read(
         // instead of `hello` — bug #247.
         let lead = &buf[ws_prefix_len(&buf)..];
         let mut trimmed = &lead[..ws_suffix_start(lead)];
-        // !!! DROP-IN GATE (no C counterpart) !!! bash, ksh93, mksh, dash and
-        // /bin/sh assign a lone variable by the same rule as the last of
-        // several: when the line holds exactly one field, its trailing
-        // non-whitespace delimiter goes (`IFS=: read a` on `  lead :` → `  lead `,
-        // on `a:b:` → `a:b:`). bash read.def `get_word_from_string` + `if
-        // (*input_string == 0)`. ksh93 keeps the line when a field holds a
-        // backslash escape (`a\:b:` → `a:b:`). zsh keeps the delimiter.
+        // A lone variable takes the same rule as the last of several (see
+        // `lone_field`): `IFS=: read a` on `  lead :` → `  lead `, on `a:b:` → `a:b:`.
         if crate::dash_mode::bash_mode() || crate::dash_mode::posix_faithful() {
-            let mut i = 0;
-            let mut escaped = false;
-            while i < trimmed.len() {
-                let l = unit_len(&trimmed[i..]);
-                let unit = &trimmed[i..i + l];
-                if unit.starts_with(rmark) {
-                    escaped = true;
-                    i += l;
-                    if i < trimmed.len() {
-                        i += unit_len(&trimmed[i..]);
-                    }
-                    continue;
-                }
-                if unit_sep(unit).0 {
-                    break;
-                }
-                i += l;
-            }
-            let word_end = i;
-            if i < trimmed.len() && unit_sep(&trimmed[i..i + unit_len(&trimmed[i..])]) == (true, false) {
-                i += unit_len(&trimmed[i..]);
-                i += ws_prefix_len(&trimmed[i..]);
-                if i >= trimmed.len() && !(escaped && crate::dash_mode::ksh93_mode()) {
-                    trimmed = &trimmed[..word_end];
-                }
-            }
+            trimmed = &trimmed[..lone_field(trimmed)];
         }
         // !!! BASH-MODE (no C counterpart) !!! bash and /bin/sh: with no NAME the
         // line goes to REPLY "without the ending delimiter but otherwise
