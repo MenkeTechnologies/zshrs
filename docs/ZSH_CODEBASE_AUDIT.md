@@ -2,36 +2,40 @@
 
 **An engineering audit revealing critical deficiencies in the zsh C source code.**
 
-**ZSH hosts destructive commands (`rm -rf`, `chmod`, `chown`, `mkfs`, `dd`) on every dev machine and server in the world — with 7 CVEs, 465 unsafe string operations, 174 memory leak points, and blocking I/O on the hot path. Every command you type passes through a 1,502-line function with 18 gotos, backed by a custom heap allocator with no unit tests. This is the software trusted to parse and execute commands that can destroy filesystems, escalate privileges, and modify production infrastructure.**
+**ZSH hosts destructive commands (`rm -rf`, `chmod`, `chown`, `mkfs`, `dd`) on every dev machine and server in the world — with 7 CVEs, 451 unsafe string operations, 174 memory leak points, and blocking I/O on the hot path. Every command you type passes through a 1,511-line function with 19 gotos, backed by a custom heap allocator with no unit tests. This is the software trusted to parse and execute commands that can destroy filesystems, escalate privileges, and modify production infrastructure.**
 
 An engineering audit of the zsh C source code. Read the code yourself: it's all there. Every number in this document was measured directly from the source.
+
+**Measurement method.** Figures stamped "(measured 2026-10-27 at fc3cff4f8e)" were re-measured from the git object store of upstream zsh at `upstream/master` `fc3cff4f8e28a0dcac7b6dfb7f21d45fd3a06250` (committed 2026-10-10): the file list comes from `git ls-tree -r --name-only fc3cff4f8e`, and each file's content from `git show fc3cff4f8e:<path>` piped to `wc -l` / `rg`. No working tree or archive was read. Commit, author and release figures come from `git rev-list`, `git shortlog` and `git for-each-ref` on the same repository; each cites its command. Figures marked "original April 2026 audit; not re-measured" come from the first version of this document (upstream as of 2026-04-19) and have no reproducible method recorded.
 
 ## Why Port ZSH to Rust?
 
 Because the C code is indefensible. Not "legacy code that was good for its era" — indefensible by the standards of any era. The Linux kernel was written in the same timeframe with orders of magnitude better code organization, review process, and testing. BSD utilities from the same period have cleaner function decomposition. There is no excuse for what's in this codebase.
 
-147,233 lines of C. Zero unit tests. A custom heap allocator. 186 gotos. 1,940 global mutable statics. A 1,502-line function that handles all command execution. 11,656 lines of shell script interpreted every time you press Tab. Disk I/O blocking the user on every autoloaded function call. This is the default shell on every Mac in the world, and nobody audited it before shipping it to hundreds of millions of users.
+147,888 lines of C. Zero unit tests. A custom heap allocator. 196 gotos. 1,940 global mutable statics. A 1,511-line function that handles all command execution. 11,857 lines of shell script interpreted every time you press Tab. Disk I/O blocking the user on every autoloaded function call. This is the default shell on every Mac in the world, and nobody audited it before shipping it to hundreds of millions of users.
 
-Rust eliminates entire categories of these bugs by existing. Ownership replaces the hand-rolled heap. The type system replaces 1,032 C casts. The borrow checker replaces 524 manual signal-queue mutex calls. Rkyv replaces the fpath directory scan. Compiled code replaces 105,050 lines of interpreted shell-script "library." `cargo test` replaces nothing — because there was nothing to replace.
+Rust eliminates entire categories of these bugs by existing. Ownership replaces the hand-rolled heap. The type system replaces 1,032 C casts. The borrow checker replaces 524 manual signal-queue mutex calls. Rkyv replaces the fpath directory scan. Compiled code replaces 106,488 lines of interpreted shell-script "library." `cargo test` replaces nothing — because there was nothing to replace.
 
 ## Scale
 
-- **147,233 lines** of C across Src/, Modules/, Builtins/, Zle/
-- **2,578 functions**
+- **147,888 lines** of C across Src/, Modules/, Builtins/, Zle/ (every `Src/**/*.c` in the tree; measured 2026-10-27 at fc3cff4f8e)
+- **2,578 functions** (original April 2026 audit; not re-measured)
 - **Zero unit tests.** Not one. Anywhere.
 
 ## Function Size
 
+Function counts and the Top 25 table: original April 2026 audit; not re-measured, except `execcmd_exec`, whose span (from the line naming the function to its closing `}`) is 1,511 lines (measured 2026-10-27 at fc3cff4f8e).
+
 - **15 functions over 500 lines** — these aren't functions, they're entire programs
 - **87 functions over 200 lines**
 - **226 functions over 100 lines** — 9% of all functions
-- Worst offender: `execcmd()` in exec.c — **1,502 lines**, a single function that handles all command execution with 18 gotos
+- Worst offender: `execcmd_exec()` in exec.c — **1,511 lines**, a single function that handles all command execution with 19 gotos
 
 Top 25 longest functions:
 
 | Lines | File | Function |
 |-------|------|----------|
-| 1,502 | exec.c | execcmd |
+| 1,511 | exec.c | execcmd_exec |
 | 1,096 | Zle/complist.c | domenuselect |
 | 1,000 | builtin.c | bin_print |
 | 960 | Zle/compctl.c | makecomplistflags |
@@ -59,22 +63,24 @@ Top 25 longest functions:
 
 ## Control Flow
 
-- **186 gotos** across the codebase
-- **31 switch statements over 100 lines**
-- **55 explicit fall-throughs** in switch cases
-- **12 levels of nesting** at the deepest point (compresult.c:5074)
+- **196 gotos** across the codebase (`rg -w goto` over every `Src/**/*.c`; measured 2026-10-27 at fc3cff4f8e)
+- **31 switch statements over 100 lines** (original April 2026 audit; not re-measured)
+- **55 explicit fall-throughs** in switch cases (original April 2026 audit; not re-measured)
+- **12 levels of nesting** at the deepest point (compresult.c:5074) (original April 2026 audit; not re-measured)
 
-Goto hotspots:
+Goto hotspots (`rg -cw goto` per file; measured 2026-10-27 at fc3cff4f8e):
 
 | File | Gotos |
 |------|-------|
 | lex.c | 22 |
 | subst.c | 20 |
-| exec.c | 18 |
+| exec.c | 19 |
 | jobs.c | 12 |
 | utils.c | 9 |
 
 ## Global Mutable State
+
+Counts in this section: original April 2026 audit; not re-measured.
 
 - **1,940 static variables** — nearly 2,000 pieces of hidden global state
 - **524 queue_signals/unqueue_signals calls** — hand-rolled mutex discipline that every caller must get right manually, or the shell corrupts itself
@@ -92,6 +98,8 @@ Worst offenders:
 | hist.c | 42 |
 
 ## Memory Management
+
+Counts in this section (allocs, frees, leak points, heap-alloc and `ztrdup` tables): original April 2026 audit; not re-measured. `mem.c` is 1,882 lines (measured 2026-10-27 at fc3cff4f8e).
 
 ### The Heap Trick
 
@@ -172,6 +180,8 @@ In an interactive session running for hours, every tab completion, every glob ex
 
 ## Type Safety
 
+Counts in this section and the next: original April 2026 audit; not re-measured.
+
 - **1,032 C casts** — `(char *)`, `(void *)`, `(int)` everywhere
 - **208 single-character variable declarations** — `int c;`, `char *s;`, `int d;`
 
@@ -185,32 +195,32 @@ In an interactive session running for hours, every tab completion, every glob ex
 
 ## Testing
 
-- **Zero unit tests** on 147,233 lines of C
+- **Zero unit tests** on 147,888 lines of C
 - Integration tests require shared mutable state across test blocks
 - No way to run a single test in isolation
 - No way to parallelize tests
-- Test harness (`ztst.zsh`) is 632 lines of zsh script that tests the shell by running inside the shell — circular dependency
+- Test harness (`Test/ztst.zsh`) is 653 lines of zsh script (measured 2026-10-27 at fc3cff4f8e) that tests the shell by running inside the shell — circular dependency
 - Tests depend on ordering: test 47 silently requires state from test 12
 
 ## Why This Matters
 
-This is the default shell on every Mac sold since Catalina (2019). Every `brew install`, every developer's `.zshrc`, every CI pipeline on macOS runs through a 1,502-line function with 18 gotos, backed by a custom heap allocator with no unit tests, maintained by a handful of volunteers who never refactored it in 30 years.
+This is the default shell on every Mac sold since Catalina (2019). Every `brew install`, every developer's `.zshrc`, every CI pipeline on macOS runs through a 1,511-line function with 19 gotos, backed by a custom heap allocator with no unit tests, maintained by a handful of volunteers who never refactored it in 30 years.
 
 Apple chose zsh as the default because the license changed from GPL to MIT. Not because of code quality. Not because of testing. Not because of architecture. Because of a license.
 
 ## Completion System (compsys): Library Code in Shell Scripts
 
-The zsh completion system runs core library code as **interpreted shell script**. Not compiled. Not bytecoded. Not cached. Interpreted line by line through the same evaluator that runs through the 1,502-line `execcmd()` with 18 gotos.
+The zsh completion system runs core library code as **interpreted shell script**. Not compiled. Not bytecoded. Not cached. Interpreted line by line through the same evaluator that runs through the 1,511-line `execcmd_exec()` with 19 gotos.
 
 ### The Numbers
 
-- **986 completion functions** totaling **105,050 lines of shell script**
-- **5,397 lines** in the core "standard library" alone (Base/)
-- `_git` completion: **9,026 lines** of shell script — bigger than most entire programs
+- **974 completion functions** (`_*` files under `Completion/`) totaling **106,488 lines of shell script** (measured 2026-10-27 at fc3cff4f8e)
+- **5,277 lines** in the core "standard library" alone (every file under `Completion/Base/`; measured 2026-10-27 at fc3cff4f8e)
+- `_git` completion: **9,227 lines** of shell script (measured 2026-10-27 at fc3cff4f8e) — bigger than most entire programs
 
 ### What Happens When You Press Tab on `git`
 
-11,656 lines of interpreted shell script execute:
+11,857 lines of interpreted shell script execute (sum of the rows below; each file measured 2026-10-27 at fc3cff4f8e):
 
 | Function | Lines | What it does |
 |----------|-------|-------------|
@@ -218,13 +228,13 @@ The zsh completion system runs core library code as **interpreted shell script**
 | `_complete` | 144 | Completion strategy |
 | `_normal` | 40 | Normal completion |
 | `_dispatch` | 91 | Function lookup |
-| `_git` | 9,026 | Git-specific completions |
+| `_git` | 9,227 | Git-specific completions |
 | `_arguments` | 589 | Argument parser |
 | `_describe` | 140 | Description formatter |
 | `_path_files` | 895 | Filesystem walker |
 | `_files` | 153 | File completion |
 | `_values` | 160 | Value completion |
-| **TOTAL** | **11,656** | **Interpreted shell script per Tab press** |
+| **TOTAL** | **11,857** | **Interpreted shell script per Tab press** |
 
 For comparison, the entire Lua interpreter is ~30,000 lines of C. A single `git <TAB>` interprets one-third of a Lua interpreter worth of code — in shell script.
 
@@ -233,11 +243,11 @@ For comparison, the entire Lua interpreter is ~30,000 lines of C. A single `git 
 `compinit` runs on **every shell startup**:
 
 1. Iterates over every directory in `$fpath` (43 dirs in a typical setup)
-2. Globs every file starting with `_` — **986 files**
+2. Globs every file starting with `_` — **974 files**
 3. Opens each file, reads the first line, parses `#compdef` or `#autoload` headers
 4. Registers each completion via `compdef` or `autoload`
 
-Cost: **0.49 seconds** even with the `-C` "fast" cached path. Without the cache, it opens and reads all 986 files from disk.
+Cost: **0.49 seconds** (original April 2026 audit; not re-measured) even with the `-C` "fast" cached path. Without the cache, it opens and reads all 974 files from disk.
 
 The `-C` flag caches the result in `.zcompdump`, but still validates the cache by comparing file counts — which means it stats every directory in `$fpath` on every startup anyway.
 
@@ -278,7 +288,7 @@ These are the kind of code where you want a type system, a real call stack, an a
 
    Four of the five patterns were available as precedent. The design picked none of them. **The audit finding is not "perf was a casualty of customizability" — it's "established architectures that solve both were not consulted."** Override granularity was set to "whole function" and override mechanism to "re-interpret on every call" — the worst-of-both: maximum interpretation cost at every layer to support a level of override granularity almost no user ever exercises (overriding `_arguments` itself is theoretically possible; in practice nobody does it).
 2. **Monkey-patching extensibility taken too far.** End-completion files need override-via-`$fpath`; library functions do not. But once everything was shell, "you can override _anything_" became a feature, and the library/data boundary disappeared. Library functions are paid for at runtime by every user, every Tab press; the override capability is exercised by almost no one. Asymmetric cost/benefit.
-3. **The C core was hostile to extension.** The C codebase has 18-goto functions, a custom heap allocator with no tests, 174 leak points, and 1,940 global mutables (see [§ Scale](#scale), [§ Memory Management](#memory-management), [§ Global Mutable State](#global-mutable-state)). Adding `_arguments` as a 589-line C parser would have required touching that codebase — modifying `pattern.c`, growing `Src/Zle/computil.c`, navigating the heap allocator's lifetime rules. Adding it as a 589-line shell function did not. Library code grew in the path of least resistance — `Completion/Base/Utility/_*` files — because the C core was too dangerous to extend. **105,050 lines of shell-script "library" is what you get when the C foundation is so unmaintainable that contributors route around it.** Path dependence then locked it in: once `_arguments` existed in shell, every subsequent library function (`_describe`, `_alternative`, `_values`) was written in shell too because that was the existing API surface.
+3. **The C core was hostile to extension.** The C codebase has 19-goto functions, a custom heap allocator with no tests, 174 leak points, and 1,940 global mutables (see [§ Scale](#scale), [§ Memory Management](#memory-management), [§ Global Mutable State](#global-mutable-state)). Adding `_arguments` as a 589-line C parser would have required touching that codebase — modifying `pattern.c`, growing `Src/Zle/computil.c`, navigating the heap allocator's lifetime rules. Adding it as a 589-line shell function did not. Library code grew in the path of least resistance — `Completion/Base/Utility/_*` files — because the C core was too dangerous to extend. **106,488 lines of shell-script "library" is what you get when the C foundation is so unmaintainable that contributors route around it.** Path dependence then locked it in: once `_arguments` existed in shell, every subsequent library function (`_describe`, `_alternative`, `_values`) was written in shell too because that was the existing API surface.
 
 Same architectural failure mode that produced the `.zwc` half-cache: design *around* the C core's hostility instead of fixing it. With Emacs-style precedent already in production for 14 years by 1999, the perf-vs-customizability tradeoff was not forced by the state of the art — it was forced by the local maintainability problem in `Src/`.
 
@@ -288,7 +298,7 @@ Surveyed via GitHub source inspection. The question for each shell: is the compl
 
 | Shell | Library implementation | End completion files | Library in shell-script? |
 |---|---|---|---|
-| **zsh** (compsys) | Shell — `_arguments` (589), `_path_files` (895), `_main_complete` (418), `_describe` (140), `_dispatch` (91), `_complete` (144), `_normal` (40), `_values` (160) | Shell — `_git` (9,026), `_apt`, `_docker`, etc. | **YES (reference case)** |
+| **zsh** (compsys) | Shell — `_arguments` (589), `_path_files` (895), `_main_complete` (418), `_describe` (140), `_dispatch` (91), `_complete` (144), `_normal` (40), `_values` (160) | Shell — `_git` (9,227), `_apt`, `_docker`, etc. | **YES (reference case)** |
 | **bash** (bash-completion project) | **Shell** — `bash_completion` ~3,000+ lines pure shell: `_comp_compgen` (central dispatcher), `_filedir`, `_init_completion`, `_known_hosts_real`, `_comp_quote`, `_comp_split` | Shell — `completions/*` | **YES** |
 | **tcsh** (Ken Greer, late 1970s) | C engine + **declarative records** in `complete.tcsh` (1,277 lines of `complete <cmd> <pattern>` syntax). Records are data, not imperative shell library code. | Same file (declarative) | **No** — declarative records, native engine |
 | **fish** (2005+) | C++/Rust engine | **Declarative** records: `complete -c git -l help -s h -d 'Display manual'` | No |
@@ -304,28 +314,30 @@ Surveyed via GitHub source inspection. The question for each shell: is the compl
 2. **tcsh proved the correct architecture BEFORE zsh.** tcsh (late 1970s, decades older than zsh's compsys) uses declarative completion records — `complete grep c/-*A/x:.../ p/1/x:.../` — parsed by a C engine. Same model fish later adopted. The "perf vs customizability was a forced tradeoff in 1999" defense is refuted not just by Emacs/Vim prior art but by *zsh's direct ancestor in the C-shell lineage*. The right shell-completion architecture existed ~20 years before compsys, in a shell every zsh developer was familiar with.
 3. **Every shell designed after compsys rejected the pattern.** fish (2005), PowerShell (2006), xonsh (2015), oil/osh (2016), elvish (2017), nushell (2019). Six shells, six native-library implementations. The compsys / bash-completion design has zero forward adoption.
 
-This is not a contested design tradeoff. It's a design choice that lost in the historical record — earlier shells did it better, and no shell built since has copied it forward. The 105,050-line shell-script "library" in `Completion/` is the artifact of a pattern that was wrong by 1999 and is unanimously dead by 2026.
+This is not a contested design tradeoff. It's a design choice that lost in the historical record — earlier shells did it better, and no shell built since has copied it forward. The 106,488-line shell-script "library" in `Completion/` is the artifact of a pattern that was wrong by 1999 and is unanimously dead by 2026.
 
 The zshrs answer is the split your gut already drew:
 
 - **Library functions** (`_arguments`, `_path_files`, `_complete`, `_dispatch`, `_describe`, …) → reimplemented in Rust under `src/compsys/` inside the `zshrs` crate (compsys is a module of the runtime crate, not a separate package). Typed function pointers, real call stack, bytecode-via-fusevm where dynamic, Cranelift JIT for hot paths.
-- **End-completion files** (`_git`, `_apt`, `_docker`, …) → stay as data, but get compiled to rkyv-mmap'd bytecode chunks at install time (the "completion cache" per `compsys/README.md` overview). No shell-script interpreter dispatch at Tab time.
+- **End-completion files** (`_git`, `_apt`, `_docker`, …) → stay as shell source, compiled once to fusevm bytecode chunks in rkyv-mmap'd shards built by the daemon (the "completion cache" per the [`src/compsys/README.md`](../src/compsys/README.md) overview). No re-lex or re-parse at Tab time.
 
-One language for infrastructure, one cache format for end data, no 11,656-line shell interpretation per keystroke. Extensibility happens through stryke/AOP intercepts — a typed, JIT-compiled extension surface — not a 105,050-line interpreted library.
+One language for infrastructure, one cache format for end data, no 11,857-line shell interpretation per keystroke. Extensibility happens through stryke/AOP intercepts — a typed, JIT-compiled extension surface — not a 106,488-line interpreted library.
 
 ### The zshrs Alternative
 
-zshrs uses Rkyv backed completion indexing. One hashed index mmap instead of 11,656 lines of interpreted shell script. Completions are indexed once at install time, not scanned from disk on every shell startup.
+zshrs uses rkyv-backed completion images. Completion functions are compiled by the daemon into fusevm bytecode shards under `~/.zshrs/images/`, coordinated by `index.rkyv`; the shell mmaps them and compiles on demand only on a miss ([`src/compsys/README.md`](../src/compsys/README.md) § Overview). No fpath scan and no re-parse on every shell startup.
 
 ### The Biggest Completion Functions
 
+Measured 2026-10-27 at fc3cff4f8e:
+
 | Lines | File |
 |-------|------|
-| 9,026 | `_git` |
+| 9,227 | `_git` |
 | 3,162 | `_perforce` |
 | 2,292 | `_gcc` |
-| 1,948 | `_tmux` |
-| 1,449 | `_zfs` |
+| 1,973 | `_tmux` |
+| 1,527 | `_zfs` |
 | 1,148 | `_postgresql` |
 | 964 | `_cvs` |
 | 945 | `_mount` |
@@ -333,8 +345,8 @@ zshrs uses Rkyv backed completion indexing. One hashed index mmap instead of 11,
 | 850 | `_composer` |
 | 818 | `_ssh` |
 | 809 | `_perf` |
-| 801 | `_selinux` |
-| 796 | `_apt` |
+| 808 | `_apt` |
+| 802 | `_selinux` |
 
 Every one of these is **interpreted shell script** that runs on every Tab press for that command. Not compiled. Not optimized. Interpreted.
 
@@ -363,13 +375,13 @@ That's not a function. It's a stub. The real function body doesn't exist in memo
 
 **All of this happens synchronously, blocking the user, on every first invocation of every autoloaded function.**
 
-With 986 completion functions autoloaded via `compinit`, plus user functions, plus framework functions (oh-my-zsh, prezto, zinit all use autoload heavily), a typical shell session has hundreds of these stubs waiting to trigger disk I/O the moment you call them.
+With 974 completion functions autoloaded via `compinit`, plus user functions, plus framework functions (oh-my-zsh, prezto, zinit all use autoload heavily), a typical shell session has hundreds of these stubs waiting to trigger disk I/O the moment you call them.
 
 ### Wordcode Is Not Bytecode: zsh Has No VM
 
 A common misconception (one this audit initially shared) is that zsh's wordcode amounts to a "quasi-VM" — bytecode for some execution machine, with `.zwc` as the AOT-compiled artifact. That framing is wrong. zsh's wordcode is a *serialized parse tree*, and `execlist` is a *tree walker over the flattened tree*. There is no VM. Three pieces of evidence:
 
-**1. The `Estate` "VM state" struct is a cursor, nothing more** (`src/zsh/Src/zsh.h:824`):
+**1. The `Estate` "VM state" struct is a cursor, nothing more** (upstream zsh `Src/zsh.h:824` at fc3cff4f8e):
 
 ```c
 struct estate {
@@ -389,7 +401,7 @@ Three fields. No value stack. No register file. No locals array. No frame stack.
 | Cranelift/fusevm `VM` | regs[], stack[], call frames, instruction pointer, constants pool, host bridge |
 | **zsh `Estate`** | **`pc` cursor + 2 read-only pointers (`prog`, `strs`). That's the entire "VM."** |
 
-**2. Executors recurse via C function calls, not via VM opcodes** (`src/zsh/Src/exec.c`):
+**2. Executors recurse via C function calls, not via VM opcodes** (upstream zsh `Src/exec.c`):
 
 ```c
 execcursh(Estate state, int do_exec)
@@ -447,12 +459,12 @@ The next sub-section walks through what `.zwc` actually contains under this lens
 
 **What `.zwc` saves on load**: lex (`lex.c`), parse (`parse.c::par_event` and the `par_list`/`par_sublist`/`par_pipe`/`par_cmd` recursion), string-pool construction. These are microseconds.
 
-**What every exec still pays — two separate walks, neither cached** (citations are upstream zsh C source under `src/zsh/Src/`):
+**What every exec still pays — two separate walks, neither cached** (citations are upstream zsh `Src/` at fc3cff4f8e):
 
 | Walk | Source | Cost |
 |------|--------|------|
-| **1. Wordcode interpreter dispatch** | `exec.c:1349 execlist` walks the wordcode array via `state->pc++` cursor, dispatches on `wc_code(code)` through `WC_LIST`/`WC_SUBLIST`/`WC_PIPE`/`WC_SIMPLE` (zsh.h:889-894), jumps via `WC_LIST_SKIP`/`WC_SUBLIST_SKIP` offsets. Every command, every loop iteration. | O(N) tag-decode per emitted command |
-| **2. Raw-string sigil scan** | `subst.c:100 prefork()` is called from `exec.c:2546, 2687, 2801, 3304, 4142, 4168, 4184`. Pulls each word via `ecgetstr(state, EC_DUPTOK, &htok)`, scans byte-by-byte for `$`, `~`, `*`, `?`, `[`, `` ` ``, `(`. Dispatches to `singsub`/`multsub`/`filesub`/`globlist` (`subst.c:514, 544, 667`). | O(L) per word, per exec — never cached |
+| **1. Wordcode interpreter dispatch** | `exec.c:1406 execlist` walks the wordcode array via `state->pc++` cursor, dispatches on `wc_code(code)` through `WC_LIST`/`WC_SUBLIST`/`WC_PIPE`/`WC_SIMPLE` (zsh.h:889-894), jumps via `WC_LIST_SKIP`/`WC_SUBLIST_SKIP` offsets. Every command, every loop iteration. | O(N) tag-decode per emitted command |
+| **2. Raw-string sigil scan** | `subst.c:100 prefork()` is called from `exec.c:2607, 2748, 2859, 3365, 4207, 4233, 4249, 4275`. Pulls each word via `ecgetstr(state, EC_DUPTOK, &htok)`, scans byte-by-byte for `$`, `~`, `*`, `?`, `[`, `` ` ``, `(`. Dispatches to `singsub`/`multsub`/`filesub`/`globlist` (`subst.c:514, 544, 667`). | O(L) per word, per exec — never cached |
 
 The expensive layer is **uncached by design**. `parse.c::bld_eprog` (the wordcode serializer) does not run word classification — that's done by `prefork` at exec time. So no matter how many `.zwc` files litter the filesystem, every word in a hot loop body gets re-classified from raw bytes on every iteration.
 
@@ -473,7 +485,7 @@ The two caches address two cheap layers; their costs do not overlap with the exp
 | Cache | What it skips | What it doesn't skip |
 |---|---|---|
 | `.zwc` (`zcompile`) | parse + tokenize + string-pool build | wordcode dispatch walk; per-word sigil scan; `prefork`/`singsub`/`multsub`/`filesub`; `globlist`; fork/exec |
-| `.zcompdump` | `compinit`'s `_*` file glob + first-line parse | `_main_complete` → `_dispatch` → `_git` shell-function execution on every Tab press (still 11,656 lines interpreted); the `compdef`/`autoload` registration validation that stats every fpath dir |
+| `.zcompdump` | `compinit`'s `_*` file glob + first-line parse | `_main_complete` → `_dispatch` → `_git` shell-function execution on every Tab press (still 11,857 lines interpreted); the `compdef`/`autoload` registration validation that stats every fpath dir |
 | Both combined | parse-side cold reads only | the *entire* expansion + completion-function-dispatch hot path |
 
 Stacking the caches saves milliseconds at startup. The per-keystroke and per-exec costs do not go down because the architecture caches the wrong layer. **This is why zsh + p10k instant prompt + zinit turbo + zcompile + .zcompdump still has visible Tab latency on a 10k-completion setup, and why startup-tuning blog posts proliferate without ever fixing the underlying time complexity.**
@@ -486,11 +498,11 @@ zshrs replaces both the tree-walking execution model AND the half-cache. **fusev
 |---|---|---|
 | Value storage | LinkList on heap, passed via C args | typed value stack, register file |
 | Call mechanism | C function recursion (`execlist`→`execsublist`→`execpipe`…) | VM-level CALL/RET opcodes, explicit frames |
-| Word classification | runtime sigil scan in `prefork` every exec | compile-time, baked into typed Ops |
+| Word parsing | lex + parse on every load without `.zwc`; runtime sigil scan in `prefork` every exec | lex + parse once at compile time; the tokenized word is stored in the chunk constant pool; expansion runs at runtime through a `CallBuiltin` chain |
 | Native code generation | none — interpreter is the only execution mode | Cranelift JIT for hot paths |
 | Bytecode is self-contained | no — engine IS the C executors | yes — chunk can run on any fusevm |
 
-`src/extensions/compile_zsh.rs` (the AST→fusevm bytecode compiler) does word classification at *compile* time. `$foo` becomes `Op::ExpandParam(slot_id)`; `*.txt` becomes `Op::Glob(pattern)`; `~/bin` becomes `Op::TildeExpand`; a literal becomes `Op::LoadStr`. The classification is then **serialized into the cached chunk** (`src/extensions/script_cache.rs` rkyv shard wrapping a bincode-encoded `fusevm::Chunk`; outer is mmap zero-copy via `rkyv::check_archived_root`). Subsequent runs and subsequent loop iterations both read pre-classified typed ops. No sigil rescan. No dispatch on raw bytes. The Cranelift JIT in `fusevm/src/jit.rs` then specializes hot paths from those typed ops because the input is already typed.
+`src/extensions/compile_zsh.rs` (the AST→fusevm bytecode compiler) lowers each word at *compile* time to `LoadConst(<lexer-tokenized word>)` followed by a `CallBuiltin` arg-processing chain. Parameter, glob and tilde expansion run inside that chain at runtime; the compiler does not emit dedicated `Op::ExpandParam` / `Op::Glob` / `Op::TildeExpand` ops for them (pinned by the `compile_param_expansion_via_named_builtin_or_op`, `compile_glob_expansion_compiles_without_panic` and `compile_tilde_expansion_compiles_without_panic` tests in `compile_zsh.rs`). The compiled chunk is **serialized into the cache** (`src/extensions/script_cache.rs` rkyv shard wrapping a bincode-encoded `fusevm::Chunk`; outer is mmap zero-copy via `rkyv::check_archived_root`), so subsequent runs skip lex and parse. Expansion itself is still performed per execution, as in zsh. The Cranelift JIT in `fusevm/src/jit.rs` compiles hot bytecode paths to native code.
 
 zsh's `.zwc` cannot match this without (a) defining a real VM with value stack + frames, (b) rewriting the wordcode format to carry typed ops, and (c) rewriting `exec.c::execsimple` and its 9 sibling executors to consume them instead of doing recursive C dispatch. That's not a tuning change — it's replacing the execution engine. zshrs IS that replacement.
 
@@ -511,14 +523,14 @@ All blocking. All synchronous. All on the hot path between the user pressing Ent
 
 ### The zshrs Alternative
 
-zshrs indexes functions at install time in Rkyv. Function lookup is one indexed database query — no fpath scanning, no disk I/O on the hot path, no `.zwc` litter.
+zshrs caches each autoloaded function as compiled fusevm bytecode in a single rkyv shard (`~/.zshrs/autoloads.rkyv`, `src/extensions/autoload_cache.rs`), validated against the producing binary and a SHA-256 of the definition text. `compinit` and `zshrs --prewarm-autoloads` fill it in bulk. A hit skips lex, parse and compile. The definition is still located on `$fpath` and read so its hash can be checked, so the first call still does that lookup and read; no `.zwc` files are written.
 
-## Development Process: No CI, No GitHub, No Issue Tracker, Dying Velocity
+## Development Process: No CI, Mailing-List Review, Low Velocity
 
 ### No Modern Infrastructure
 
-- **No CI/CD.** No `.github`, no `.travis.yml`, no `.circleci`. No automated testing on any push or PR. Nobody knows if a commit breaks anything until someone manually runs `make check`.
-- **No GitHub.** No pull requests. No code review UI. No issue tracker. No project board.
+- **No CI/CD.** No `.github`, no `.travis.yml`, no `.circleci` at the repository root (`git ls-tree --name-only fc3cff4f8e`; measured 2026-10-27). No automated testing on any push or PR. Nobody knows if a commit breaks anything until someone manually runs `make check`.
+- **GitHub is a side channel.** The canonical repository is on SourceForge and patches go through the mailing list, but a GitHub mirror accepts pull requests: 115 upstream commit subjects reference `github #N`, 54 of them since 2023-10-27 (`git log --format=%s fc3cff4f8e | rg -ic 'github #[0-9]+'`; first on 2017-11-10, `2c00d2132c`). No issue tracker. No project board.
 - **No issue tracker.** Bugs are reported to a **mailing list** (`zsh-workers@zsh.org`). Bug reports get buried in email threads. There is no way to search, filter, assign, label, or track issues. No way to know how many open bugs exist.
 - **No code review.** Patches are emailed to the mailing list. Someone reads them (maybe). Someone commits them (maybe). There is no review gate, no approval requirement, no CI check.
 - **Mailing list archives** are the "bug tracker": https://www.zsh.org/mla/workers/
@@ -527,49 +539,59 @@ These development practices predate modern software engineering infrastructure b
 
 ### Where's ZSH 6?
 
-Last release: **zsh 5.9 — May 2022.** Over 3 years ago. No zsh 6. No roadmap. No release timeline. No communication about when or if it will ship.
+Last release: **zsh 5.9.2 — July 2026**, a patch release tagged on a maintenance branch (the tag is not an ancestor of `upstream/master`). The last feature release is still **zsh 5.9 (May 2022)**. No zsh 6. No roadmap. No release timeline.
+
+Tag dates from `git for-each-ref --format='%(refname:short) %(creatordate:short)' 'refs/tags/zsh-5.[89]*'` (measured 2026-10-27; `-test` tags omitted):
 
 | Release | Date | Gap |
 |---------|------|-----|
-| zsh 5.8 | May 2020 | — |
-| zsh 5.8.1 | Nov 2021 | 18 months |
-| zsh 5.9 | May 2022 | 6 months |
-| zsh 6.0 | ??? | **3+ years and counting** |
+| zsh 5.8 | 2020-02-14 | — |
+| zsh 5.8.1 | 2022-02-12 | 24 months |
+| zsh 5.9 | 2022-05-14 | 3 months |
+| zsh 5.9.1 | 2026-05-31 | 48 months |
+| zsh 5.9.2 | 2026-07-12 | 1.5 months |
+| zsh 6.0 | — | not released |
 
-### Commit Velocity: 83% Decline
+### Commit Velocity
+
+Commits per calendar year, `git rev-list --count --since=Y-01-01 --until=Y-12-31T23:59:59 fc3cff4f8e` (measured 2026-10-27):
 
 | Year | Commits | Change |
 |------|---------|--------|
 | 2015 | 951 | — |
 | 2016 | 692 | -27% |
 | 2017 | 425 | -39% |
-| 2018 | 461 | +8% |
-| 2019 | 267 | -42% |
-| 2020 | 338 | +27% |
+| 2018 | 459 | +8% |
+| 2019 | 264 | -42% |
+| 2020 | 338 | +28% |
 | 2021 | 305 | -10% |
 | 2022 | 244 | -20% |
 | 2023 | 239 | -2% |
 | 2024 | 159 | -33% |
+| 2025 | 188 | +18% |
+| 2026 (to 2026-10-10) | 403 | — (partial year) |
 
-**From 951 commits in 2015 to 159 in 2024. 83% decline.** Development velocity is unsustainable for a project of this scope.
+**From 951 commits in 2015 to a low of 159 in 2024 (-83%).** 2025 (188) and 2026 through 2026-10-10 (403) are above the 2024 low.
 
-### Bus Factor: 2
+### Contributor Concentration
 
-In the last 3 years, two developers account for 60% of all commits:
+In the last 3 years (796 commits; `git shortlog -sn --since=2023-10-27 fc3cff4f8e`, measured 2026-10-27), four developers account for 69% of all commits and the top two for 37%:
 
-| Developer | Commits (2023-2025) | Lifetime Commits |
+| Developer | Commits (since 2023-10-27) | Lifetime Commits (`git shortlog -sn fc3cff4f8e`) |
 |-----------|-------------------|-----------------|
-| Bart Schaefer | 167 | 953 |
-| Oliver Kiddle | 144 | 1,157 |
-| Everyone else combined | ~250 | — |
+| dana | 152 | 348 |
+| Oliver Kiddle | 145 | 1,188 |
+| Mikael Magnusson | 140 | 415 |
+| Bart Schaefer | 113 | 967 (+541 as "Barton E. Schaefer") |
+| Everyone else combined | 246 | — |
 
-**Peter Stephenson** — the lead developer with **3,825 lifetime commits** (48% of all zsh history) — contributed **25 commits in the last 3 years**. The architect of the codebase has essentially stopped working on it.
+**Peter Stephenson** — the lead developer with **3,825 lifetime commits** (30% of the 12,933 commits in history) — contributed **9 commits in the last 3 years**. The architect of the codebase has essentially stopped working on it.
 
-If Bart Schaefer and Oliver Kiddle stop contributing, zsh development effectively ends. The default shell on every Mac would be unmaintained.
+Four people carry most of the current work. If they stop contributing, zsh development effectively ends.
 
 ### What They Actually Work On: Shell Script Edits for Decades
 
-In the last 3 years (868 commits), here's what the zsh team has been doing:
+The original April 2026 audit categorized the 868 commits in its 3-year window as follows (original April 2026 audit; not re-measured — its "core engine" row is contradicted by the per-file counts below and has been removed):
 
 | Area | Commits | Percentage |
 |------|---------|------------|
@@ -577,16 +599,11 @@ In the last 3 years (868 commits), here's what the zsh team has been doing:
 | Other (misc, config, build) | 418 | 48% |
 | Documentation | 87 | 10% |
 | Tests | 60 | 7% |
-| **Core engine** (parser, lexer, exec, params, glob) | **13** | **1.5%** |
 | ZLE | 12 | 1.4% |
 
-**32% of all commits are editing completion shell scripts.** Adding `--verbose` to `_apt`. Updating `_git` for new options. Fixing `_ssh` flags. Shell script maintenance. For decades.
+**About a third of commits edit completion shell scripts.** Adding `--verbose` to `_apt`. Updating `_git` for new options. Fixing `_ssh` flags.
 
-The core engine — the parser, lexer, parameter expansion, command execution, the actual C code that runs your commands — received **13 commits in 3 years**. 11 of those were signal handling tweaks. One was a `free()` bug. One was a multios fix.
-
-**Zero improvements to the parser in 3 years. Zero improvements to the lexer. Zero improvements to parameter expansion. Zero improvements to command execution.** The 1,502-line `execcmd()` with 18 gotos hasn't been touched. The 186 gotos are still there. The 1,940 global statics are still there. The 174 memory leak points are still there.
-
-The engine is not being improved. No refactoring. No new tests. Development activity is focused on shell script maintenance, not core engineering.
+Commits touching the core engine files since 2023-10-27 (`git rev-list --count --since=2023-10-27 fc3cff4f8e -- Src/<file>`, measured 2026-10-27): 131 in total across `exec.c` (42), `params.c` (61), `subst.c` (23), `parse.c` (14), `glob.c` (11) and `lex.c` (4). The engine is being patched. It is not being restructured: `execcmd_exec()` is still a 1,511-line function with 19 gotos, and the codebase still has 196 gotos (measured 2026-10-27 at fc3cff4f8e).
 
 Recent completion commits — this is what "zsh development" looks like:
 
@@ -611,7 +628,7 @@ The underlying C engine remains unchanged while development focus stays on shell
 - Contributing requires subscribing to a mailing list and emailing patches
 - Build system is Autoconf — new contributors must learn 90s build tooling just to compile
 
-The barrier to entry ensures the bus factor stays at 2.
+The barrier to entry keeps the contributor pool small.
 
 ## Fish Got Rewritten in Rust. Why Not ZSH?
 
@@ -619,17 +636,17 @@ Fish shell was rewritten from C++ to Rust in months. The fish team had the engin
 
 ZSH will never be rewritten by its own team. Here's why:
 
-1. **The codebase is impenetrable.** No one on the current team understands all of it. Peter Stephenson (48% of all commits) has essentially stopped. The remaining developers edit shell scripts — they don't touch the C engine because they can't navigate it. 1,502-line functions with 18 gotos and 1,940 global statics aren't something you casually refactor.
+1. **The codebase is impenetrable.** No one on the current team understands all of it. Peter Stephenson (30% of all commits) has essentially stopped. The remaining developers edit shell scripts — they don't touch the C engine because they can't navigate it. 1,511-line functions with 19 gotos and 1,940 global statics aren't something you casually refactor.
 
 2. **No tests to validate a rewrite.** Fish had tests. ZSH has zero unit tests. How do you verify a rewrite is correct when you have no specification of correct behavior? The only "tests" are integration tests with ordering dependencies that can't run in isolation.
 
-3. **Development focus is shell scripts, not systems code.** 32% of commits in the last 3 years are completion shell script edits. 1.5% touch core C. The skill set required to rewrite a parser in Rust is different from maintaining completion scripts.
+3. **Development focus is shell scripts and incremental patches, not systems redesign.** About a third of commits are completion shell script edits (original April 2026 audit). Core C files receive patches, not restructuring. The skill set required to rewrite a parser in Rust is different from maintaining completion scripts.
 
-4. **No infrastructure to support a rewrite.** No CI, no GitHub, no issue tracker. You can't coordinate a multi-month rewrite over a mailing list with emailed patches. Fish had GitHub, PRs, CI, code review. ZSH has email.
+4. **No infrastructure to support a rewrite.** No CI, no issue tracker, and GitHub only as a mirror that accepts occasional pull requests. You can't coordinate a multi-month rewrite over a mailing list with emailed patches. Fish had GitHub, PRs, CI, code review. ZSH's primary channel is email.
 
-5. **No urgency.** Apple ships it. Users don't complain. Nobody reads the source. The 465 unsafe string operations, 174 memory leak points, and 7 CVEs are invisible to users who just want tab completion to work. Why rewrite something nobody's looking at?
+5. **No urgency.** Apple ships it. Users don't complain. Nobody reads the source. The 451 `sprintf`/`strcpy`/`strcat` calls, 174 memory leak points, and 7 CVEs are invisible to users who just want tab completion to work. Why rewrite something nobody's looking at?
 
-6. **Bus factor of 2.** Two developers doing 60% of the work. They don't have bandwidth to maintain what exists, let alone rewrite it.
+6. **Small contributor pool.** Four developers doing 69% of the work in the last 3 years. They don't have bandwidth to maintain what exists, let alone rewrite it.
 
 7. **Original architects are gone.** The developers who understood the C code (Paul Falstad, Peter Stephenson) are inactive. Institutional knowledge of the engine has been lost.
 
@@ -640,13 +657,13 @@ The fish team chose to rewrite because they recognized the technical debt and ha
 Every principle of software engineering — violated:
 
 - **Testing:** Zero unit tests. Ship and pray. For 30 years.
-- **Separation of concerns:** 1,502-line function that handles all command execution. One function does everything.
+- **Separation of concerns:** 1,511-line function that handles all command execution. One function does everything.
 - **Information hiding:** 1,940 global mutable statics. Every file reaches into every other file's state.
 - **Memory safety:** Custom heap allocator that hides leaks. 174 alloc-without-free error paths. "The OS will clean up after us."
-- **Structured programming:** 186 gotos. 12 levels of nesting. 31 switch statements over 100 lines.
+- **Structured programming:** 196 gotos. 12 levels of nesting. 31 switch statements over 100 lines.
 - **Type safety:** 1,032 C casts. Void pointers everywhere. No compile-time type checking.
 - **Readability:** 208 single-character variable declarations. `int c; char *s; int d;` — good luck debugging.
-- **Performance:** Library code written as interpreted shell script. 11,656 lines interpreted per Tab press. Disk I/O blocking the user on the hot path.
+- **Performance:** Library code written as interpreted shell script. 11,857 lines interpreted per Tab press. Disk I/O blocking the user on the hot path.
 - **Modularity:** Signal handling via manual queue/unqueue calls (524 of them). Miss one and the shell corrupts.
 - **Documentation:** 385 TODO/FIXME/HACK/XXX/BUG markers — acknowledged but unresolved. A shell option literally named `SUNKEYBOARDHACK`.
 - **Build system:** Autoconf from the 90s. Custom `.mdh`/`.pro` file generation. Try building it on a new platform.
@@ -658,17 +675,17 @@ This is the default shell on macOS.
 
 All of this ships as the default shell on hundreds of millions of Macs:
 
-- **147,233 lines of C** with **zero unit tests**
+- **147,888 lines of C** with **zero unit tests**
 - **Custom heap allocator** (1,882 lines) that hides leaks from tooling by never freeing individual allocations
-- **186 gotos**, including 18 in a single 1,502-line function
+- **196 gotos**, including 19 in a single 1,511-line function
 - **1,940 global mutable statics** — the entire shell is shared mutable state
 - **174 memory leak points** where allocs are followed by early returns that skip cleanup
 - **508 unmatched allocations** (1,465 allocs vs 957 frees)
-- **11,656 lines of shell script interpreted per Tab press** on `git`
-- **986 files scanned from disk on every shell startup** by compinit
+- **11,857 lines of shell script interpreted per Tab press** on `git`
+- **974 files scanned from disk on every shell startup** by compinit
 - **Disk I/O blocking the user** on every first autoload invocation — scanning 43 directories synchronously on the hot path
 - **`.zwc` "compilation"** that doesn't actually compile anything — just skips re-parsing while still interpreting every line
-- **105,050 lines of completion "library" code** written as interpreted shell script instead of native code
+- **106,488 lines of completion "library" code** written as interpreted shell script instead of native code
 - **No way to run a single test in isolation** — integration tests depend on shared mutable state from prior tests
 
 These issues are invisible to end users who never read shell source code.
@@ -681,15 +698,15 @@ The zsh test suite isn't just bad — it's a masterclass in violating every prin
 
 ### The Harness Tests Itself
 
-`ztst.zsh` is a **631-line zsh script** that tests zsh **by running inside zsh**. The test harness uses `eval`, `zmodload`, `setopt`, `autoload`, `emulate`, and `typeset` — the very features it's supposed to be testing. If any of those features are broken, the harness itself breaks, and you get false passes or incomprehensible failures with no way to tell which.
+`ztst.zsh` is a **653-line zsh script** that tests zsh **by running inside zsh**. The test harness uses `eval`, `zmodload`, `setopt`, `autoload`, `emulate`, and `typeset` — the very features it's supposed to be testing. If any of those features are broken, the harness itself breaks, and you get false passes or incomprehensible failures with no way to tell which.
 
 This is like testing a compiler by writing the tests in the language the compiler compiles. If the compiler has a bug in `if` statements, your `if`-based test assertions silently pass.
 
 ### Zero Test Isolation
 
-- **879 global state modifications** across test blocks — `typeset -g`, `export`, `setopt`, `alias`
-- **29 test files** `cd` in `%prep` — changing the working directory for every subsequent test in the file
-- **21 test files** use `eval` inside test blocks — can modify literally any state
+- **879 global state modifications** across test blocks — `typeset -g`, `export`, `setopt`, `alias` (original April 2026 audit; not re-measured)
+- **29 test files** `cd` in `%prep` — changing the working directory for every subsequent test in the file (original April 2026 audit; not re-measured)
+- **21 test files** use `eval` inside test blocks — can modify literally any state (original April 2026 audit; not re-measured)
 - Tests run sequentially in **one shell process** — every variable, function, alias, option, and working directory change leaks into subsequent tests
 
 There is no teardown. There is no reset. Test 47 runs in whatever state test 46 left behind.
@@ -698,16 +715,18 @@ There is no teardown. There is no reset. Test 47 runs in whatever state test 46 
 
 Every test file has a `%prep` section that runs once and creates state for all tests. This state is shared, mutable, and invisible:
 
+Largest `%prep` sections, counted as the lines strictly between the `%prep` line and the next `%test`/`%clean` line (measured 2026-10-27 at fc3cff4f8e):
+
 | File | %prep Lines | What it does |
 |------|-------------|-------------|
-| K01nameref.ztst | **1,092** | Defines an entire program — functions, nested scopes, reference chains — as "setup" |
-| B01cd.ztst | 91 | Creates directories, changes cwd for all tests |
-| B02typeset.ztst | 73 | Declares variables that all tests depend on |
-| X04zlehighlight.ztst | 69 | Sets up ZLE state |
-| C02cond.ztst | 44 | Creates test files and directories |
-| V01zmodload.ztst | 43 | Loads modules that affect all tests |
+| K01nameref.ztst | **193** | Defines functions, nested scopes and reference chains as "setup" |
+| P01privileged.ztst | 117 | Selects unprivileged UID/GID pairs, probes for perl and `setresuid` |
+| B02typeset.ztst | 71 | Declares variables that all tests depend on |
+| X04zlehighlight.ztst | 67 | Sets up ZLE state |
+| C02cond.ztst | 42 | Creates test files and directories |
+| V01zmodload.ztst | 41 | Loads modules that affect all tests |
 
-`K01nameref.ztst` has **1,092 lines of %prep**. That's not test setup — that's an entire program masquerading as test infrastructure. The file is 2,019 lines total, meaning **54% of the "test file" is setup code.**
+`K01nameref.ztst` has **193 lines of %prep** in a 2,463-line file (measured 2026-10-27 at fc3cff4f8e).
 
 ### Can't Run One Test
 
@@ -738,11 +757,11 @@ The harness has no per-test timeout. If a test hangs (infinite loop, blocking I/
 
 ### The Numbers
 
-- **631 lines** of test harness code (zsh testing itself)
-- **70 test files**, **27,090 lines** of test code
-- **879 global state modifications** across test blocks
-- **29 test files** change working directory in %prep
-- **21 test files** use `eval` in test blocks
+- **653 lines** of test harness code (zsh testing itself; measured 2026-10-27 at fc3cff4f8e)
+- **77 test files**, **30,020 lines** of test code (`Test/*.ztst`; measured 2026-10-27 at fc3cff4f8e)
+- **879 global state modifications** across test blocks (original April 2026 audit; not re-measured)
+- **29 test files** change working directory in %prep (original April 2026 audit; not re-measured)
+- **21 test files** use `eval` in test blocks (original April 2026 audit; not re-measured)
 - **Zero** ability to run a single test in isolation
 - **Zero** ability to parallelize
 - **Zero** per-test timeout
@@ -750,23 +769,25 @@ The harness has no per-test timeout. If a test hangs (infinite loop, blocking I/
 
 ### The zshrs Test Runner
 
-The zshrs test runner (`ztst_runner.rs`) fixes every one of these problems:
+The zshrs runner for the upstream corpus (`tests/ztst_runner.rs`) runs the same `.ztst` files with the same semantics — one persistent `zshrs --zsh -f` per file, chunks sharing state exactly as in `ztst.zsh` — and fixes the harness-level problems:
 
 | ztst.zsh | ztst_runner.rs |
 |----------|---------------|
-| Zsh tests itself (circular) | Rust tests zshrs from the outside |
-| One process, shared state | One process per test, clean slate |
-| No test isolation | Each test gets its own prep |
-| Can't run one test | `cargo test specific_test` |
-| Can't parallelize | Process-per-test, parallelizable |
-| No timeout | 200ms timeout per test, process group kill |
-| No cleanup on hang | Process groups — SIGKILL entire tree |
+| Zsh tests itself (circular) | Rust drives zshrs from the outside |
+| One process, shared state | One persistent shell per `.ztst` file; chunks share state, as upstream expects |
+| No test isolation | Isolation per file (each file its own process); within a file, upstream's ordering is preserved |
+| Can't run one test | Each file is its own `#[test]` (`ztst_tests!` macro): `cargo test --test ztst_runner -- <file>` |
+| Can't parallelize | Files run in parallel, one process per file |
+| No timeout | Per-chunk timeout, 10 s default (`timeout_ms`, override with `ZTST_TIMEOUT_MS`) |
+| No cleanup on hang | Process group — SIGKILL to the entire tree |
 | Hangs block everything | Timeout kills and moves on |
-| 631 lines of zsh script | Compiled Rust, no circular dependency |
+| 653 lines of zsh script | Compiled Rust, no circular dependency |
 
 ## Security Vulnerabilities
 
 ### 7 CVEs (and counting)
+
+CVE list: original April 2026 audit; not re-measured.
 
 | CVE | Year | Vulnerability |
 |-----|------|--------------|
@@ -784,15 +805,17 @@ A privilege escalation bug. In a shell. That runs as the user. The shell that's 
 
 These aren't historical — they're in the current source:
 
+Call counts: `rg -o '[^a-z_]<fn>\('` over every `Src/**/*.c` (measured 2026-10-27 at fc3cff4f8e). Stack-buffer count: original April 2026 audit; not re-measured.
+
 | Pattern | Count | Risk |
 |---------|-------|------|
-| `sprintf()` (no bounds check) | **165** | Buffer overflow — writes past buffer end |
-| `strcpy()` (no bounds check) | **218** | Buffer overflow — no length limit |
-| `strcat()` (no bounds check) | **82** | Buffer overflow — concatenates without limit |
+| `sprintf()` (no bounds check) | **168** | Buffer overflow — writes past buffer end |
+| `strcpy()` (no bounds check) | **208** | Buffer overflow — no length limit |
+| `strcat()` (no bounds check) | **75** | Buffer overflow — concatenates without limit |
 | Fixed-size stack buffers | **163** | Overflow targets for all of the above |
-| **Total unsafe string ops** | **465** | Every one is a potential CVE |
+| **Total unsafe string ops** (`sprintf` + `strcpy` + `strcat`) | **451** | Every one is a potential CVE |
 
-**465 unsafe string operations** in the current source. Every single one is a potential buffer overflow. Every single one would be a compile error in Rust.
+**451 unsafe string operations** in the current source. Every single one is a potential buffer overflow. Every single one would be a compile error in Rust.
 
 ### Examples from the Source
 
@@ -812,29 +835,29 @@ strcpy(tmp, lpre);
 strcpy(curvichg.buf, keybuf);
 ```
 
-These patterns have been in the code for decades. 7 CVEs have been found. With 465 unsafe string operations still in the source, more are waiting to be discovered. There are no unit tests, no static analysis, and no fuzzing pipeline to catch these issues.
+These patterns have been in the code for decades. 7 CVEs have been found. With 451 unsafe string operations still in the source, more are waiting to be discovered. There are no unit tests, no static analysis, and no fuzzing pipeline to catch these issues.
 
 ### Rust Eliminates This Entire Class
 
-In zshrs, every one of these 465 unsafe operations is replaced by Rust's `String`, `Vec<u8>`, bounds-checked indexing, and the borrow checker. Buffer overflows are not possible in safe Rust. This is not a theoretical advantage — it's the difference between 7 CVEs and zero.
+In zshrs, every one of these 451 unsafe operations is replaced by Rust's `String`, `Vec<u8>`, bounds-checked indexing, and the borrow checker. Buffer overflows are not possible in safe Rust. This is not a theoretical advantage — it's the difference between 7 CVEs and zero.
 
 ## Not Production Grade
 
 ZSH is not production-grade software. It never was.
 
-Production-grade means unit tests. ZSH has zero. Production-grade means memory safety guarantees. ZSH has a custom heap allocator with 174 leak points. Production-grade means code review standards. ZSH has 1,502-line functions with 18 gotos that nobody refactored in 30 years.
+Production-grade means unit tests. ZSH has zero. Production-grade means memory safety guarantees. ZSH has a custom heap allocator with 174 leak points. Production-grade means code review standards. ZSH has 1,511-line functions with 19 gotos that nobody refactored in 30 years.
 
 Typical open-source projects on GitHub have CI pipelines, unit tests, and code review. ZSH has none of these and ships as the default shell on every developer machine Apple sells.
 
 This is not a matter of opinion. The numbers are measured directly from the source:
 
 - **Zero** unit tests
-- **147,233** lines of untested C
+- **147,888** lines of untested C (measured 2026-10-27 at fc3cff4f8e)
 - **1,940** global mutable statics
 - **174** memory leak points
-- **186** gotos
-- **11,656** lines of interpreted shell script per Tab press
-- **986** files scanned from disk on every shell startup
+- **196** gotos
+- **11,857** lines of interpreted shell script per Tab press
+- **974** files scanned from disk on every shell startup
 - **30 years** without refactoring
 
 Software with these characteristics cannot be shipped to developer machines worldwide. It must be replaced.
@@ -858,11 +881,11 @@ zshrs is a ground-up Rust port that fixes every single issue documented above. N
 | ZSH Problem | zshrs Solution |
 |-------------|---------------|
 | 7 CVEs including privilege escalation and arbitrary code execution | Rust's type system and borrow checker eliminate buffer overflows, use-after-free, and double-free — the root cause of every zsh CVE. |
-| 165 `sprintf()` calls with no bounds checking | Rust's `format!()` macro — dynamically sized, bounds-checked, cannot overflow. |
-| 218 `strcpy()` calls with no bounds checking | Rust's `String::clone()`, `.to_string()` — always allocates exactly the right size. |
-| 82 `strcat()` calls with no bounds checking | Rust's `String::push_str()` — grows the buffer automatically. |
+| 168 `sprintf()` calls with no bounds checking | Rust's `format!()` macro — dynamically sized, bounds-checked, cannot overflow. |
+| 208 `strcpy()` calls with no bounds checking | Rust's `String::clone()`, `.to_string()` — always allocates exactly the right size. |
+| 75 `strcat()` calls with no bounds checking | Rust's `String::push_str()` — grows the buffer automatically. |
 | 163 fixed-size stack buffers (overflow targets) | Rust's `Vec<u8>` and `String` — dynamically sized, bounds-checked on every access. |
-| **465 total unsafe string operations** | **Zero.** Every one is replaced by safe Rust equivalents. Buffer overflows are a compile error, not a CVE. |
+| **451 total unsafe string operations** | **Zero.** Every one is replaced by safe Rust equivalents. Buffer overflows are a compile error, not a CVE. |
 
 ### Type Safety: Fixed
 
@@ -875,15 +898,15 @@ zshrs is a ground-up Rust port that fixes every single issue documented above. N
 
 | ZSH Problem | zshrs Solution |
 |-------------|---------------|
-| 1,940 global mutable statics | Encapsulated state in `ShellExecutor` struct. No file can reach into another file's state. |
+| 1,940 global mutable statics | The faithful port keeps zsh's globals (as statics behind locks) so parity can be pinned; executor-level state lives in `vm_helper.rs::ShellExecutor`. Moving the hot globals into an owned per-execution context is tracked in [`hot_path_performance.md`](hot_path_performance.md). |
 | 524 manual `queue_signals`/`unqueue_signals` calls | Rust's `Mutex`, `RwLock`, `Arc` — the compiler refuses to compile data races. |
 
 ### Control Flow: Fixed
 
 | ZSH Problem | zshrs Solution |
 |-------------|---------------|
-| 186 gotos | Zero. Rust doesn't have `goto`. Structured control flow with `match`, `if let`, `?` operator for error propagation. |
-| 1,502-line function with 18 gotos (`execcmd`) | Decomposed into focused functions. No function needs to be 1,500 lines when you have proper abstractions. |
+| 196 gotos | Zero. Rust doesn't have `goto`. Structured control flow with `match`, `if let`, `?` operator for error propagation. |
+| 1,511-line function with 19 gotos (`execcmd_exec`) | Decomposed into focused functions. No function needs to be 1,500 lines when you have proper abstractions. |
 | 31 switch statements over 100 lines | Rust `match` with exhaustiveness checking — the compiler ensures every case is handled. |
 | 12 levels of nesting | Early returns with `?` operator. Flat code that reads top to bottom. |
 | 55 explicit fall-throughs in switch cases | Rust `match` doesn't fall through. Every arm is explicit. Accidental fall-through is impossible. |
@@ -892,31 +915,31 @@ zshrs is a ground-up Rust port that fixes every single issue documented above. N
 
 | ZSH Problem | zshrs Solution |
 |-------------|---------------|
-| 105,050 lines of shell script "library" interpreted on every Tab press | Rkyv-indexed completions. Native compiled Rust code. |
-| 11,656 lines interpreted for a single `git <TAB>` | One Rkyv query. Microseconds, not milliseconds. |
-| 986 files scanned from disk on every shell startup (`compinit`) | One-time indexing at install. Database lookup on startup. |
-| `_git` completion: 9,026 lines of interpreted shell script | Completion specs compiled into native code. |
+| 106,488 lines of shell script "library" interpreted on every Tab press | Library functions ported to Rust under `src/compsys/`; end-completion files compiled once to fusevm bytecode in rkyv shards. |
+| 11,857 lines interpreted for a single `git <TAB>` | Library layer runs as compiled Rust; `_git` runs from cached bytecode with no re-lex or re-parse. |
+| 974 files scanned from disk on every shell startup (`compinit`) | Daemon-built rkyv images under `~/.zshrs/images/` with `index.rkyv`; compile on demand only on a miss. |
+| `_git` completion: 9,227 lines of interpreted shell script | Stays as shell source (`src/compsys/ported/Unix/Command/_git`), compiled once to fusevm bytecode and cached in rkyv shards. |
 | `_arguments`: 589-line parser written in shell script | Argument parsing in compiled Rust. |
-| `_path_files`: 895-line filesystem walker in shell script | `std::fs` and `walkdir` — native filesystem operations. |
+| `_path_files`: 895-line filesystem walker in shell script | Faithful Rust port (`src/compsys/ported/Unix/Type/_path_files.rs`) driving the ported `compfiles` / `compadd` / `compset` / `compquote` builtins and `zglob`. |
 
 ### Autoload: Fixed
 
 | ZSH Problem | zshrs Solution |
 |-------------|---------------|
-| Disk I/O blocking user on every first function invocation | Functions pre-indexed in Rkyv. One database lookup, no disk scanning. |
-| Scanning 43 fpath directories synchronously on the hot path | No fpath scanning on the hot path. Index built at install time. |
-| `.zwc` files littered across filesystem (fake compilation) | No `.zwc` files. Functions are compiled Rust or pre-indexed. No filesystem litter. |
-| `autoload -Xz` stubs that trigger disk I/O when called | Functions loaded eagerly or resolved via database. No stubs, no deferred I/O. |
+| Disk I/O blocking user on every first function invocation | Compiled bytecode cached in `~/.zshrs/autoloads.rkyv`; a hit skips lex, parse and compile. The definition is still read to verify its SHA-256. |
+| Scanning 43 fpath directories synchronously on the hot path | The definition is still located on `$fpath` (zsh semantics); the cache removes the parse and compile cost, not the lookup. |
+| `.zwc` files littered across filesystem (fake compilation) | zshrs writes no `.zwc` files; it reads existing `.zwc` digests for compatibility and caches bytecode in one rkyv shard. |
+| `autoload -Xz` stubs that trigger disk I/O when called | Stubs are kept for zsh compatibility (`${functions[f]}` shows `builtin autoload -X`); resolving one is served from the bytecode cache on a hit. |
 
 ### Testing: Fixed
 
 | ZSH Problem | zshrs Solution |
 |-------------|---------------|
-| Zero unit tests on 147,233 lines of C | Comprehensive test suite — unit tests, integration tests, per-test isolation. |
-| Integration tests depend on shared mutable state | Each test runs in its own `zshrs -f -c` process. No shared state. No ordering dependencies. |
-| Can't run a single test in isolation | Every test runs independently. `cargo test specific_test` works. |
-| Can't parallelize tests | Tests are parallelizable by design. Process-per-test with process group cleanup. |
-| Test harness is 632 lines of zsh testing itself (circular) | Test runner is Rust code testing zshrs from the outside. No circular dependency. |
+| Zero unit tests on 147,888 lines of C | Comprehensive test suite — unit tests, integration tests, per-test isolation. |
+| Integration tests depend on shared mutable state | Rust unit and integration tests are isolated per test. The upstream `.ztst` corpus runs one `zshrs --zsh -f` per file, preserving upstream's within-file semantics. |
+| Can't run a single test in isolation | `cargo test <name>` runs one Rust test; `cargo test --test ztst_runner -- <file>` runs one `.ztst` file. |
+| Can't parallelize tests | Rust tests run in parallel; `.ztst` files run in parallel, one process per file, with process-group cleanup. |
+| Test harness is 653 lines of zsh testing itself (circular) | Test runner is Rust code testing zshrs from the outside. No circular dependency. |
 | 30 years without refactoring | Rust's compiler enforces refactoring — dead code warnings, unused variable warnings, exhaustive match. The code stays clean because the compiler won't let it rot. |
 
 ### Build System: Fixed
@@ -931,8 +954,8 @@ zshrs is a ground-up Rust port that fixes every single issue documented above. N
 
 | ZSH Problem | zshrs Solution |
 |-------------|---------------|
-| Single-threaded everything | Multi-threaded builtins: `pmaps`, `pgreps`, `pflat_maps` — parallel iterators via background worker threads. |
-| `compinit` scans 986 files on startup (0.49 seconds) | Rkyv index built once. Startup reads one database file. |
+| Single-threaded everything | Worker pool (`src/extensions/worker.rs`) for background work such as parallel `**/` glob descent and async precmd hooks. |
+| `compinit` scans 974 files on startup (0.49 seconds, original April 2026 audit) | Daemon-built rkyv index; startup mmaps it instead of scanning fpath. |
 | Shell script interpreter for library code | Compiled native code. No interpreter overhead. |
 | Blocking disk I/O on hot path | Async-capable architecture. Database lookups instead of filesystem scans. |
 
@@ -941,6 +964,8 @@ zshrs is a ground-up Rust port that fixes every single issue documented above. N
 Read the zsh source code. Then read the zshrs source code. That's all you need to know about why this replacement exists and why it must ship.
 
 ## Plugin Developers Forced to Monkey-Patch a Broken Shell
+
+Counts in this section (p10k line counts, monkey-patch tallies, `compinit` timing): original April 2026 audit; not re-measured.
 
 ZSH doesn't have a plugin API. It has monkey patching. Every major plugin and framework in the zsh ecosystem exists because zsh is broken, and every one of them works by overriding zsh internals because there's no proper extension mechanism.
 
@@ -1002,7 +1027,7 @@ functions[original_fn]='entirely new body'
 Literally overwrites a function's source code at runtime. The `functions` associative array exposes every function's body as a mutable string. Any plugin can rewrite any function — including zsh's own internal functions. No access control. No versioning. No way to know what the original was.
 
 #### 2. compdef Hijacking
-Zinit intercepts `compdef` calls before `compinit` runs, stores them in an array, then replays them after `compinit` finishes. This is because `compinit` takes 0.49 seconds, so zinit defers it — but plugins call `compdef` during load, before `compinit` exists. So zinit fakes `compdef`, buffers the calls, and replays them later. A monkey patch to work around a performance problem that exists because the completion system scans 986 files from disk.
+Zinit intercepts `compdef` calls before `compinit` runs, stores them in an array, then replays them after `compinit` finishes. This is because `compinit` takes 0.49 seconds, so zinit defers it — but plugins call `compdef` during load, before `compinit` exists. So zinit fakes `compdef`, buffers the calls, and replays them later. A monkey patch to work around a performance problem that exists because the completion system scans 974 files from disk.
 
 #### 3. precmd/preexec Array Fighting
 ```zsh
@@ -1040,7 +1065,7 @@ P10K uses `eval` **extensively** — 170 `eval` calls across the plugin ecosyste
 
 ### Zinit Turbo Mode: Monkey Patching as a Feature
 
-Zinit's "turbo mode" defers plugin loading until after the prompt appears. This exists entirely because zsh startup is so slow (compinit scanning 986 files, autoloading from disk, fpath iteration). Turbo mode:
+Zinit's "turbo mode" defers plugin loading until after the prompt appears. This exists entirely because zsh startup is so slow (compinit scanning 974 files, autoloading from disk, fpath iteration). Turbo mode:
 
 1. Fakes `compdef` before `compinit` exists
 2. Defers `source` calls until after first prompt
@@ -1063,13 +1088,13 @@ precmd_functions=(_p9k_instant_prompt_precmd_first $precmd_functions)
 ```
 P10K injects itself as the **first** precmd function, displays a cached prompt from a file, then suppresses all output until the real prompt is ready. It literally lies to the user about the shell being ready.
 
-This is the most popular zsh "feature" — and it's a monkey patch hiding a performance problem that exists because the shell scans 986 files from disk on every startup.
+This is the most popular zsh "feature" — and it's a monkey patch hiding a performance problem that exists because the shell scans 974 files from disk on every startup.
 
 ### Workarounds Don't Fix Bad Code
 
 Zinit turbo mode. P10K instant prompt. gitstatus C daemon. compdef hijacking. Widget wrapping. Function body replacement. 702 monkey patches across the plugin ecosystem.
 
-None of it fixes the underlying code. The code still has 1,502-line functions with 18 gotos. The code still has 465 unsafe string operations. The code still has 174 memory leak points. The code still has zero unit tests. The code still scans 986 files from disk on every startup. The code still interprets 11,656 lines of shell script every time you press Tab.
+None of it fixes the underlying code. The code still has 1,511-line functions with 19 gotos. The code still has 451 unsafe string operations. The code still has 174 memory leak points. The code still has zero unit tests. The code still scans 974 files from disk on every startup. The code still interprets 11,857 lines of shell script every time you press Tab.
 
 P10K's instant prompt hides the latency — it doesn't fix the code that causes it. Zinit's turbo mode defers the slow startup — it doesn't fix the code that makes startup slow. gitstatus writes a C daemon — because the code is too slow to query git status natively.
 
@@ -1094,8 +1119,8 @@ In zshrs, plugins don't need to monkey patch:
 
 ## The Bottom Line
 
-The core C engine has received 13 commits in 3 years — 11 of them signal tweaks. Zero parser improvements. Zero lexer improvements. Zero memory safety fixes. Zero refactoring. The 1,502-line function with 18 gotos, the 465 unsafe string operations, the 174 memory leak points, the 1,940 global mutable statics — all untouched. All shipping to hundreds of millions of machines.
+The core C engine files received 131 commits in the last 3 years (measured 2026-10-27 at fc3cff4f8e) — patches, not restructuring. The 1,511-line function with 19 gotos, the 451 `sprintf`/`strcpy`/`strcat` calls, the 174 memory leak points, the 1,940 global mutable statics — still there. All shipping to hundreds of millions of machines.
 
-The project has no CI, no GitHub, no issue tracker, no code review, no unit tests, and no onboarding documentation. Commit velocity has declined 83% in a decade. The bus factor is 2. There is no ZSH 6 on the horizon.
+The project has no CI, no issue tracker, no unit tests, and no onboarding documentation; review happens on a mailing list, with GitHub as a mirror. Yearly commits fell 83% from 2015 to the 2024 low. Four developers do most of the current work. There is no ZSH 6 on the horizon.
 
 The codebase has accumulated too much technical debt to be incrementally improved. It needs a ground-up replacement with modern engineering practices. That replacement is zshrs.

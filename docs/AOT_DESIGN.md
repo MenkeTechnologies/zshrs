@@ -567,12 +567,14 @@ zcache clean zwc | zcompdump | legacy [--dry-run]   # remove legacy zsh artifact
 zcache verify                   # integrity scan: shard hashes vs catalog header,
                                 # PRAGMA integrity_check on catalog.db, report drift /
                                 # corruption / orphaned .tmp files; suggested recovery cmds
-zcache compact                  # SQLite VACUUM on catalog.db + history.db
+zcache compact                  # sweep orphaned images/*.tmp files (as shipped,
+                                # daemon/ops.rs::op_compact calls only
+                                # shard::sweep_tmp_files; VACUUM is not wired)
 ```
 
-`zcache rebuild` (all forms, incl. `--parallel N` and `shard <name>`) is **not implemented**: the rebuild verbs and their daemon ops were removed with the AST walker (`daemon/builtins.rs::zcache`). Re-indexing is done by re-running `zshrs-recorder` (see [`RECORDER.md`](./RECORDER.md)). The original design below — async verbs that enqueue jobs, print job IDs, and block only under `--wait` — was not built.
+`zcache rebuild` (all forms, incl. `--parallel N` and `shard <name>`) is **not implemented**: the rebuild verbs and their daemon ops were removed with the AST walker (`daemon/builtins.rs::zcache`). Re-indexing is done by re-running `zshrs-recorder` (see [`RECORDER.md`](./RECORDER.md)). The original design (async verbs that enqueue jobs, print job IDs, and block only under `--wait`) was not built.
 
-**Custom-builtin namespace convention:** all zshrs-introduced builtins use the `z` prefix to match zsh's existing `z*` family (`zmv`, `zparseopts`, etc.) but never overlap a name already used by upstream zsh. Anti-collision check is part of the build: if upstream zsh adds a `z*` builtin in a future release that we shadow, our build fails until we rename. Current zshrs `z*` additions: `zcache`. Future zshrs additions follow the same rule.
+**Custom-builtin namespace convention:** all zshrs-introduced builtins use the `z` prefix to match zsh's existing `z*` family (`zmv`, `zparseopts`, etc.) but never overlap a name already used by upstream zsh. Anti-collision check is part of the build: if upstream zsh adds a `z*` builtin in a future release that we shadow, our build fails until we rename. The current zshrs `z*` builtins are registered in `daemon/builtins.rs` (`ZSHRS_BUILTIN_NAMES`) and the extension bintabs (`znative`, `ztest`, …). The build-time anti-collision check described here is design only — not implemented.
 
 **Why builtins beat raw `rm` for routine maintenance:**
 
@@ -611,6 +613,21 @@ Per the global "no startup banner / no progress to terminal" rule: `cache` built
 
 zshrs is **one codebase** that ships **three personality modes**, selected at startup. Cache machinery is one of many features gated by mode. The framing matters because it explains why cache (and async/await, and AOP intercepts, and stryke `@` prefix) all live behind runtime checks, not behind separate binaries.
 
+**As shipped** (`bins/zshrs.rs` `main`, `argv0_inferred_mode` / `explicit_mode`): more than three modes. An explicit flag overrides argv[0]; argv[0] is matched after stripping a login-shell `-`.
+
+| Mode (`ShellMode`) | argv[0] basename | Flags | Cache layer |
+|------|---------|----------|------------|
+| **Posix** | `sh` | `--posix`, `--sh` | OFF |
+| **Dash** | `dash`, `ash` | `--dash`, `--ash` | OFF |
+| **Bash** | `bash` | `--bash` | OFF |
+| **Ksh** | `ksh`, `ksh93`, `mksh`, `pdksh` | `--ksh`, `--mksh`, `--pdksh` | OFF |
+| **Zsh** (drop-in) | `zsh`, `zsh-5.9` | `--zsh` (alias `--zsh-compat`), `--csh`, `--emulate MODE`, `--X --zsh` combos | OFF |
+| **zshrs** (default) | anything else | none | ON |
+
+Every parity mode (any row but the last) sets the process-local `script_cache::CACHE_DISABLED` override (not an exported `ZSHRS_CACHE=0`, which would leak into `${(k)parameters}`), and disables the daemon and plugin-cache replay. `emulation_startup::set_emulating` also turns off the zshrs ZLE extras (autosuggest, highlighting, autopair).
+
+The rest of this subsection is the original three-mode design; where it differs from the table above, the table is current.
+
 | Mode | Trigger | Identity | Extensions | Cache layer |
 |------|---------|----------|------------|-------------|
 | **POSIX** | `--posix`, `emulate sh`, argv[0] basename `sh` / `dash` / `bash` | strict POSIX `/bin/sh` drop-in | none — POSIX-only | OFF |
@@ -647,16 +664,16 @@ So: turbocharged-zshrs sourcing a zinit plugin that `emulate -LR zsh`s itself wo
 
 | Concept | Lifetime | Controls | Mutable? |
 |---------|----------|----------|----------|
-| Personality mode | process | cache, fsnotify (none, removed), workers, builtin set | no — set at startup |
+| Personality mode | process | cache, daemon presence, plugin-cache replay, ZLE extras | no — set at startup |
 | Emulation scope | per-function via `emulate -L` | parser flags, expander flags | yes — standard zsh per-scope |
 
 **Implementation rule:** every code path that's gated by personality mode checks the runtime mode flag at its entry point. Single check, cheap, impossible to drift. `emulate -L` operates on a separate parser-flags struct that's saved/restored on scope entry/exit per zsh semantics.
 
-The non-negotiable contract: a binary identifying as `sh` / `dash` / `bash` MUST behave as a strict POSIX shell with zero zshrs surface. A binary identifying as `zsh` MUST behave as mainline zsh with zero zshrs cache surface. A binary identifying as `zshrs` MUST be the full turbocharged daily driver. These three are the marketed personalities and any cross-contamination is a regression.
+The non-negotiable contract: a binary identifying as `sh` / `dash` / `ash` / `bash` / `ksh` MUST behave as that shell with zero zshrs surface (`bash` and `ksh` get their own modes, not POSIX). A binary identifying as `zsh` MUST behave as mainline zsh with zero zshrs cache surface. A binary identifying as `zshrs` MUST be the full turbocharged daily driver. These three are the marketed personalities and any cross-contamination is a regression.
 
 ### Hard invariant: nothing blocks the shell
 
-The main shell thread NEVER blocks on compile work, image writes, hydration, or any other cache-management operation. **All rkyv blob building runs in the worker pool.** This is non-negotiable — first-prompt latency, prompt-firing cadence, and Tab response all stay sub-millisecond regardless of what plugin install / git pull / explicit `zcache rebuild` is happening in the background.
+The main shell thread NEVER blocks on compile work, image writes, hydration, or any other cache-management operation. **All rkyv blob building runs in the worker pool.** This is non-negotiable — first-prompt latency, prompt-firing cadence, and Tab response all stay sub-millisecond regardless of what plugin install / git pull / `zshrs-recorder` run is happening in the background.
 
 **Source code is the source of truth. Image is an opportunistic accelerator.** This is the architectural safety net that makes the non-blocking invariant possible. Every function in the user's daily-driver corpus has a complete source-interp execution path (the existing parser → bytecode-compile-on-demand → JIT/interp pipeline). The image cache is a fast lookup that may or may not hit; if it doesn't hit (or the blob is malformed, version-mismatched, mid-rewrite, or the file is missing entirely), the main thread silently falls through to the source-interp path and the user is none the wiser. Worker quietly catches up the cache so subsequent calls hit.
 
@@ -666,7 +683,7 @@ Implications:
 - Image lookup miss → main thread falls back to interp-from-source for that one function, AND enqueues a compile job for the worker pool. Function returns; user is unblocked. The image fills in over time.
 - **Malformed shard / version mismatch / corruption** → treated identically to a miss. Main thread falls through to source interp; worker enqueues a re-shard job. Cache corruption is never user-visible beyond "this call took the slow path."
 - Worker pool owns: all shard compile, all `images/*.rkyv` writes, `index.rkyv` rewrites, `catalog.db` hydration, `cache compact` SQLite VACUUM, `cache verify` hash checks.
-- Cold-install / fresh-machine launch: image doesn't exist yet → first shell falls back to source interp for everything → user gets first prompt within a few hundred ms (interp-only path, slow but not blocked). User runs `zcache rebuild` when ready to warm the cache; subsequent shell launches are fully fast.
+- Cold-install / fresh-machine launch: image doesn't exist yet → first shell falls back to source interp for everything → user gets first prompt within a few hundred ms (interp-only path, slow but not blocked). User runs `zshrs-recorder` (see [`RECORDER.md`](./RECORDER.md)) when ready to warm the cache; subsequent shell launches are fully fast.
 
 This decoupling — image as accelerator, source as ground truth — is what makes "nothing blocks the shell" achievable. The alternative (image is required for execution) would force the shell to wait on compile during cold start and would crash on any cache corruption. Neither is acceptable.
 
@@ -674,7 +691,7 @@ This decoupling — image as accelerator, source as ground truth — is what mak
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  zshrs-daemon (singleton; spawned lazily by first client)       │
+│  zshrs-daemon (singleton; separate binary, never shell-spawned)  │
 │                                                                  │
 │  ┌──────────┐  ┌────────────┐  ┌──────────────────────────┐    │
 │  │ fsnotify │→ │ work queue │→ │ cache worker pool (1-2 t)│    │
@@ -744,24 +761,25 @@ Daemon model wins by ~3× RAM, ~10× fd, and ~40× thread count vs the per-clien
 
 **Daemon lifecycle:**
 
-- **Spawn on demand by the first client:** first zshrs client to launch checks for `~/.zshrs/daemon.sock`; if absent or unresponsive, fork-spawns the daemon (same binary, `--daemon` flag), waits ~50ms, retries the connect. Subsequent clients (the other 99 in the tmux scenario) just connect to the already-running daemon — no spawn race, no second daemon, no per-client startup cost beyond the connect. **First zshrs spawns it; the next N use it.**
+- **Startup (as shipped):** the shell never spawns the daemon (`src/extensions/daemon_presence.rs` module doc). `zshrs-daemon` is a separate binary, started by the user (`zshrs-daemon`) or a service manager (`systemctl --user`, `launchctl`, `brew services`). Each shell probes `~/.zshrs/daemon.sock` once at startup: present → uses it; absent → degraded vanilla mode; `[daemon] enabled = "off"` in `zshrs.toml` → never probes. The original "first client fork-spawns the daemon with `--daemon`" design was not built.
 - **Singleton enforcement:** daemon takes `flock(LOCK_EX)` on `~/.zshrs/daemon.pid` at startup. Second daemon instance sees the lock held, logs "daemon already running", exits. Race-safe.
 - **Lifetime:** persists across shell sessions. Survives logout. Killed only by explicit `zcache daemon stop` or `pkill zshrs-daemon` or system shutdown.
-- **Crash recovery:** if daemon dies (crash, SIGKILL, OOM), next client to fail socket connect kills the stale pidfile and respawns. No state loss — daemon owns no in-memory data that isn't reproducible from sources + on-disk shards.
+- **Crash recovery:** if the daemon dies (crash, SIGKILL, OOM), shells started afterwards run in degraded mode until the daemon is restarted by the user or the service manager; no client respawns it. No state loss — daemon owns no in-memory data that isn't reproducible from sources + on-disk shards.
 - **Degraded mode (no daemon):** clients fall back to source-interp for everything. Cache stops updating but shells stay functional. Per the source-truth fallback rule. Edge case for users who explicitly disable the daemon.
 
 **IPC protocol** (Unix domain socket at `~/.zshrs/daemon.sock`):
 
-Length-prefixed JSON messages (small volume, easy debug, fits the message rate). Client → daemon:
+Length-prefixed JSON messages: a 4-byte big-endian length, then UTF-8 JSON, max 64 MiB (`daemon/ipc.rs::MAX_FRAME_BYTES`). Each connection opens with a `{"hello": {...}}` → `{"welcome": {...}}` handshake carrying `PROTOCOL_VERSION`. Requests are `{"id": N, "op": "<op>", "args": {...}}` and responses `{"id": N, "ok": bool, ...}`; the rows below show the op and its args flattened. Client → daemon:
 
 | Message | Effect |
 |---------|--------|
 | `{"op": "info"}` | daemon returns shard sizes, entry counts, in-flight jobs (powers `zcache info`) |
-| `{"op": "rebuild", "shard": "zpwr"}` | daemon enqueues compile job (powers `zcache rebuild shard <name>`) |
-| `{"op": "rebuild"}` | daemon rebuilds full corpus (powers `zcache rebuild`) |
 | `{"op": "clean", "target": "shards"}` | daemon unlinks + re-derives (powers `zcache clean shards`) |
 | `{"op": "verify"}` | daemon runs integrity scan (powers `zcache verify`) |
 | `{"op": "fpath_changed", "paths": ["/opt/...", "..."]}` | daemon re-discovers source roots, watches new ones |
+| `{"op": "compact"}` | daemon sweeps orphaned `.tmp` files (powers `zcache compact`) |
+
+The `rebuild` op (and `zcache rebuild`) was removed with the AST walker; re-indexing goes through `zshrs-recorder`. The full op list is `daemon/ops.rs::OP_NAMES`.
 | `{"op": "stats_flush", "deltas": [{"fq_name": "...", "count": 5, "total_ns": 12000}, ...]}` | client batched runtime stats; daemon merges into `entry_stats` |
 | `{"op": "subscribe_shard", "shard": "zpwr"}` | optional: client requests push notification on shard update |
 
@@ -770,9 +788,7 @@ Daemon → client (async, optional, only to subscribed clients):
 | Message | Effect |
 |---------|--------|
 | `{"event": "shard_updated", "shard": "zpwr", "generation": 42}` | client invalidates its cached shard mmap, re-mmaps on next lookup |
-| `{"event": "rebuild_complete", "job_id": 17, "duration_ms": 4200}` | reply to async `rebuild` invocation |
-
-Sync vs async same as before: client `zcache rebuild` returns after enqueue ack from daemon (fast); `--wait` blocks on the `rebuild_complete` event.
+| `{"event": "rebuild_complete", "job_id": 17, "duration_ms": 4200}` | not emitted: the name survives in `daemon/ipc.rs` `Event::RebuildComplete`, but the `rebuild` op it answered was removed |
 
 **Solves the 60-shell problem cleanly:**
 
@@ -900,7 +916,7 @@ This is the **third world-first** stacking on the daemon: native cross-shell pub
 
 The cache-management role is the v1 use of the daemon. The architecture **generalizes to a session-persistent shell-level supervisor** that no shell currently provides. User framing: *"clients can push long running jobs to server etc. you can exit your shell and your job is still running, like tmux really but at shell level"*.
 
-Future expansion of the same daemon (post-v1; not in current scope but the architecture must not preclude it):
+Shipped as the `zjob` builtin (`daemon/zjob_builtin.rs`): `submit`, `list`/`ls`, `status`, `output`/`out`, `kill`, `cancel`, `attach`, `wait`. The original design list:
 
 - **`zjob submit <cmd>`** — client hands a long-running command to the daemon; daemon spawns it, captures stdout/stderr, returns a job ID. User exits the shell; the command keeps running under the daemon.
 - **`zjob status [id]` / `zjob list`** — query running, completed, failed jobs. Daemon retains job state for a configurable retention period.
@@ -921,11 +937,11 @@ This is the **second world-first that the daemon model unlocks** — beyond "she
 | `rm -rf ~/.zshrs/` | nukes everything including history + stats |
 | `rm -rf ~/.zshrs/images/` | nukes all shards; index goes stale until rebuild |
 | `rm ~/.zshrs/images/foo.rkyv` | surgical: nukes one shard |
-| `cache clean --all` | builtin equivalent of full `rm -rf` |
-| `cache clean shards` | builtin equivalent of `rm -rf images/` |
-| `cache clean shard <name>` | builtin equivalent of single-shard `rm` |
+| `zcache clean` / `zcache clean --all` | every shard + `index.rkyv` + shell rkyv caches (history and stats kept) |
+| `zcache clean shards` | builtin equivalent of `rm -rf images/` |
+| `zcache clean shard <name>` | builtin equivalent of single-shard `rm` |
 
-The non-blocking invariant covers force-wipe too — if user nukes the cache mid-session, every subsequent function call falls through to source interp; an explicit `zcache rebuild` repopulates whenever the user invokes it; the shell never stops responding regardless.
+The non-blocking invariant covers force-wipe too — if user nukes the cache mid-session, every subsequent function call falls through to source interp; a `zshrs-recorder` run repopulates whenever the user invokes it; the shell never stops responding regardless.
 
 ### How runtime lookup works (two-level, non-blocking)
 
@@ -957,7 +973,7 @@ VSZ ~250 MB across all mmap'd shards (free on 64-bit). Same property AOT-into-bi
 All compile work runs in the **zshrs-daemon** worker pool. Trigger paths:
 
 - **fsnotify (daemon-side, ONE watcher across the machine):** daemon's fsnotify thread sees source change → enqueues compile job into its work queue → continues. No 60×-fsnotify thundering herd; the daemon is the only watcher.
-- **Explicit user invocation (`zcache rebuild`):** any client builtin sends `{"op": "rebuild", "shard": "..."}` over the daemon socket; daemon enqueues the same job. Multiple clients sending concurrent rebuild requests for the same shard → daemon coalesces into one job.
+- **Explicit user invocation:** re-run `zshrs-recorder` ([`RECORDER.md`](./RECORDER.md)). The original `zcache rebuild` / `{"op": "rebuild"}` path was removed with the AST walker (`daemon/builtins.rs::zcache`).
 - **Runtime config push (`fpath_changed` IPC):** client whose `.zshrc` does `fpath+=(/opt/...)` sends `fpath_changed` to daemon; daemon re-discovers source roots, registers fsnotify watches, and may enqueue a rebuild for the new root.
 
 **Daemon worker job:**
@@ -983,7 +999,7 @@ Rebuild cost matrix:
 | `zinit update-all` (200 plugins) | ~30s batched, much worse if serial | parallel: ~10-30s for all 200 (worker pool) |
 | Edit one .zshrc helper | ~30s | ~100ms (zpwr.rkyv or wherever it lives) |
 | Fresh install on new machine | ~30s | ~30s same — full corpus must compile once |
-| `zshrs --rebuild-cache --shard zpwr` | n/a | ~3-5s, surgical |
+| per-shard explicit rebuild | n/a | design only — not implemented (no per-shard CLI; `zshrs-recorder` re-records) |
 
 **Plugin install/update commands** (zinit/oh-my-zsh wrappers) trigger the affected shard's rebuild + hydrate atomically.
 
@@ -1006,9 +1022,12 @@ Per-shard hydrate cost: ~10-100ms typical (single zinit plugin) vs 100-500ms for
 |-------|--------|---------|
 | `plugins` (name, version, source, installed_at, enabled) | written directly by install/update commands | orchestrator state |
 | `plugin_deps` (plugin, dep, constraint) | install-time | dep graph for resolution |
-| `entries` (fq_name, plugin_id, kind, image_offset, source_loc) | hydrated from rkyv | what's compiled, where it lives |
+| `entries` (fq_name, plugin_id, kind, image_path, byte_offset, source_loc) | hydrated from rkyv | what's compiled, where it lives |
 | `hooks` (kind, name → fq_name) | hydrated from rkyv | precmd / preexec / widget / completion ownership |
 | `entry_stats` (fq_name, last_called_at, call_count, total_ns) | runtime increment via worker, batched flush every N seconds | "which completions am I actually using" — drives dbview perf reports |
+| `compiled_files` (path, kind, mtime, inode, hash, last_used_at, use_count, bytes_in, bytes_out, sensitive, parent_paths) | daemon | per-file compile-cache metadata |
+
+Authoritative schema: `daemon/catalog.rs`.
 
 `entry_stats` is the only warm-write table; runtime batches in-memory deltas and flushes via a worker thread on a configurable cadence (default 30s). Lookups never hit the catalog on the hot path.
 
@@ -1017,19 +1036,19 @@ Per-shard hydrate cost: ~10-100ms typical (single zinit plugin) vs 100-500ms for
 The pivot kills entire optimization layers that exist today only to paper over the source-load model:
 
 - `.zcompdump` — compinit-generated completion db. Replaced by `image.rkyv` entries.
-- `plugin_cache.db` (legacy SQLite bytecode cache) — replaced by `image.rkyv`.
-- `compsys.db` (legacy) — replaced by `image.rkyv` entries.
+- `plugin_cache.db` (legacy SQLite bytecode cache) — planned replacement by `image.rkyv`; not done. The plugin side-effect cache is still live SQLite `plugins.db` (`src/extensions/plugin_cache.rs`).
+- `compsys.db` — planned replacement by `image.rkyv` entries; not done. It is still the live completion mirror (`src/compsys/cache.rs`).
 - `.zwc` (zsh wordcode) reading paths — daily-driver doesn't read .zwc; rkyv image is the compiled form.
 - `zinit turbo` equivalent — async plugin defer. Image holds everything; no defer needed.
 - `p10k instant prompt` equivalent — fake-prompt-while-loading hack. First paint = full functionality.
 - `compaudit` — security check on completion files. Image rebuild step does the audit once at compile time.
 - `autoload -U` — becomes a no-op (or build-time tag).
 
-Estimated LOC eliminated from zshrs: 5,000-10,000 across legacy `plugin_cache.rs`, compsys cache code, autoload machinery, .zwc readers, async load workers. Net simplification.
+Estimated LOC eliminated from zshrs: 5,000-10,000 across compsys cache code, autoload machinery, .zwc readers, async load workers. Net simplification.
 
 ### What stays external
 
-- **`history.db`** — primary mutable data, frequently appended, B-tree-indexed. SQLite is correct for this workload.
+- **`zshrs_history.db`** (shell) and **`history.db`** (daemon) — primary mutable data, frequently appended, B-tree-indexed. SQLite is correct for this workload.
 - **Working files** the user is editing (source code, docs).
 - **Runtime IPC** (sockets, FIFOs).
 - **Source trees** (zinit plugin dirs, fpath, user `.zshrc`) — source-of-truth for human inspection / git tracking. The compile pass reads them; runtime only reads `image.rkyv`.
@@ -1038,15 +1057,13 @@ Estimated LOC eliminated from zshrs: 5,000-10,000 across legacy `plugin_cache.rs
 
 ```
 $ vim ~/zpwr/zpwrTop                          # edit a zpwr subcommand
-$ zcache rebuild shard zpwr                   # explicit; ~3-5s (zpwr only, not full corpus)
-                                              # builtin returns immediately; worker pool
-                                              # compiles + hydrates catalog.db in background
-$ exec ~/bin/zshrs                            # picks up new index + zpwr shard
+$ zshrs-recorder                             # re-record; the daemon ingests the shard
+$ exec ~/bin/zshrs                            # picks up new index + shards
 ```
 
-Same pattern after `zinit update`, `git pull` in any source tree, fresh install. User-driven, predictable, matches existing `zpwr regen` workflow. `zcache rebuild` (no shard) does the full corpus rebuild for a fresh install or full reset.
+Same pattern after `zinit update`, `git pull` in any source tree, fresh install. The original `zcache rebuild [shard <name>]` verbs were removed (`daemon/builtins.rs::zcache`); there is no per-shard rebuild command.
 
-In a 60-shell environment: any one shell can run `zcache rebuild`; the per-shard flock ensures only one process at a time rebuilds a given shard; the other 59 shells see the new shards transparently on next lookup via the generation-counter re-mmap path.
+In a 60-shell environment: any one shell can run `zshrs-recorder`; the per-shard flock ensures only one process at a time rebuilds a given shard; the other 59 shells see the new shards transparently on next lookup via the generation-counter re-mmap path.
 
 ### Engineering details (flaws found and locked)
 
@@ -1058,24 +1075,24 @@ These were red-team findings on earlier drafts; specifying them here so they can
 
 **Multi-process rebuild coordination — per-shard flock.** Each shard has an advisory `images/{name}.rkyv.lock` file. Worker takes `flock(LOCK_EX)` before compile, releases after atomic rename + index update. Cross-process (60-shell scenario): only one process actively rebuilds a given shard at any moment; others either wait (with `--wait`) or skip (default async — the contending worker sees the lock held, logs "rebuild already in progress", returns).
 
-**catalog.db corruption recovery via `zcache verify`.** SQLite `PRAGMA integrity_check` runs only when `zcache verify` is invoked (not on every startup — it's seconds-long for a 100MB db). On detected corruption, `zcache verify` prints recommended recovery: `zcache clean catalog && zcache rebuild`. Documented trade: `entry_stats` are lost on corruption recovery (they live inside catalog.db; no separate persistence layer per the single-dir constraint). User accepts this as the price of single-dir simplicity.
+**catalog.db corruption recovery via `zcache verify`.** SQLite `PRAGMA integrity_check` runs only when `zcache verify` is invoked (not on every startup — it's seconds-long for a 100MB db). On detected corruption, `zcache verify` prints recommended recovery: `zcache clean catalog`, then re-run `zshrs-recorder`. Documented trade: `entry_stats` are lost on corruption recovery (they live inside catalog.db; no separate persistence layer per the single-dir constraint). User accepts this as the price of single-dir simplicity.
 
 **Orphaned `.tmp` cleanup at startup.** Worker writes `images/{name}.rkyv.tmp.{pid}.{tid}` then atomic-renames. If a worker is killed mid-write (SIGKILL, OOM, power loss), the `.tmp.*` file orphans. On every shell startup, a worker job scans `images/` for `.tmp.*` files older than 1 minute and unlinks them. Also surfaced via `zcache verify` ("3 orphaned tmp files; run `zcache clean shards` or wait for next cleanup pass").
 
-**Log rotation — built-in size cap.** `~/.zshrs/zshrs.log` is capped at 10 MB by default. On reaching the cap, current log rotates to `zshrs.log.1`, oldest is dropped. Configurable via `ZSHRS_LOG_MAX_SIZE` and `ZSHRS_LOG_MAX_FILES` env vars. Avoids needing external `logrotate` config and prevents unbounded growth.
+**Log rotation — built-in size cap.** `zshrs.log`, `zshrs-daemon.log` and `zshrs-recorder.log` under `~/.zshrs/` are size-rotated together by the daemon ticker: each is capped at 10 MB and rotates to `.1` … `.N`, oldest dropped. Configurable via `ZSHRS_LOG_MAX_BYTES` (default 10 MB) and `ZSHRS_LOG_MAX_ROTATIONS` (default 4) (`daemon/ticker.rs::log_max_bytes` / `log_max_rotations`). Avoids needing external `logrotate` config and prevents unbounded growth.
 
 **Worker pool partitioning.** Two logical pools sharing the underlying worker threads:
 - **General pool** — handles user command pipelines (`xargs -P 16`, async commands, etc.). High-priority, sized to `nproc - 1` by default.
 - **Cache pool** — handles `zcache` jobs (compile, hydrate, verify, compact). Low-priority, sized to 1-2 threads. Cache jobs explicitly yield between work units.
-This prevents `zcache rebuild` from starving an interactive `find / | xargs ...` and vice versa. Implementation: priority field on each queued job + a small CPU-budget cap on cache jobs.
+This prevents cache jobs from starving an interactive `find / | xargs ...` and vice versa. Implementation: priority field on each queued job + a small CPU-budget cap on cache jobs.
 
 **Concurrent shell access to `index.rkyv` during rewrite.** The `index.rkyv` rewrite uses the same atomic-rename pattern as shards (write to `index.rkyv.tmp.{pid}.{tid}`, atomic rename). Main thread mmap of `index.rkyv` survives the rename via unlink-but-mapped semantics — readers see the OLD index until they re-mmap. Re-mmap is triggered when a shard lookup yields a generation mismatch; at that point main also re-opens `index.rkyv` to pick up the latest mappings.
 
 ### Acceptance criterion (revised, supersedes §0x0B for daily-driver mode)
 
 The cache architecture has succeeded when:
-- Full-corpus rebuild (`zshrs --rebuild-cache`) over zshrc + zinit plugins + zsh-more-completions: <30 seconds clean.
-- Per-shard rebuild (`zshrs --rebuild-cache --shard zpwr`): ~3-5s for a large shard, ~100-500ms for a single plugin shard.
+- Full-corpus re-index (`zshrs-recorder`) over zshrc + zinit plugins + zsh-more-completions: <30 seconds clean.
+- Per-shard rebuild: ~3-5s for a large shard, ~100-500ms for a single plugin shard (target; no per-shard command shipped).
 - `git pull` in zpwr → only `zpwr.rkyv` rebuilds (~3-5s, not 30s).
 - `zinit update foo` → only `plugin-foo.rkyv` rebuilds (~100-500ms).
 - Cold shell launch: <5ms (index.rkyv mmap + first-prompt hook shards mmap'd lazily).
@@ -1118,7 +1135,7 @@ This doc is the source of truth for AOT design. Changes require an entry below.
 | Date | Decision | Author |
 |------|----------|--------|
 | 2026-04-28 | Doc created. Defaults in §0x0D adopted as initial spec pending review. | initial draft |
-| 2026-04-28 | §0x11 added — AOP + nanosecond profiling bake-in. Cumulative world-first stack: AOT-compiled shell + compile-time AOP weaving + native-emitted nanosecond profiling. | initial draft |
+| 2026-04-28 | §0x12 added — AOP + nanosecond profiling bake-in. Cumulative world-first stack: AOT-compiled shell + compile-time AOP weaving + native-emitted nanosecond profiling. | initial draft |
 | 2026-04-28 | §0x09 sharpened — verified stryke has no AOP runtime today. Plan revised: stryke gets parallel `intercepts: Vec<Intercept>` runtime added alongside the AOT work, both projects ship the full AOT + AOP + profile stack. | initial draft |
 | 2026-04-28 | §0x10 Memory model added — no GC, ever. Hard rule. Inherited from Rust ownership for free; verified against bash/zsh/dash/fish/nu/Perl5/Raku as world-first GC-free shell. Closed-world AOT lets escape analysis prove allocations stay scope-local. Locked in feedback memory: any future proposal that introduces GC is wrong by construction. | initial draft |
 | 2026-04-28 | §0x13 Unified AOT pivot — collapsed source-mode shell + AOT deploy into one product. Daily shell is the AOT binary; plugins/compsys/zstyle/bindkeys/intercepts all bake in at build time; SQLite caches die (`plugin_cache.db`, `compsys.db`, `.zcompdump`); only `history.db` remains external. Image-as-binary persistence model (Pharo/Smalltalk lineage). Acceptance criterion supersedes §0x0B perf targets — one binary, <5ms cold launch, sub-µs Tab, byte-identical between daily-driver and deploy use cases. Estimated 5-10k LOC eliminated. Five additional world-firsts stack on this pivot. §0x0C "interactive shell out of scope" bullet reversed. Memory rule "AOT-deploy vs JIT-source-mode are separate products" superseded — they are now one product. | initial draft |
@@ -1144,7 +1161,7 @@ This doc is the source of truth for AOT design. Changes require an entry below.
 
 ## [0x15] Next step
 
-Review and lock-in §0x0D defaults. If all green, Phase A (fusevm cranelift-object output) starts with a version bump to fusevm 0.11 and a new `aot` module added to that crate. If any default is wrong, edit this doc first; code follows the doc, never the other way around.
+Phases A–C shipped: the `aot` module is in fusevm (the workspace pins fusevm 0.26.7 with the `aot` feature), `runtime/` builds `libzsh.a`, and `zbuild --native` links them (see §0x16). Remaining: Phase D (multi-script bundling is a source trailer only), Phase E (pre-shipped per-target runtime archives), Phase F. If a remaining default is wrong, edit this doc first; code follows the doc, never the other way around.
 
 ---
 
@@ -1173,9 +1190,9 @@ work.
 **Why the fully-register-native path does not engage.** fusevm can lower ops to real arithmetic in
 registers (`build_entry_native`), and it can lower `Op::CallBuiltin` inline — but only for a chunk
 whose `Chunk::builtin_argc_is_arity` is set, meaning every builtin handler pops exactly `argc` and
-pushes one result. zshrs cannot set it. `BUILTIN_XTRACE_ARGS` is emitted as `CallBuiltin(id, 2)`
-for a handler that pops one value and *peeks* the rest, leaving them for the op that follows
-(`src/fusevm_bridge.rs`), so `argc` describes the command's word count, not the op's stack effect.
+pushes one result. zshrs cannot set it. `BUILTIN_XTRACE_ARGS` is emitted as `CallBuiltin(id, words+1)`
+(`trace_argc` in `src/extensions/compile_zsh.rs`) for a handler that pops one value and *peeks*
+the rest, leaving them for the op that follows (registered in `src/fusevm_bridge.rs`), so `argc` describes the command's word count, not the op's stack effect.
 Making the flag settable means auditing every handler in the builtin table against its emit sites —
 a zshrs-side project, not a fusevm one, and the prerequisite for any "native arithmetic" claim.
 

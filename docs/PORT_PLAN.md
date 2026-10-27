@@ -12,16 +12,16 @@ identity.** Those globals must become `Arc<Mutex/RwLock<…>>`, not
 
 ---
 
-## Progress Summary (updated 2026-10-24, v0.13.56)
+## Progress Summary (updated 2026-10-27, v0.13.56)
 
 | Phase | Total Items | Done | Remaining |
 |-------|-------------|------|-----------|
 | Phase 1 — Bucket-1 Mutex→TLS | 16 | 16 | 0 |
-| Phase 2 — Bag-of-globals structs | 20 | 19 | 1 (`RefreshState` back in `src/ported/`) |
+| Phase 2 — Bag-of-globals structs | 20 | 18 | 2 (`RefreshState` family, `HistEntry`/`History` — both back in `src/ported/`) |
 | Phase 3 — Bucket-2 shared holders | 11 | 11 | 0 |
 | Phase 4 — Daemon image holders | 5 | 0 | 5 |
 | Phase 5 — Test invariants | 3 | 3 | 0 |
-| Phase 6 — ShellExecutor field dissolution | 61 at extraction (`a8353f17d4`) | 12 net | 49 (as of 2026-10-24, v0.13.56) |
+| Phase 6 — ShellExecutor field dissolution | 61 at extraction (`a8353f17d4`) | 43 of the 61 gone (29 fields added since) | 47 fields (as of 2026-10-27, v0.13.56) |
 
 **Phase 2 remaining structs to dissolve:** `zle/zle_refresh.rs`
 `RefreshState` family and `zle/zle_hist.rs` `HistEntry`/`History`
@@ -30,14 +30,17 @@ identity.** Those globals must become `Arc<Mutex/RwLock<…>>`, not
 **Phase 6 in flight:** `pub struct ShellExecutor` lives in
 `src/vm_helper.rs` (was `src/exec.rs`, which no longer exists); field
 count is derived by `awk '/^pub struct ShellExecutor/,/^}/'
-src/vm_helper.rs | grep -cE '^\s*(pub )?[a-z_]+:'` (49 as of
-2026-10-24, v0.13.56). Each remaining field maps to a
-canonical zsh C global that callers should reach directly. Recent
-deletions (older→newer): `autoload_pending`, `options`, `cmd_stack`,
-`hook_functions`, `command_hash`, `named_dirs`, `readonly_vars`,
-`dir_stack`, `last_subst`/`sub_flags`/`in_paramsubst_nest`/`zftp`/
-`style_table` (5 in one commit), `expanding_aliases`. Routes through
-`paramtab`, `cmdnamtab`, `OPTS_LIVE`, `prompt::CMDSTACK`, `aliastab`.
+src/vm_helper.rs | grep -cE '^\s*(pub )?[a-z_]+:[^:]'` (47 as of
+2026-10-27, v0.13.56; the `[^:]` keeps `std::…` continuation lines of
+multi-line field types out of the count). Each remaining field is
+audited against the canonical zsh C global that callers should reach
+directly. Deletions (newer→older): `zwc_cache`, `loop_signal`,
+`autoload_pending`, `options`, `cmd_stack`, `hook_functions`,
+`command_hash`, `named_dirs`, `readonly_vars`, `dir_stack`,
+`last_subst`/`sub_flags`/`in_paramsubst_nest`/`zftp`/`style_table`
+(5 in one commit), `expanding_aliases`. Routes through `paramtab`,
+`cmdnamtab`, `OPTS_LIVE`, `prompt::CMDSTACK`, `aliastab`,
+`BREAKS`/`CONTFLAG`.
 Same anti-pattern as the dissolved `Zle` struct (Rule 1: bag-of-
 globals with no `struct executor` in C).
 
@@ -69,7 +72,8 @@ globals with no `struct executor` in C).
   `impl Zle` methods that took `&mut CompletionState` had no real
   callers and were redundant with the live `pub fn`-at-file-scope
   C-faithful ports (`completeword` / `menucomplete` / `docomplete` /
-  `docompletion`). File-scope C globals (`compcontext`, `compfunc`,
+  `docompletion`). File-scope C globals (`compcontext` in
+  `complete.rs`, `compfunc` in `compcore.rs`, and in `zle_tricky.rs`
   `usemenu`, `useglob`, `nbrbeg`, `nbrend`, `origcs`, `origll`,
   `instring`, `inbackt`, `menucmp`, `comppref`, `validlist`,
   `showagain`, `lastambig`, `bashlistfirst`, `amenu`, `lincmd`)
@@ -187,7 +191,7 @@ threaded, no C counterpart).
 
 **compctl.rs Mutex holders:** count with
 `rg -c '^\s*(pub(\(crate\))? )?static \w+: (std::sync::)?Mutex<'
-src/ported/zle/compctl.rs` (20 as of 2026-10-24, v0.13.56). The
+src/ported/zle/compctl.rs` (20 as of 2026-10-27, v0.13.56). The
 bucket-1 statics in the Phase 1 table are `thread_local!` (or were
 deduped into other files — see Phase 1); bucket-2 `CMATCHER`/
 `COMPCTL_TAB`/`PATCOMPS` are `RwLock`. The `Mutex` statics still in
@@ -514,7 +518,7 @@ PORT.md prescribes `/// WARNING: THIS IS ADHOC IMPLEMENTATION AND
 NOT A FAITHFUL PORT` for fns the adhoc detector flags as having no
 C counterpart at all. That marker means *"this whole fn is unported
 placeholder code, delete or port me."* No `src/` fn carries it as of
-2026-10-24 (v0.13.56): `rg -n 'THIS IS ADHOC' src/` matches only the
+2026-10-27 (v0.13.56): `rg -n 'THIS IS ADHOC' src/` matches only the
 prohibition in `src/ported/mod.rs`, and `modules/termcap.rs` carries
 only `// WARNING: NOT IN TERMCAP.C` markers.
 
@@ -674,8 +678,8 @@ against `Src/Zle/compctl.c`:**
   pattern compctls registered via `compctl -p`.* User registry →
   bucket 2. Now `RwLock` (Phase 3).
 
-These three move to Phase 3 (bucket-2 holders) — promote to
-`Arc<RwLock<…>>` when paramtab/hashtables get the same treatment.
+These three moved to Phase 3 (bucket-2 holders) and are `RwLock`
+statics in `zle/compctl.rs` (see the Phase 3 checklist).
 
 **End of Phase 1:**
 
@@ -691,11 +695,12 @@ These three move to Phase 3 (bucket-2 holders) — promote to
 
 **Outstanding Phase 1 follow-up (not blocking phase close):**
 
-- `INCOMPFUNC` 3-way fragmentation — three disconnected decls model
-  the same C `mod_export int incompfunc`: `utils.rs:90` (`AtomicI32`),
-  `complete.rs:200` (`AtomicI32`), `compctl.rs:1218` (`thread_local!
-  Cell<i32>`). Writers/readers across the three never see each other.
-  Unification is correctness work, not storage-primitive work.
+- [x] `INCOMPFUNC` fragmentation — **RESOLVED (`93d0d33b23`).** The
+  separate decls modelling the one C `mod_export int incompfunc`
+  (`Src/utils.c:46`) are unified: the single holder is `utils.rs`
+  `INCOMPFUNC` (`AtomicI32`), `complete.rs` re-exports it
+  (`pub use crate::ported::utils::INCOMPFUNC`), and `compctl.rs` imports
+  it from `complete`.
 
 ### Phase 2 — Bucket audit of remaining `*State` structs
 
@@ -728,7 +733,7 @@ real C struct exists under a different name.
       `shtty`, `lineno`, `path`, `fpath`, etc. — all individual
       C globals. Verdict: **bucket-1**, dissolve. **Status: DONE
       (verified 2026-05-12 absent via grep) — file-statics live
-      at `init.rs:13-113`.**
+      in `init.rs` (`noexitct` … `use_exit_printed`).**
 - [x] `subst.rs:201` `SubstState` ← `Src/subst.c` has 0 structs.
       Verdict: **bucket-1**. **Status: DONE — struct absent
       (verified 2026-05-12).**
@@ -746,9 +751,10 @@ real C struct exists under a different name.
       methods that took `&mut CompletionState`. State carried by
       file-scope C globals (USEMENU, USEGLOB, WOULDINSTAB, NBRBEG,
       NBREND, ORIGCS, ORIGLL, INSUBSCR, INSTRING, INBACKT,
-      ORIGLINE, LASTPREBR, LASTPOSTBR, COMPQUOTE, AUTOQ, MENUCMP,
-      COMPPREF, VALIDLIST, SHOWAGAIN, LASTAMBIG, BASHLISTFIRST,
-      AMENU) already present in zle_tricky.rs.**
+      ORIGLINE, LASTPREBR, LASTPOSTBR, AUTOQ, MENUCMP, COMPPREF,
+      VALIDLIST, SHOWAGAIN, LASTAMBIG, BASHLISTFIRST, AMENU, LINCMD)
+      already present in zle_tricky.rs; `COMPQUOTE`/`COMPCONTEXT` live
+      in `complete.rs` (C `complete.c`), `compfunc` in `compcore.rs`.**
 - [x] `zle/compcore.rs:26` `CompState` ← `Src/Zle/compcore.c` has
       0 structs. Verdict: **bucket-1** (also disambiguate from
       computil's CompState — see below). **Status: DONE — struct dissolved.**
@@ -766,52 +772,48 @@ real C struct exists under a different name.
 
 **Bucket 3 — real C struct exists; verify field-for-field or rename:**
 
-- [x] `glob.rs:402` `GlobData` ← `Src/glob.c:168 struct globdata`
+- [x] `glob.rs` `GlobData` ← `Src/glob.c:168 struct globdata`
       (28 fields). Verdict: **rename** + verify field parity.
-      **Status: DONE — renamed; partial-but-documented field
-      parity. Doc-comment at `glob.rs:392-400` explains the
-      collapses: `gd_matchsz`/`gd_matchct`/`gd_matchbuf`/
-      `gd_matchptr` → `matches: Vec<GlobMatch>` (Rust ownership);
-      `gd_gf_*` (12 flags) → `GlobOptions` at call sites.
-      Remaining unimported fields (`gd_qualct`, `gd_qualorct`,
-      `gd_range`, `gd_amc`, `gd_units`, `gd_colonmod`, `gd_glob_pre`,
-      `gd_glob_suf`, `gd_gf_pre_words`, `gd_gf_post_words`,
-      `gd_gf_sortlist`) live in scattered file-scope statics or are
-      not yet ported — tracked separately as glob-completeness work,
-      not a bucket-1/3 issue.**
+      **Status: DONE — now `glob.rs` `globdata` (the interim
+      `GlobData` name was dissolved in `ac53b7b696`), with the C
+      file-static `curglobdata` mirrored as `CURGLOBDATA`. Partial,
+      documented field parity: the doc-comment above `globdata`
+      explains the collapses (`gd_matchsz`/`gd_matchbuf`/`gd_matchptr`
+      → `matches: Vec<gmatch>`); the `gf_*` flags are fields, not a
+      separate options struct (no `GlobOptions` type exists). Any
+      `gd_*` field still missing is glob-completeness work, not a
+      bucket-1/3 issue.**
 - [x] `keymaps.rs:11` `ZleState` ← `Src/Zle/zle_main.c:432`
       `struct ztmout` and `:1927 struct findfunc` — neither
       matches ZleState's role (top-level ZLE state aggregator).
       Verdict: **bucket-1**, dissolve into per-static
       `thread_local!`s. **Status: DONE — struct dissolved.**
-- [x] `zle/zle_keymap.rs:65` `BindState` ← `Src/Zle/zle_keymap.c`
+- [x] `zle/zle_keymap.rs` `BindState` ← `Src/Zle/zle_keymap.c`
       has 5 structs (`keymapname`, `keymap`, `key`, etc.). None
       match BindState (binding-context aggregator). Verdict:
-      **bucket-1**, dissolve. **Status: DONE — struct + flags
-      deleted (zle_keymap.rs:133 comment cites the rationale: C
-      `struct bindstate` is only used as a stack-local in
-      `printbinding()`/`scanbindings()`/`bin_bindkey -L`; those
-      ports model it as a local struct when they land).**
+      **bucket-1**, dissolve. **Status: DONE — fake struct + flags
+      deleted (`d20c5a14bd`). The C-faithful `struct bindstate`
+      (`Src/Zle/zle_keymap.c:95-104`) is ported as `zle_keymap.rs`
+      `bindstate` and used by `scanbindlist` / `bindlistout`.**
 - [x] `zle/zle_utils.rs:166` `UndoState` ← `Src/Zle/zle_utils.c`
       has 2 structs (`zle_region`, `zle_position`). Neither maps
       to UndoState — C has `static struct change *changes` /
       `static struct change *curchange` as file-statics for the
       undo ring. Verdict: **bucket-1**, dissolve.
       **Status: DONE — struct dissolved.**
-- [x] `zle/zle_refresh.rs:156` `RefreshState` ←
+- [ ] `zle/zle_refresh.rs` `RefreshState` ←
       `Src/Zle/zle_refresh.c:815` `struct rparams`. Field-by-
       field verification needed; if matches, **rename** to
       `RParams`. Otherwise **bucket-1**.
-      **Status: DONE (partial) — moved to
-      `src/extensions/zle_refresh_state.rs` along with TextAttr /
-      RefreshElement / VideoBuffer / RegionHighlight /
-      HighlightCategory / HighlightManager (all Rust-only
+      **Status: NOT DONE — it was moved to
+      `src/extensions/zle_refresh_state.rs` in `cc2b57d31d`, then
+      moved back in `489ebe26f3`; `RefreshState` and its companions
+      (TextAttr / VideoBuffer / HighlightManager, Rust-only
       abstractions over zsh's `zattr u64` + `nbuf[]`/`obuf[]` flat
-      arrays + discrete winw/winh/vcs/vln/lpromptw/rpromptw
-      statics). The standalone `pub struct rparams` lower in
-      zle_refresh.rs (the legit port of c:815) is unaffected. Full
-      unification to the C flat-array model deferred — ~100+
-      internal sites in zle_refresh.rs to rewire.**
+      arrays + discrete winw/winh/vcs/vln/lpromptw/rpromptw statics)
+      are in `src/ported/zle/zle_refresh.rs` again. The C-faithful
+      `rparams` (port of c:815) is also in zle_refresh.rs. Unification
+      to the C flat-array model is still open.**
 - [x] `zle/computil.rs:542` `CompState` ← `Src/Zle/computil.c`
       has 13 structs (`cdstate`, `cdstr`, `cdrun`, etc.). The
       most likely match is `cdstate` at line 40. Verdict:
@@ -830,7 +832,7 @@ real C struct exists under a different name.
 - [x] `modules/parameter.rs:704` `JobState` ←
       `Src/Modules/parameter.c:2179 struct pardef`. **Status:
       DONE — struct absent (verified 2026-05-12 via grep).** The
-      `JobState` enum at `src/exec_jobs.rs:20` is a separate type
+      `JobState` enum in `src/exec_jobs.rs` is a separate type
       (Running/Stopped/Done) modeling job lifecycle and is not the
       bag-of-globals dissolved here.
 
@@ -861,51 +863,50 @@ PORT.md "Mirror globals as static mut / Mutex<...> / thread-locals
 as needed for parity, not Rust elegance" — `Arc<RwLock>` is the
 parity-preserving choice when threading forces shared mutation.
 
-- [x] `params.rs:3543` `PARAMTAB_INNER` → `OnceLock<RwLock<HashMap<
-      String, Param>>>` ← `Src/params.c paramtab`. Accessor
+- [x] `params.rs` `PARAMTAB_INNER` → `OnceLock<RwLock<
+      hashtable_nodes<Param>>>` ← `Src/params.c paramtab`. Accessor
       `paramtab()` returns `&'static RwLock<...>`; ~80 call sites
       across 14 files routed through `.read()`/`.write()`. Done
       2026-05-12.
-- [x] `hashtable.rs:1769` `CMDNAMTAB` → `OnceLock<RwLock<
-      CmdNameTable>>` ← `Src/hashtable.c:594 cmdnamtab`. Accessor
-      retains `_lock` suffix for source-stability; call sites use
-      `.read()` for lookups, `.write()` for `hash_dir`/`remove`/
-      `clear`. Done 2026-05-12.
-- [x] `hashtable.rs:1909` `SHFUNCTAB` → `OnceLock<RwLock<
-      ShFuncTable>>` ← `Src/hashtable.c:808 shfunctab`. Done.
-- [x] `hashtable.rs:1786` `ALIASTAB` → `OnceLock<RwLock<AliasTable>>`
+- [x] `hashtable.rs` `cmdnamtab_lock()` → function-local `static
+      CMDNAMTAB: OnceLock<RwLock<cmdnam_table>>` ← `Src/hashtable.c:594
+      cmdnamtab`. Call sites use `.read()` for lookups, `.write()` for
+      `hash_dir`/`remove`/`clear`. Done 2026-05-12.
+- [x] `hashtable.rs` `shfunctab_lock()` → `OnceLock<RwLock<
+      shfunc_table>>` ← `Src/hashtable.c:808 shfunctab`. Done.
+- [x] `hashtable.rs` `aliastab_lock()` → `OnceLock<RwLock<alias_table>>`
       ← `Src/hashtable.c:1186 aliastab`. Done.
-- [x] `hashtable.rs:1796` `SUFALIASTAB` → `OnceLock<RwLock<
-      AliasTable>>` ← `Src/hashtable.c:1187 sufaliastab`. Done.
-- [x] `hashtable.rs:1803` `RESWDTAB` → `OnceLock<RwLock<ReswdTable>>`
+- [x] `hashtable.rs` `sufaliastab_lock()` → `OnceLock<RwLock<
+      alias_table>>` ← `Src/hashtable.c:1187 sufaliastab`. Done.
+- [x] `hashtable.rs` `reswdtab_lock()` → `OnceLock<RwLock<reswd_table>>`
       ← `Src/hashtable.c:1115 reswdtab`. Done.
-- [x] `hashtable.rs:1810` `HISTTAB` → `OnceLock<RwLock<
+- [x] `hashtable.rs` `histtab_lock()` → `OnceLock<RwLock<
       HashMap<String,i32>>>` ← `Src/hashtable.c:1340 histtab`. Done.
-- [x] `hist.rs:34` `hist_ring` → `Mutex<Vec<histent>>` ← `Src/hist.c
+- [x] `hist.rs` `hist_ring` → `Mutex<Vec<histent>>` ← `Src/hist.c
       :103 mod_export Histent hist_ring`. **Status: already
       bucket-2 compliant** (single shared `pub static Mutex<...>`,
       semantically equivalent to `Arc<Mutex>` for static storage —
       Arc adds value only for runtime-shared ownership). Done.
-- [x] `options.rs:1259` `OPTS_LIVE` → `OnceLock<RwLock<HashMap<
-      String,bool>>>` ← `Src/options.c:36 opts[]`. Accessors
+- [x] `options.rs` `OPTS_LIVE` → `OnceLock<RwLock<opt_state_store>>`
+      ← `Src/options.c:36 opts[]`. Accessors
       `opt_state_get`/`opt_state_set` updated to `.read()`/
       `.write()`. Done 2026-05-12.
-- [x] `jobs.rs:385` `JOBTAB` → `OnceLock<Mutex<Vec<Job>>>` ← `Src/
+- [x] `jobs.rs` `JOBTAB` → `OnceLock<Mutex<Vec<job>>>` ← `Src/
       jobs.c:88 jobtab`. **Status: already bucket-2 compliant**
       (`Mutex` correct for high-mutation table per PORT_PLAN.md;
       `pub static OnceLock<Mutex<>>` is single shared instance).
       Call-site migration from `&mut [Job]` params is deferred per
       original plan note ("promote when daemon owns jobs reaping").
-- [x] `zle/compctl.rs:91` `CMATCHER` → `RwLock<Option<Arc<Cmlist>>>`
+- [x] `zle/compctl.rs` `CMATCHER` → `RwLock<Option<Arc<Cmlist>>>`
       ← `Src/Zle/compctl.c:36 static Cmlist cmatcher`. Done. `Arc`, not
       `Box`: `Cmlist` is a POINTER type in C (`Src/Zle/comp.h:147`) and the
       `mstack` / `bmatchers` readers copy the pointer per candidate and per
       character, so an owning `Box` turned each of those reads into a
       recursive deep copy of the whole matcher chain.
-- [x] `zle/compctl.rs:97` `COMPCTL_TAB` → `RwLock<Option<HashMap<
+- [x] `zle/compctl.rs` `COMPCTL_TAB` → `RwLock<Option<HashMap<
       String,Arc<Compctl>>>>` ← `Src/Zle/compctl.c:46 HashTable
       compctltab`. Done.
-- [x] `zle/compctl.rs:104` `PATCOMPS` → `RwLock<Vec<(String,Arc<
+- [x] `zle/compctl.rs` `PATCOMPS` → `RwLock<Vec<(String,Arc<
       Compctl>)>>` ← `Src/Zle/compctl.c:51 Patcomp patcomps`. Done.
 
 **End of Phase 3:**
@@ -917,29 +918,31 @@ parity-preserving choice when threading forces shared mutation.
 - [x] `cargo build --lib` green
 - [x] `cargo test --lib -- params hashtable options jobs compctl`
       green (156 passed, 0 failed — 2026-05-12)
-- [ ] `tests/shared_state_visible.rs` exists and passes — gated by
-      Phase 5 (next)
+- [x] `tests/shared_state_visible.rs` exists and passes — landed in
+      Phase 5 (4/4 passing 2026-05-12)
 
-**Pre-existing test failures noted (not Phase 3 regressions):**
-- `ported::builtin::tests::registration_table_matches_c_count` —
-  hardcodes `BUILTINS.len() == 82` but recent module-wiring commits
-  (zsh/files, zle, cap, pcre, etc.) brought count to 112. Violates
-  CLAUDE.md "Never hardcode counts" rule; fix is to derive expected
-  count dynamically or assert membership rather than length.
-- `ported::lex::tests::test_function_tokens` — `{` lexes to token
-  34 (STRING) instead of expected 41 (INBRACE_TOK). Pre-existing
-  lex regression unrelated to bucket-2 holder promotion.
-  Both failures exist on HEAD `9eedf60427` independent of the
-  RwLock changes; neither test touches the promoted holders.
+**Pre-existing test failures noted at Phase 3 close (2026-05-12, HEAD
+`9eedf60427`, a hash that no longer resolves; not Phase 3 regressions — neither test touches the
+promoted holders):**
+- `ported::builtin::tests::registration_table_matches_c_count` — then
+  hardcoded `BUILTINS.len() == 82` against an actual 112. The
+  assertion is now a hardcoded 160 (159 ported builtins + the
+  zshrs-native `__rust_compile`), kept as a tripwire that is bumped
+  alongside each change to the eagerly-loaded-module list. Pass/fail
+  status not re-run for this update.
+- `ported::lex::tests::test_function_tokens` — `{` lexed to token
+  34 (STRING) instead of expected 41 (INBRACE_TOK). Status not
+  re-run for this update.
 
 ### Phase 4 — Daemon image holders
 
-Per `cache_architecture_rkyv.md`. Daemon code lives in
-`src/extensions/` (zsh has no daemon — this is a sanctioned PORT.md
-Rule 1 exception #1, "features that zsh C does not have"). The
-ported holder in `src/ported/<x>.rs` reads from a daemon-owned
-mmap via a thin bridge in `src/extensions/`. Only after the daemon
-ships.
+Design: `docs/DAEMON.md`. Daemon code lives in the `daemon/`
+workspace crate (`zshrs-daemon`; zsh has no daemon — this is a
+sanctioned PORT.md Rule 1 exception #1, "features that zsh C does
+not have"). The daemon ships (default `daemon` feature), but none of
+the holders below are implemented: no ported holder in
+`src/ported/<x>.rs` reads a daemon-owned mmap yet. The plan is for
+each to read through a thin bridge outside `src/ported/`.
 
 - [ ] `paramtab` daemon image: `Arc<RwLock<&'static rkyv::Archived<ParamTable>>>`
       mmapped from daemon catalog
@@ -992,8 +995,11 @@ files below describe the bucket invariant they guard.
 
 ### Phase 6 — `ShellExecutor` field dissolution (in flight)
 
-`src/exec.rs:345 pub struct ShellExecutor` aggregates 57 fields, most
-of which duplicate canonical zsh C globals already ported elsewhere.
+`pub struct ShellExecutor` (now in `src/vm_helper.rs`; it was in
+`src/exec.rs`, which no longer exists) had 61 fields at extraction
+(`a8353f17d4`) and has 47 as of 2026-10-27 (count command in the
+Progress Summary). Many duplicate canonical zsh C globals already
+ported elsewhere.
 Each duplicate is a Rule 1 violation: there is no `struct executor`
 in zsh's C source — the equivalent state lives as file-statics across
 `Src/exec.c`, `Src/init.c`, `Src/options.c`, `Src/hashtable.c`,
@@ -1001,27 +1007,46 @@ in zsh's C source — the equivalent state lives as file-statics across
 migrates every caller to the canonical zsh global, and removes the
 duplicate.
 
-**Landed deletions (most-recent first, 13 fields):**
+**Recorded deletions (most-recent first, 16 fields in 12 commits):**
+
+Hashes are the commits on `main`; the hashes previously recorded here
+no longer resolve.
 
 | Commit | Field | Routed to |
 |---|---|---|
-| `4795fe80e0` | `autoload_pending` | canonical `shfunctab` + `PM_UNDEFINED` bit (`Src/exec.c:5215`) |
-| `b4f541669c` | `options` (60+ callers) | `OPTS_LIVE` via `opt_state_get/_set/_unset/_snapshot/_len` |
-| `3eef6194dc` | `cmd_stack` | `prompt::CMDSTACK` TLS via `cmdpush/cmdpop` (`Src/prompt.c:1620,1631`) |
-| `2cae06a55e` | `hook_functions` | `<hook>_functions` paramtab arrays (zsh `add-zsh-hook` idiom) |
-| `cf1f12f883` | `command_hash` (never-populated dup) | `cmdnamtab_lock` |
-| `ef6b21eae2` | `named_dirs` | `nameddirtab` Mutex in `src/ported/hashnameddir.rs` |
-| `7e5576e07b` | `readonly_vars` (never-populated dup) | `PM_READONLY` flag bit |
-| `dea3bcbf26` | `dir_stack` | `DIRSTACK` Mutex in `modules/parameter.rs` (`Src/builtin.c:1456`) |
-| `a6e4066678` | `last_subst` / `sub_flags` / `in_paramsubst_nest` / `zftp` / `style_table` (5 fields) | `IN_PARAMSUBST_NEST` TLS + canonical statics |
-| `a88ca67867` | `expanding_aliases` (fake HashSet) | `alias.inuse` bump/clear at `fusevm_bridge.rs` call sites |
+| `9b82895611` | `zwc_cache` | field and its init removed (in a comment-cleanup commit) |
+| `59a701ee8d` | `loop_signal` (+ Rust-only `LoopSignal` enum) | canonical `BREAKS` / `CONTFLAG` atomics in `builtin.rs` (`Src/loop.c:41,46`) |
+| `c49ef1a907` | `autoload_pending` | canonical `shfunctab` + `PM_UNDEFINED` bit (`Src/exec.c:5215`) |
+| `75cb96a604` | `options` (60+ callers) | `OPTS_LIVE` via `opt_state_get/_set/_unset/_snapshot/_len` |
+| `4abfbfc3c7` | `cmd_stack` | `prompt::CMDSTACK` TLS via `cmdpush/cmdpop` (`Src/prompt.c:1620,1631`) |
+| `fa8c8b6488` | `hook_functions` | `<hook>_functions` paramtab arrays (zsh `add-zsh-hook` idiom) |
+| `1865424bec` | `command_hash` (never-populated dup) | `cmdnamtab_lock` |
+| `6caa8e7b57` | `named_dirs` | `nameddirtab` Mutex in `src/ported/hashnameddir.rs` |
+| `baa5fa75b4` | `readonly_vars` (never-populated dup) | `PM_READONLY` flag bit |
+| `1082164240` | `dir_stack` | `DIRSTACK` Mutex in `modules/parameter.rs` (`Src/builtin.c:1456`) |
+| `fdbf47e3e9` | `last_subst` / `sub_flags` / `in_paramsubst_nest` / `zftp` / `style_table` (5 fields) | `IN_PARAMSUBST_NEST` TLS + canonical statics |
+| `0cfaa1a086` | `expanding_aliases` (fake HashSet) | `alias.inuse` bump/clear at `fusevm_bridge.rs` call sites |
 
-**Remaining fields (~44):** including `scriptname`, `scriptfilename`,
-`loop_signal`, `subshell_snapshots`, `inline_env_stack`,
-`current_command_glob_failed`, `jobs`, `fpath`, `zwc_cache`,
-`history`, plus ~34 others. Each requires audit: (a) does the
-canonical zsh global exist? (b) if yes, migrate callers + delete.
-(c) if no, keep + cite the C file-static it represents.
+This table is not the full history. Diffing the field names at
+`a8353f17d4:src/exec.rs` against `src/vm_helper.rs` (2026-10-27): 43
+of the 61 original fields are gone (10 of them are in the table; the
+other 33, e.g. `variables`, `functions`, `traps`, `comp_*`, went in
+unrecorded commits), and 29 of today's fields were added after
+extraction (e.g. `scriptname`, `redirect_scope_stack`, the `ztest_*`
+counters). The other 6 table rows (`loop_signal`, `cmd_stack`,
+`last_subst`, `sub_flags`, `in_paramsubst_nest`, `expanding_aliases`)
+were also added after extraction, then deleted. 61 − 43 + 29 = 47.
+
+**Remaining fields (47 as of 2026-10-27):** list them with
+`awk '/^pub struct ShellExecutor/,/^}/' src/vm_helper.rs | grep -oE
+'^\s*(pub )?[a-z_]+:[^:]'`. They include `scriptname`,
+`scriptfilename`, `subshell_snapshots`, `inline_env_stack`,
+`current_command_glob_failed`, `jobs`, `fpath`, `history`, the
+redirect-scope stacks, the function-source tables, the `ztest_*`
+counters, and zshrs-only state (`worker_pool`, `intercepts`,
+`async_jobs`, `plugin_cache`, `compsys_cache`). Each requires audit:
+(a) does the canonical zsh global exist? (b) if yes, migrate callers
++ delete. (c) if no, keep + cite the C file-static it represents.
 
 **Per-deletion discipline:**
 1. Identify the canonical zsh C global (file-static or hash table).
@@ -1034,7 +1059,8 @@ canonical zsh global exist? (b) if yes, migrate callers + delete.
 
 **End of Phase 6:** the `pub struct ShellExecutor` shrinks to fields
 that genuinely have no canonical zsh global (or are zshrs-specific
-extensions explicitly outside zsh's design — e.g. `zwc_cache`).
+extensions explicitly outside zsh's design — e.g. `worker_pool`,
+`intercepts`).
 Document each surviving field's justification inline.
 
 ---
@@ -1064,6 +1090,7 @@ behavioral pin: a multi-threaded test that spawns N workers, has
 each one mutate the shared table (set a unique env var, register a
 unique alias, append a history entry), then verifies all N
 mutations are visible from a single observer thread. If TLS ever
-sneaks back in for a bucket-2 holder, this test fails. Add
-`tests/shared_state_visible.rs` when the first bucket-2 holder
-goes live.
+sneaks back in for a bucket-2 holder, this test fails. That test
+is `tests/shared_state_visible.rs` (paramtab + opts across worker
+threads); its per-evaluator counterpart is
+`tests/per_evaluator_isolation.rs`. Both landed in Phase 5.

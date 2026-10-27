@@ -13,7 +13,7 @@ gate fails if the two shells stop matching again.
 
 ## Where the set stands
 
-The fixture set as of 2026-10-24, v0.13.56, read off the `expect` field of each
+The fixture set as of 2026-10-27, v0.13.56, read off the `expect` field of each
 fixture file (every `*.json` here except `groups.json` and `last_gate.json`,
 the two `NON_FIXTURE_FILES` in `scripts/compsys_regressions.py`):
 
@@ -55,7 +55,7 @@ That run had six guards. They were re-verified three times before their
 `expect` was flipped, and each was then run against a zshrs that still carries
 its bug to check that it fails there — see `guard_verified` in the fixture.
 
-The guards as of 2026-10-24, v0.13.56, and the commit each one protects, read
+The guards as of 2026-10-27, v0.13.56, and the commit each one protects, read
 off `retired.fix_commit`:
 
 | fix commit | guards |
@@ -271,7 +271,7 @@ and the flip that produced it was wrong.
 
 Most findings here are a screen: a buffer, some keys, and the rows the two
 shells drew. The fixtures owned by two harnesses are not, and forcing them into
-a pty cell would have made them worse evidence. As of 2026-10-24, v0.13.56,
+a pty cell would have made them worse evidence. As of 2026-10-27, v0.13.56,
 `harness: shell_probe` owns `argv_append_discards_positionals`,
 `dotted_parameter_name_accepted` and `fpath_underscore_name_runs_undeclared`;
 `harness: winch_probe` owns `listing_lost_on_window_shrink`.

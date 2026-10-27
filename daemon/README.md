@@ -209,7 +209,8 @@ Shell-side, these are reached through z\* builtins — `zcache`, `zls`, `zid`,
 ## [0x06] HTTP SURFACE
 
 On by default on loopback: the seeded `zshrs-daemon.toml` sets `[http] listen =
-"127.0.0.1:7733"` (`paths.rs` default config); remove the key to disable. See
+"127.0.0.1:7733"` (`paths.rs::DEFAULT_DAEMON_TOML`, written only when the file is
+absent). A config without `[http] listen` disables the listener. See
 [`docs/DAEMON_AS_SERVICE.md`](../docs/DAEMON_AS_SERVICE.md) and
 [`examples/daemon-curl-cookbook.md`](../examples/daemon-curl-cookbook.md).
 

@@ -920,17 +920,19 @@ needs a per-shell table of valid `set` letters, which is not built.
 
 ### Test corpus parity
 
+Counts measured 2026-10-27 at `7467218ed8` with `cargo test --test <suite> -- --list | rg -c ': test$'` (debug build).
+
 | Suite | Tests | Coverage |
 |-------|-------|----------|
-| `parity` | 49,256 | Differential assertions against the zsh oracle — expansion, completion, builtins, modules, job control, diagnostics |
+| `parity` | 49,500 | Differential assertions against the zsh oracle — expansion, completion, builtins, modules, job control, diagnostics |
 | `zsh_construct_corpus` | 396 | Every sh/zsh construct outside modules |
 | `no_tree_walker_dispatch` | 174 | Behavioral pins for the no-tree-walker invariant |
 | `zsh_corpus_via_new_pipeline` | 123 | Native lex+parse+ZshCompiler path |
 | `zsh_parser_probe` | 87 | AST-shape probes for every construct |
 | `compile_zsh_smoke` | 29 | Per-construct bytecode-level smoke |
 | `tree_walker_absent` | 8 | Source-level absence checks (anti-regression) |
-| `ztst_runner` | 77 files / 2,796 chunks | Real `.ztst` files from upstream zsh — see [Compatibility measurement](#compatibility-measurement) for the chunk-level score |
-| **Total** | **50,073** | excluding ztst chunks; see below for the ztst figure |
+| `ztst_runner` | 97 tests (77 files / 2,796 chunks) | Real `.ztst` files from upstream zsh — see [Compatibility measurement](#compatibility-measurement) for the chunk-level score |
+| **Total** | **50,317** | excluding `ztst_runner`; see below for the ztst figure |
 
 ### Compatibility measurement
 
@@ -1136,12 +1138,14 @@ The codebase is **structurally divided into ported code vs extensions**, with th
                   │  ┌────────────────────────────────────┐  │                     │
                   │  │  src/recorder/  (feature gate)     │  │                     │
                   │  │  AOP intercept; #[cfg(recorder)]   │  │                     │
-                  │  │  → zero bytes in default binary    │  │                     │
+                  │  │  → absent from a default build;    │  │                     │
+                  │  │  release zshrs is built with it    │  │                     │
+                  │  │  (--features recorder,zd)          │  │                     │
                   │  └────────────────────────────────────┘  │                     │
                   ├──────────────────────────────────────────┴─────────────────────┤
                   │    bins/  (shipped: zshrs, zshrs-recorder, zd)                 │
                   │     zshrs            zshrs-recorder         zd                 │
-                  │     (default)        (--features recorder)  (--features zd)    │
+                  │     (always built)   (--features recorder)  (--features zd)    │
                   ├────────────────────────────────────────────────────────────────┤
                   │                      fusevm (bytecode VM)                      │
                   │            fused superinstructions · JIT                       │

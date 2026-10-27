@@ -68,7 +68,7 @@ Critical path. Until G is done, zshrs cannot replace zsh on the maintainer's mac
 - Worker pool hydrates `~/.zshrs/catalog.db` per-shard (`DELETE FROM entries WHERE plugin_id = '{shard}'` then INSERT). `entry_stats` survives via `ON CONFLICT DO UPDATE` keyed on `fq_name`. Hydration logs to `~/.zshrs/zshrs-daemon.log` via `tracing::info!` with `zcache_op` event shape.
 - **`zcache <verb>` builtin family** — `info` / `jobs` / `clean [--all|shards|shard <name>|catalog|index|stats|log]` / `verify` / `compact`. All async write ops default to non-blocking; `--wait` for explicit sync. `zcache verify` runs `PRAGMA integrity_check` on demand (not every startup); on corruption prints `zcache clean catalog` recovery (then re-run `zshrs-recorder`) (entry_stats lost on recovery — single-dir trade).
 - **Custom builtin namespace = `z*` prefix, no upstream-zsh clash** — `zcache` is the first; all future zshrs builtins follow same rule. Build-time anti-collision check.
-- Legacy `plugin_cache.db` / `compsys.db` SQLite caches and `.zwc` reading paths are dead-on-arrival.
+- No bytecode in SQLite: bytecode lives only in the rkyv shards, and `plugin_cache.rs` drops the legacy `script_bytecode` table on open. The SQLite files are still opened for other data: `~/.zshrs/compsys.db` is the read-only completion mirror for `dbview` / SQL inspection, never read on the Tab path (`src/compsys/cache.rs:1-8`, `:31-42`). `~/.zshrs/plugins.db` is opened by `vm_helper.rs::open_plugin_cache` (`plugin_cache.rs::default_cache_path`). `.zwc` reading is live: `src/extensions/zwc.rs` loads stock-zsh `.zwc` files, used from `builtin.rs` and `parse.rs`.
 - **Test:** install a plugin and re-run `zshrs-recorder`, call its function, verify it resolves through the rkyv path (index → shard mmap chain). dbview returns entry within ≤ shard rebuild duration. Edit one zpwr function, verify only `zpwr.rkyv` rebuilds. `zcache clean catalog` preserves `entry_stats` rows; `--no-stats` drops them. Run 60 concurrent writers of shard `plugin-foo`; verify the per-shard flock serializes them and the final shard is intact.
 - **Acceptance:** full-corpus rebuild <30s clean; per-shard ~3-5s large / ~100-500ms small; cold shell launch <5ms; 60 parallel shells share <30 MB RSS attributable to images; lookup ~150-200ns; `zcache info` <100ms; `zcache verify` integrity scan in seconds.
 - **Effort:** 8 days (sharded image format + hash-prefix naming + index.rkyv + perfect-hash + LRU shard-handle cache + generation counter + per-shard flock + per-shard worker hydrate + worker pool partition + log rotation + tmp cleanup + dbview integration + `zcache <verb>` builtin family + POSIX gating).
@@ -222,9 +222,9 @@ Per `AOT_DESIGN.md` §0x13 "Daemon as session-persistent supervisor".
 ## Phase I — Storage durability (endgame schema)
 
 ### I1 — Bytecode chunk format versioning
-- Prepend a monotonic **chunk format version byte** to every serialized bytecode blob in SQLite (value defined alongside the emitter in the pinned `fusevm` release — see workspace `Cargo.toml`).
-- On read: if version mismatches current, silently invalidate cache row, recompile from source on next access.
-- **Test:** write a v0.9.x-format chunk to compsys.db manually, verify zshrs gracefully rebuilds.
+- **Mechanism landed (rkyv, not SQLite).** No bytecode is stored in SQLite: `plugin_cache.rs` drops the legacy `script_bytecode` table on open, and `compsys.db` is a read-only `dbview` mirror (`src/compsys/cache.rs:1-8`). Bytecode lives in the rkyv shards `scripts.rkyv` and `autoloads.rkyv`, each with a header `{ magic, format_version, zshrs_version, pointer_width, built_at_secs }` (`SHARD_FORMAT_VERSION` = 5 in `script_cache.rs`, 7 in `autoload_cache.rs`).
+- On read, `header_ok` rejects a shard whose magic, `format_version`, `zshrs_version` or pointer width differs from the running build, so every lookup misses and the source is recompiled. On write, such a shard is replaced by `fresh_shard()` (`script_cache.rs:340-349`, `autoload_cache.rs:361-371`).
+- **Test (not written):** write a `scripts.rkyv` / `autoloads.rkyv` with an older `format_version`, then verify zshrs serves no entry from it, recompiles from source and rewrites the shard with the current header. No test currently pins `header_ok` rejection.
 - **Effort:** 1 day.
 
 ### I2 — SQLite schema migrations
@@ -421,22 +421,22 @@ These claims appear in README/RFC but are not yet backed by reproducible benchma
 
 Phase M produces measured replacements. Until then, the README's "performance" section reads as architecture description, not benchmark report.
 
-### Counts verified against the tree (2026-10-18)
+### Counts verified against the tree (2026-10-27, `7467218ed8`)
 
-These were on the "needs verification" list and are now measured, not estimated:
+Every row was recounted on 2026-10-27 at `7467218ed8` with the command in the "How" column. Git pathspecs (`'dir/*.rs'`) match recursively.
 
 | Claim | Measured | How |
 |---|---|---|
-| Builtins | **253** (152 + 101, disjoint) | `BUILTIN(` names in `src/ported/builtin.rs`, `EXT_BUILTIN_NAMES` in `src/extensions/ext_builtins.rs` |
-| fusevm opcodes | **235** | `Op` enum variants in `fusevm-0.26.7/src/op.rs` |
-| ZLE widgets | **193** | `IWIDGET_NAMES` in `src/ported/zle/zle_bindings.rs` |
-| Workspace Rust | **1,019 files / 1,082,414 lines** (2026-10-27, `68bad8516b`) | every tracked `*.rs`: `git ls-files '*.rs' \| wc -l`; `git ls-files -z '*.rs' \| xargs -0 cat \| wc -l` |
-| `src/ported/` | **106 files** | frozen port directory |
-| `src/extensions/` | **138 files** (2026-10-27, `68bad8516b`) | non-port directory, tracked `*.rs` |
-| compsys mirror | **1,249 files** | `src/compsys/ported/` |
-| p10k engine | **28 files / 25,719 lines** | `src/extensions/p10k/` |
-| demo scripts | **375** | `examples/demos/*.zsh` |
-| assertion verbs | **14** | `zassert_*` in `src/extensions/ext_builtins.rs` |
-| behavioral pins | **174** | `#[test]` in `tests/no_tree_walker_dispatch.rs` |
+| Builtins | **259** (157 + 102, disjoint) | Distinct names in `BUILTIN(` / `BIN_PREFIX(` entries of the `BUILTINS` vec in `src/ported/builtin.rs`, comments stripped (160 entries; `fg`, `kill`, `suspend` appear twice), plus the 102 names in `EXT_BUILTIN_NAMES` in `src/extensions/ext_builtins.rs`. `comm -12` of the two sorted lists finds 0 names in common. |
+| fusevm opcodes | **235** | Variants of `pub enum Op` in `~/.cargo/registry/src/*/fusevm-0.26.7/src/op.rs` (the version in `Cargo.lock`), comments and attributes stripped |
+| ZLE widgets | **193** | String entries of `IWIDGET_NAMES` in `src/ported/zle/zle_bindings.rs` |
+| Workspace Rust | **1,019 files / 1,082,434 lines** | `git ls-files '*.rs' \| wc -l`; `git ls-files -z '*.rs' \| xargs -0 cat \| wc -l` |
+| `src/ported/` | **106 files** (40 at top level) | `git ls-files 'src/ported/*.rs' \| wc -l` |
+| `src/extensions/` | **138 files** | `git ls-files 'src/extensions/*.rs' \| wc -l` |
+| compsys mirror | **1,249 files** (250 `.rs`, 994 extensionless completion functions) | `git ls-files 'src/compsys/ported/' \| wc -l` |
+| p10k engine | **28 files / 25,719 lines** | `git ls-files 'src/extensions/p10k/*.rs' \| wc -l`; same list piped to `xargs -0 cat \| wc -l` |
+| demo scripts | **375** | `git ls-files 'examples/demos/*.zsh' \| wc -l` |
+| assertion verbs | **14** | `rg -o '"zassert_\w+"' src/extensions/ext_builtins.rs \| sort -u \| wc -l` |
+| behavioral pins | **174** | `rg -c '#\[test\]' tests/no_tree_walker_dispatch.rs` |
 
 Numbers in README, the docs site, and `docs/INVENTIONS.md` are kept to these.
