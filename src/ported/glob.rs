@@ -582,9 +582,10 @@ fn scanner(state: &mut globdata, q: Option<&complist>, shortcircuit: i32, in_clo
         // `(D)` is handled by the compiled flag, never by re-including
         // `.`/`..` here (that previously leaked `.`/`..` under dotglob).
         let mut subdirs: Vec<String> = Vec::new();
-        // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash/ash expand `.*` to include
-        // `.` and `..` (`echo .*` -> `. .. .h`); bash, ksh93, mksh and zsh skip them.
-        let mut dots: Vec<String> = if crate::dash_mode::dash_faithful() {
+        // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash/ash and /bin/sh (bash 3.2,
+        // before bash 5.2's `globskipdots`) expand `.*` to include `.` and `..`
+        // (`echo .*` -> `. .. .h`); bash 5.2+, ksh93, mksh and zsh skip them.
+        let mut dots: Vec<String> = if crate::dash_mode::dash_faithful() || crate::dash_mode::sh_mode() {
             vec!["..".to_string(), ".".to_string()]
         } else {
             Vec::new()
