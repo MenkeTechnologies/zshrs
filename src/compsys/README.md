@@ -9,11 +9,17 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-### `[ZSH-COMPATIBLE COMPLETION ENGINE FOR ZSHRS]`
+### `[RUST PORTS OF ZSH'S COMPLETION/ FUNCTIONS FOR ZSHRS]`
 
 > *"Tab is the most powerful key on the keyboard."*
 
-The completion engine that powers [zshrs](https://github.com/MenkeTechnologies/zshrs) Tab completion — ported from zsh's `Src/Zle/complist.c` and `Src/Zle/compresult.c` with **rkyv**-mmap'd bytecode shards (the completion cache), read-only SQLite **mirrors** for SQL/`dbview` introspection only (no role in Tab cache hit/miss), a full menuselect state machine, and zstyle configuration. 254 source files, 58k+ lines of Rust.
+`src/compsys/` holds the Rust ports of zsh's shell-level completion
+system — the `Completion/` function tree (`_main_complete`,
+`_arguments`, `_files`, `_git`, …) — plus the router that decides,
+per call, whether a port or a shell function runs. The C completion
+engine underneath (`compcore`, `compadd`, `compset`, menuselect,
+`zstyle`) is not here; it is ported under `src/ported/zle/` and
+`src/ported/modules/zutil.rs`.
 
 ### [`zshrs`](https://github.com/MenkeTechnologies/zshrs) · [`fusevm`](https://github.com/MenkeTechnologies/fusevm) · [`strykelang`](https://github.com/MenkeTechnologies/strykelang)
 
@@ -22,169 +28,149 @@ The completion engine that powers [zshrs](https://github.com/MenkeTechnologies/z
 ## Table of Contents
 
 - [\[0x00\] Overview](#0x00-overview)
-- [\[0x01\] Architecture](#0x01-architecture)
-- [\[0x02\] Features](#0x02-features)
-- [\[0x03\] Key Types](#0x03-key-types)
-- [\[0x04\] SQLite mirror tables](#0x04-sqlite-mirror-tables)
-- [\[0x05\] Completion Functions](#0x05-completion-functions)
+- [\[0x01\] Dispatch path](#0x01-dispatch-path)
+- [\[0x02\] Modules](#0x02-modules)
+- [\[0x03\] SQLite mirror tables](#0x03-sqlite-mirror-tables)
+- [\[0x04\] Completion functions](#0x04-completion-functions)
 - [\[0xFF\] License](#0xff-license)
 
 ---
 
 ## [0x00] OVERVIEW
 
-compsys replaces zsh's C completion system with a Rust implementation whose **hot path is rkyv**: pre-compiled [fusevm](https://github.com/MenkeTechnologies/fusevm) chunks live in mmap'd shards under `~/.zshrs/images/`, coordinated by `index.rkyv` (see [`docs/DAEMON.md`](../../docs/DAEMON.md)). Where zsh scans `fpath` and reparses on every `compinit`, compsys consumes daemon-built images and falls through to compile-on-demand only on miss.
-
-**SQLite** exists only as **read-only mirrors** (joinable rows, optional FTS materializations) for humans and `dbview`. Mirrors are hydrated from daemon state; they **do not define or influence** the shell completion cache.
-
-- **rkyv mmap bytecode** — zero-copy load of completion / autoload chunks on the warm path (the cache)
-- **SQLite mirrors** — SQL-side inspection only; not consulted for execution or cache semantics
-- **MenuState** — full zsh menuselect state machine: grid navigation with column memory, undo stack, incremental search, interactive filtering
-- **MenuKeymap** — configurable key-to-action mapping for menuselect, matching zsh's `bindkey -M menuselect`
-- **CompletionGroup** — grouped completions with headers, colors, and descriptions (zstyle `list-colors`)
-- **compinit** — parallel fpath scan with rayon; compiled output is rolled into **rkyv** shards
-- **compadd/compdef** — zsh-compatible completion registration
-- **zstyle** — cascading style configuration for completion formatting and behavior
+- **Ports, not reimplementations.** Every `_NAME.rs` under `ported/`
+  is the Rust shadow of one upstream `Completion/` shell function,
+  stored next to the upstream file it ports.
+- **Router-arbitrated.** A port runs only where zsh would have run the
+  stock function: a shell function already defined under that name, or
+  a non-stock file for it earlier in `$fpath`, wins. A plugin
+  `CompFn` registered with `zmodload -R` wins over both.
+- **Switchable.** `[compsys] backend = "shell"` in
+  `$ZSHRS_HOME/zshrs.toml` (default `~/.zshrs/zshrs.toml`) turns the
+  built-in ports off; every name then autoloads from `$fpath` as in zsh.
+- **rkyv for state, SQLite for inspection.** Completion state
+  (`compdef` map, autoload stubs, zstyles) comes from the daemon's
+  rkyv shards (see [`docs/DAEMON.md`](../../docs/DAEMON.md)); compiled
+  autoload chunks are cached in `~/.zshrs/autoloads.rkyv`
+  (`src/extensions/autoload_cache.rs`). The SQLite file `cache.rs`
+  writes is a read-only mirror for `dbview` / SQL and is never
+  consulted on the Tab path.
 
 ---
 
-## [0x01] ARCHITECTURE
+## [0x01] DISPATCH PATH
 
 ```
-Tab keypress
-    │
-    ▼
-ZshrsCompleter::complete()
-    │
-    ├── Command position ──► rkyv-backed completion index
-    │                        (executables + builtins; mmap hot path)
-    ├── File position ──► readdir + glob
-    └── Option position ──► compsys completion functions
-            │                    (fusevm bytecodes from rkyv mmap)
-            ▼
-    CompletionGroup[] ──► MenuState::set_completions()
-            │
-            ▼
-    MenuState::render() ──► colored grid with group headers
-            │
-            ▼
-    MenuKeymap::lookup(key) ──► MenuAction ──► MenuState::process_action()
+Tab (complete-word, registered by compinit's `zle -C`)
+  → ported::zle::zle_tricky::completecall / completeword
+    → docomplete → docompletion → runhookdef(COMPLETEHOOK)
+      → ported::zle::compcore::do_completion → callcompfunc
+        → ported::exec::doshfunc(synth shfunc, body_runner)
+          → ported::exec::run_function_body("_main_complete")
+            → compsys::router::dispatch_compsys
+                ├── plugin CompFn (zmodload -R)            if registered
+                ├── router::try_rust_dispatch → run_port   Rust port
+                └── None → autoload + fusevm body          shell function
+  → port body calls siblings by name (shared::call_compfn), each
+    through the same router; `compadd` lands in
+    ported::zle::complete::bin_compadd → compcore::addmatches
+  → menuselect: ported::zle::complist::domenuselect
 ```
 
----
-
-## [0x02] FEATURES
-
-| Feature | Description |
-|---------|-------------|
-| Prefix completion | Sub-millisecond matching from **rkyv** / mmap'd tables (not from SQLite cache) |
-| Menuselect grid | Arrow navigation, column memory, viewport scrolling |
-| Incremental search | Type to narrow within menuselect |
-| Interactive filter | Pattern-based filtering within completion list |
-| Undo stack | Full undo/redo within menuselect |
-| Group headers | Colored headers with match counts |
-| `list-colors` | zstyle-configurable ANSI colors per completion |
-| Bytecode autoloads | Completion functions pre-compiled to fusevm; **stored in rkyv** |
-| Parallel compinit | Rayon-powered fpath scan and function compilation |
-| `_arguments` | Full zsh `_arguments` spec parser and generator |
+Link-by-link C parity, and the observable `$zsh_eval_context`
+difference this path produces, are in
+[`docs/COMPLETION_DISPATCH.md`](../../docs/COMPLETION_DISPATCH.md).
 
 ---
 
-## [0x03] KEY TYPES
+## [0x02] MODULES
 
-| Type | Description |
-|------|-------------|
-| `CompsysCache` | Optional handle to **read-only mirror** DB for tooling; bytecode and cache hits live in **rkyv** only |
-| `MenuState` | Grid position, viewport, mode (normal/interactive/search), undo stack |
-| `MenuKeymap` | Key sequence -> widget name -> `MenuAction` mapping |
-| `MenuAction` | Accept, Cancel, Up, Down, Left, Right, PageUp, PageDown, Search, Undo, ... |
-| `MenuResult` | Continue, Accept(String), Cancel, Redisplay, UndoRequested |
-| `MenuRendering` | Rendered lines with ANSI colors, selection highlight, status |
-| `CompletionGroup` | Name, matches, explanations, sorted/unsorted, flags |
-| `Completion` | str, description, display override, suffix, flags |
+| File | Role |
+|------|------|
+| `mod.rs` | Module declarations; `COMPSYS_FN_NAMES` (inventory surfaced by the LSP reflection dump and `docs/reference.html`); re-exports of `ported::compinit` and `zpwr_colors` |
+| `router.rs` | Port-vs-shell arbitration. `dispatch_compsys`, `try_rust_dispatch`, `run_port`, `is_intercepted`; `rust_compsys_lookup` is the name → port table. zshrs-original, no C counterpart |
+| `in_editor.rs` | `complete_at(CompsysRequest) -> CompsysResponse` for the LSP: runs `_main_complete` on a dedicated shell thread bootstrapped from the recorder shard and captures `compadd` output. Design: [`docs/IN_EDITOR_COMPSYS_COMPLETION.md`](../../docs/IN_EDITOR_COMPSYS_COMPLETION.md) |
+| `cache.rs` | `CompsysCache` — the SQLite mirror (see 0x03), its path (`$ZSHRS_HOME/compsys.db`), rebuild lock and binary-identity stamp |
+| `zpwr_colors.rs` | zstyle / `LS_COLORS` parsing for completion list colors |
+| `ported/` | The port tree (see 0x04) |
 
 ---
 
-## [0x04] SQLITE MIRROR TABLES
+## [0x03] SQLITE MIRROR TABLES
 
-Daemon-hydrated **read-only** views for SQL and `dbview`. They duplicate metadata for human queries; **shell behavior never depends on these rows for caching or dispatch.** Authoritative compiled payloads are in **rkyv** shards (`image_path` / offsets per [`docs/DAEMON.md`](../../docs/DAEMON.md)).
+Created by `cache.rs`. Read-only views for SQL and `dbview`; shell
+behavior never depends on these rows for caching or dispatch.
 
-| Table | Purpose (mirror / inspection only) |
-|-------|---------|
-| `autoloads` | Names, source metadata, pointers into rkyv for bodies / chunks |
-| `comps` | Command -> completion function mapping (`_comps` hash) |
-| `services` | Command -> service mapping (`_services` hash) |
-| `patcomps` | Pattern -> function mapping (`_patcomps` hash) |
-| `executables` | PATH executables (optional FTS materialization on mirror) |
-| `zstyles` | Cascading style configuration |
-| `shell_functions` | Named shell functions |
+| Table | Contents |
+|-------|----------|
+| `autoloads` | Autoload function names and source metadata |
+| `comps` | Command → completion function (`_comps`) |
+| `services` | Command → service (`_services`) |
+| `patcomps` / `postpatcomps` | Pattern → function (`_patcomps` / `_postpatcomps`) |
+| `keycomps` | Key → completion function (`compdef -k`) |
+| `executables` | `$PATH` executables |
+| `named_dirs` | Named directories |
+| `shell_functions` | Shell function bodies |
+| `zstyles` | Style patterns and values |
+| `metadata` | Mirror bookkeeping |
+| `cache` | Result cache |
+| `fts_comps`, `fts_executables`, `fts_shell_functions` | FTS5 tables for prefix search from `dbview` |
 
 ---
 
-## [0x05] COMPLETION FUNCTIONS
+## [0x04] COMPLETION FUNCTIONS
 
-compsys ships with Rust ports of every zsh `Completion/` shell function,
-organised in the same upstream directory layout:
+`ported/` mirrors the upstream `Completion/` tree, directory for
+directory, with the upstream shell file and its Rust port side by
+side (`Base/Core/_main_complete` + `Base/Core/_main_complete.rs`):
 
 ```
-compsys/ported/                ← RUST PORTS (canonical impl)
-├── Base/
-│   ├── Completer/   _all_matches / _approximate / _complete / _correct /
-│   │                _expand / _expand_alias / _extensions / _external_pwds /
-│   │                _history / _ignored / _list / _match / _menu /
-│   │                _oldlist / _prefix / _user_expand
-│   ├── Core/        _all_labels / _comp_caller_options / _comp_priv_prefix /
-│   │                _description / _dispatch / _main_complete / _message /
-│   │                _next_label / _normal / _setup / _tags / _wanted
-│   ├── Utility/     _alternative / _arg_compile / _arguments / _as_if /
-│   │                _cache_invalid / _call_function / _call_program /
-│   │                _cmdambivalent / _cmdstring / _combination / _comp_locale /
-│   │                _complete_help_generic / _completers / _default /
-│   │                _describe / _guard / _multi_parts / _nothing / _numbers /
-│   │                _pick_variant / _regex_arguments / _regex_words /
-│   │                _retrieve_cache / _sep_parts / _sequence / _set_command /
-│   │                _shadow / _store_cache / _sub_commands / _values
-│   └── Widget/      _bash_completions / _complete_debug / _complete_help /
-│                    _complete_tag / _correct_filename / _correct_word /
-│                    _expand_word / _generic / _history_complete_word /
-│                    _most_recent_file / _next_tags / _read_comp
-├── Unix/Type/       _absolute_command_paths / _canonical_paths /
-│                    _command_names / _dir_list / _email_addresses / _files /
-│                    _gnu_generic / _path_files / _precommand / _tilde_files
-└── Zsh/Type/        _options / _options_set / _options_unset / _parameters /
-                     _widgets
+compsys/ported/
+├── Base/{Completer,Core,Utility,Widget}/
+├── Unix/{Command,Type}/
+├── Zsh/{Command,Context,Function,Type}/
+├── X/{Command,Type,Utility}/
+├── AIX/ BSD/ Darwin/ Debian/ Linux/ Solaris/   {Command,Type}/
+├── Cygwin/ Mandriva/ openSUSE/ Redhat/         Command/ (no ports yet)
+├── compinit.rs  compdump.rs  compaudit.rs      ports of the top-level scripts
+├── shared.rs                                   helpers shared by ports
+└── mod.rs                                      #[path] declarations
+```
+
+Current counts:
+
+```sh
+find src/compsys/ported -name '_*.rs' | wc -l                  # ports
+grep -c '=> Some(' src/compsys/router.rs                       # router arms
+find src/compsys/ported -type f ! -name '*.rs' -name '_*' | wc -l   # upstream functions
 ```
 
 ### `compsys/ported/` is canonical-port code — same rule as `src/ported/`
 
-Every `.rs` file under `compsys/ported/` is the **Rust shadow of exactly
-one upstream zsh shell function**. The rules:
-
-- **Strict 1:1 mapping.** File name `_<NAME>.rs` matches the upstream
-  shell-fn name. Module name `_<NAME>`. Public fn `_<NAME>`. No invented
-  helper modules.
+- **Strict 1:1 mapping.** `_<NAME>.rs` ports the upstream shell
+  function `_<NAME>`; module `_<NAME>`, public fn `_<NAME>`. Ports
+  called by name from siblings split into a `_<NAME>` wrapper
+  (`shared::call_compfn`) and a `_<NAME>_impl` body; the router arm
+  must name `_<NAME>_impl`. `shared.rs` is the only non-port module.
 - **Faithful semantics.** Every flag the shell function accepts must be
-  honored (or explicitly documented as deferred). No "returns true to
-  make the test pass" stubs — those failed an internal audit
-  ([`docs/audits/PORT_STUBS.md`](../../docs/audits/PORT_STUBS.md)) and were
-  replaced with full ports.
-- **Shell-source citations.** Each `.rs` file has a module-level
-  `//! Port of _<NAME>` header naming the upstream
-  `Completion/<Category>/<Subdir>/_<NAME>` source file. Per-line comments
-  reference shell-source line numbers where the algorithm is non-obvious.
-- **Tests prove non-fake.** Every port has unit tests in a `#[cfg(test)]
-  mod tests` block that fail if the body is replaced with `return true`.
-  Run `cargo test -p compsys --lib 'ported::'` to verify.
-- **Layout mirrors zsh.** `Base/{Completer,Core,Utility,Widget}/` and
-  `Unix/Type/` / `Zsh/Type/` exactly match the upstream `Completion/`
-  source tree. Module names stay flat (`compsys::ported::_command_names`)
-  via `#[path = "Base/Utility/_command_names.rs"]` attributes.
+  honored. No "returns true to make the test pass" stubs — those
+  failed an internal audit
+  ([`docs/audits/PORT_STUBS.md`](../../docs/audits/PORT_STUBS.md)) and
+  were replaced with full ports.
+- **Shell-source citations.** Each port has a module-level
+  `//! Port of …` header naming the upstream `Completion/…` file;
+  per-line `sh:N` comments cite the shell source where the algorithm
+  is non-obvious.
+- **Tests prove non-fake.** Every port carries a `#[cfg(test)]` block
+  that fails if the body is replaced with `return true`. Run
+  `cargo test --lib compsys::ported`.
+- **Layout mirrors zsh.** Module names stay flat
+  (`compsys::ported::_command_names`) via
+  `#[path = "Zsh/Type/_command_names.rs"]`-style attributes in `ported/mod.rs`.
 
-This is the same standard as `src/ported/` in the parent zshrs crate
-(per the project README's STRICT PORT DIRECTORY table). Both directories
-share the same rule: every file is a port, never an ad-hoc Rust-native
-invention. Inventions live under `src/extensions/` (zshrs runtime) or
-elsewhere in `compsys/` (e.g. `compsys/cache.rs`, `compsys/menu.rs`).
+Ad-hoc Rust-native code does not go in `ported/`: it lives in
+`src/extensions/` or in the non-port files of `src/compsys/`
+(`router.rs`, `in_editor.rs`, `cache.rs`, `zpwr_colors.rs`).
 
 ---
 

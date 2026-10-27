@@ -133,106 +133,85 @@ Key properties:
 - **Cancellable.** LSP clients send a cancellation token on every
   keystroke; long-running completion functions abort cleanly.
 
-### New entry point
+### Entry point
+
+`src/compsys/in_editor.rs`:
 
 ```rust
-// src/compsys/mod.rs (extend)
-
 pub struct CompsysRequest<'a> {
-    /// Whole command line as the user has it typed.
+    /// The entire logical command line; backslash continuations are
+    /// glued by the caller before invocation.
     pub line: &'a str,
-    /// 0-based byte column the cursor sits at.
+    /// 0-based byte column the cursor sits at inside `line`.
     pub cursor: usize,
-    /// Per-call budget. Functions that exceed this are killed.
+    /// Hard deadline. Helpers still running at it are killed and the
+    /// response carries `is_incomplete = true`.
     pub deadline: Instant,
-    /// True when the LSP client wants exec-spawning completions
-    /// (`_kubectl get pods` shells out). False = safe mode:
-    /// only completions that read `$path`/`$fpath`/static caches.
+    /// `false`: `_call_program` spawns nothing and returns 1 with an
+    /// empty `$REPLY`. `true`: the helper runs, killed at `deadline`.
     pub allow_exec: bool,
 }
 
 pub struct CompsysMatch {
     pub completion: String,
     pub description: Option<String>,
-    /// Group label from `_tags` / `_describe`. Surfaces as the
-    /// IDE's `detail` field (`option`, `value`, `host`, …).
+    /// Group label from `_tags` / `_describe` (`subcommands`,
+    /// `options`, `values`, `hosts`, …).
     pub group: Option<String>,
-    /// Match start byte in `line` so the LSP can build a
-    /// `textEdit` that replaces exactly the typed prefix.
+    /// Byte offset in `line` where the replacement region starts.
     pub replace_start: usize,
 }
 
-pub fn complete_at(req: CompsysRequest) -> Vec<CompsysMatch>;
+pub struct CompsysResponse {
+    pub matches: Vec<CompsysMatch>,
+    /// `true` when the deadline cut a dispatch short.
+    pub is_incomplete: bool,
+}
+
+pub fn complete_at(req: CompsysRequest<'_>) -> CompsysResponse;
 ```
+
+Requests are built with `CompsysRequest::new_with_budget(line, cursor,
+budget)` (or `new_with_default_budget`, 200 ms); both set
+`allow_exec = true`.
 
 ### LSP wiring
 
-In `src/extensions/lsp.rs::handle_completion`:
+`src/extensions/lsp.rs::completion` (the `textDocument/completion`
+handler) first builds items from the hand tables and `scan_symbols`,
+then calls `try_compsys_completion` and APPENDS its items, propagating
+`isIncomplete`. Hand-table items keep their `sortText`, so they rank
+above compsys matches.
 
-```rust
-fn handle_completion(state: &State, params: &Value) -> Value {
-    // 1. EXISTING: try hand-table contexts (BuiltinFlag, ParamFlag,
-    //    GlobQualifier, etc.). These win when they match — they
-    //    have richer descriptions than compsys offers.
-    if let Some(items) = try_hand_table_contexts(state, params) {
-        return items;
-    }
-    // 2. NEW: try compsys dispatch. Covers external commands,
-    //    user-defined fpath completion functions, dynamic
-    //    completions that depend on runtime state.
-    if let Some(items) = try_compsys_completion(state, params) {
-        return items;
-    }
-    // 3. EXISTING fallback: user-defined identifiers from
-    //    scan_symbols + plain identifier-prefix matches.
-    fallback_identifier_completion(state, params)
-}
-```
-
-`try_compsys_completion`:
-
-```rust
-fn try_compsys_completion(state: &State, params: &Value) -> Option<Value> {
-    let uri = params["textDocument"]["uri"].as_str()?;
-    let pos = &params["position"];
-    let text = state.docs.get(uri)?;
-    let line_no = pos["line"].as_u64()? as usize;
-    let col = pos["character"].as_u64()? as usize;
-    let line_text = text.lines().nth(line_no)?;
-    let req = compsys::CompsysRequest {
-        line: line_text,
-        cursor: col,
-        deadline: Instant::now() + Duration::from_millis(state.settings.completion_budget_ms),
-        allow_exec: state.settings.allow_exec_completions,
-    };
-    let matches = compsys::complete_at(req);
-    if matches.is_empty() { return None; }
-    Some(render_compsys_items(matches))
-}
-```
+`try_compsys_completion` converts the LSP position (UTF-16 code units)
+to a byte column, joins backslash continuations with `logical_line_at`,
+picks the budget (2000 ms until a dispatch has returned matches,
+350 ms after), and calls `compsys::in_editor::complete_at`.
 
 ## Dispatch Flow
 
 For `git add --p<TAB>`:
 
-1. **Parse**: `compsys::complete_at` re-uses the existing zsh-parser
-   to identify words. `words = ["git", "add", "--p"]`, current
-   word index = 2, current word = `--p`.
+1. **Parse**: `complete_at` writes the line into the editor buffer
+   (`zle_main::ZLELINE`) and runs the ported `docomplete`, whose
+   `get_comp_string` splits the words exactly as a prompt Tab does:
+   `words = (git add --p)`, `CURRENT = 3`, `PREFIX = --p`.
 
-2. **Resolve dispatch function**: walk the `compdef` registry to
-   find the function bound to `git`. Standard answer: `_git`. If
-   the user's fpath has no `_git`, look for `_default` / `_complete`.
+2. **Resolve dispatch function**: `_main_complete` → `_complete` →
+   `_normal` looks `git` up in `$_comps` (populated from the recorder
+   shard's `compdef` field). Standard answer: `_git`; with no entry,
+   `_default`.
 
-3. **Invoke**: call `_git` with the same context shape it'd see at
-   a prompt — `words`, `CURRENT`, `compstate`, the lot. The
-   ported compsys runtime in `src/compsys/` already does this for
-   `--gen-docs` and the test harness.
+3. **Invoke**: `_git` runs with the same `words` / `CURRENT` /
+   `compstate` it sees at a prompt, through the same
+   `callcompfunc` → `doshfunc` chain (see `docs/COMPLETION_DISPATCH.md`).
 
 4. **Capture matches**: `_git` calls `_arguments` which calls
-   `_describe`/`_values`/`compadd`. Intercept the final `compadd`
-   calls (they're already going through the ported `compadd`
-   builtin in `src/compsys/ported/`); collect the offered
-   matches + tags + descriptions.
+   `_describe`/`_values`/`compadd`. The ported `bin_compadd`
+   (`src/ported/zle/complete.rs`) calls
+   `in_editor::try_capture_compadd` after its flag loop; while
+   `COMPADD_CAPTURE_BUFFER` is active the matches + groups +
+   descriptions are recorded there instead of reaching `addmatches`.
 
 5. **Marshal to LSP**: each match becomes a `CompletionItem` with:
    - `label`: the match text
@@ -253,9 +232,9 @@ zshrs already has most of what's needed:
 
 | Have today | Built for |
 |---|---|
-| `src/compsys/mod.rs` + 50+ ported compsys fns | gen-docs, scriptable completion |
+| Rust ports of the `Completion/` functions under `src/compsys/ported/` (registry: `rust_compsys_lookup` in `src/compsys/router.rs`) | prompt Tab completion |
 | `_arguments`, `_files`, `_describe` etc. | compsys correctness |
-| `compadd` builtin port | accepting matches |
+| `bin_compadd` port (`src/ported/zle/complete.rs`) | accepting matches |
 | `fpath` resolution + autoload | full compsys boot |
 | The zsh parser (words, redirects, current-word) | shell execution |
 | `BUILTIN_FLAG_DOCS_OVERRIDE` table | LSP completion (today) |
@@ -567,7 +546,9 @@ Correctness comes from what is cached and what is stamped:
   `autoload` without `-U` (the body is parsed WITH alias expansion, so
   the chunk depends on the alias table).
 
-Shard format v3. v1 stored the bare file body compiled as a top-level
+The format version is `autoload_cache::SHARD_FORMAT_VERSION` (7 at
+v0.13.56); its doc comment records what each bump changed. v1 stored
+the bare file body compiled as a top-level
 script, which nothing ever read — the only caller of
 `autoload_cache::try_load` was `dbview` — and which would have installed
 a different program than the loader does. v2 replaced it with the
@@ -575,7 +556,9 @@ definition program but stamped `(mtime, len)` of `<dir>/<name>` and
 accepted any chunk not strictly OLDER than the running binary, so a chunk
 written by a newer build was served to an older one: on a real `$fpath`
 that made `_megacomplete` fail four times per `<TAB>` and completion
-return zero matches. Each bump discards the previous entries.
+return zero matches. v3 introduced the stamps described above; v4, v5
+and v7 changed the token encoding and the per-entry load record. Each
+bump discards the previous entries.
 
 ## Remaining work
 
@@ -638,6 +621,9 @@ Settled:
 2. **`allow_exec` default** — on, bounded by the request deadline.
 3. **Entry point** — `pub fn`, called in-process by the LSP. No
    separate daemon, no JSON-RPC method for other clients yet.
+4. **Multi-line continuations** — `try_compsys_completion` glues
+   backslash continuations with `logical_line_at` before dispatch
+   (see "Backslash continuations are one command").
 
 Still open:
 
@@ -650,8 +636,6 @@ Still open:
    the document's own options.
 3. **Completion in `"…"` strings.** `"git $(git $1)"` — the inner `git`
    is gated off today by the string-context check.
-4. **Multi-line continuations.** The cursor's logical line spans the
-   backslash continuations; they are not glued before dispatch.
 
 ## Decisions taken
 
