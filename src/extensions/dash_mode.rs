@@ -980,7 +980,16 @@ pub fn strip_replacement_backslashes(s: &str) -> String {
                 Some('&') if bash_shopt_get("patsub_replacement") == Some(true) => {
                     out.push(PATSUB_LITERAL_AMP)
                 }
-                Some(next) => out.push(next),
+                // The escaped char stays quoted (Bnull-prefixed, as the lexer
+                // leaves an unquoted `\x`): a double-quoted replacement is
+                // re-lexed as an unquoted word under bash, where a bare `~`
+                // or `=` would become a Tilde/Equals token and expand
+                // (`"${v/b/\~}"` is `a~c` in bash). singsub's remnulargs
+                // drops the Bnull.
+                Some(next) => {
+                    out.push('\u{e19f}');
+                    out.push(next);
+                }
                 None => out.push('\\'),
             }
         } else {
