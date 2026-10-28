@@ -4418,8 +4418,8 @@ fn dash_getop(s: &str) -> Option<&'static DashOp> {
 }
 
 /// dash `atomax10`: optional blanks, sign and decimal digits filling the whole
-/// string (overflow saturates, as strtoimax does); anything else is
-/// "Illegal number".
+/// string; anything else, or a value strtoimax reports as ERANGE, is
+/// "Illegal number" (mystring.c `atomax`: `if (errno == ERANGE) badnum(s);`).
 fn dash_getn(s: &str) -> Result<i64, String> {
     // dash's `atomax` skips leading blanks and `number()` tolerates trailing ones
     // (`[ '1 ' -eq 1 ]` is true).
@@ -4432,15 +4432,12 @@ fn dash_getn(s: &str) -> Result<i64, String> {
     if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
         return Err(format!("Illegal number: {s}"));
     }
-    let mag = digits.bytes().try_fold(0i64, |a, b| a.checked_mul(10)?.checked_add((b - b'0') as i64));
-    // Saturates like the Homebrew dash this harness also checks against
-    // (/bin/dash reports "Illegal number" instead — a version split).
-    Ok(match (mag, neg) {
-        (Some(m), false) => m,
-        (Some(m), true) => -m,
-        (None, false) => i64::MAX,
-        (None, true) => i64::MIN,
-    })
+    // Accumulated negatively so i64::MIN, which strtoimax accepts, has a value.
+    digits
+        .bytes()
+        .try_fold(0i64, |a, b| a.checked_mul(10)?.checked_sub((b - b'0') as i64))
+        .and_then(|m| if neg { Some(m) } else { m.checked_neg() })
+        .ok_or_else(|| format!("Illegal number: {s}"))
 }
 
 struct DashTest {
