@@ -1,0 +1,88 @@
+{
+  "schema": "compsys-fixture/2",
+  "id": "next_tags_wraparound_completer",
+  "title": "GUARD (fixed in 7b6203cd17) — was: the `_next_tags` widget (^Xn) fails on the cycle that wraps: `_main_complete:218: command not found: _next_tags_completer`",
+  "harness": "compsys_spec_fuzz",
+  "run": {
+    "buffer": "fzc0000 ",
+    "keys": [
+      "tab",
+      "\u0018",
+      "n",
+      "\u0018",
+      "n"
+    ],
+    "flags": [],
+    "spec": {
+      "cmd": "fzc0000",
+      "kind": "alternative",
+      "widget": "fn:_next_tags",
+      "setup": [
+        "zstyle ':completion:*' tag-order 'aaa' 'bbb'",
+        "zstyle ':completion:*:descriptions' format '-- %d --'"
+      ],
+      "completer": "#compdef fzc0000\n\n_alternative 'aaa:first:(a1 a2)' 'bbb:second:(b1 b2)'\n"
+    }
+  },
+  "expect": "agrees",
+  "group": "completer-machinery",
+  "fingerprint": null,
+  "fingerprint_when_diverging": null,
+  "retired": {
+    "date": "2026-10-28",
+    "previous_expect": "diverges",
+    "fix_commit": "7b6203cd17",
+    "fix_commit_subject": "fix(compsys): port `_next_tags_completer` / `_next_tags_pre`, scope the label filter to the widget",
+    "why": "Completion/Base/Widget/_next_tags is one autoload file that defines `_next_tags`, the wrap-around completer `_next_tags_completer` (sh:115-120) and the pre-completion hook `_next_tags_pre` (sh:124-139), then calls `_next_tags \"$@\"`. The Rust port of `_next_tags` hands `_main_complete _complete _next_tags_completer` (sh:101) and queues `compprefuncs+=( _next_tags_pre )` (sh:110), but neither helper existed, so once `_complete` ran out of tag sets `_main_complete` executed a missing command. The fix ports both helpers and registers them in the router; it also gates the ports' `$_next_tags_not` filter on the window in which the widget's redefined `_all_labels`/`_next_label` bodies are live (set at sh:10, cleared by `_next_tags_pre`'s `unfunction`+`autoload -Uz` at sh:134-135) — before, a leftover `$_next_tags_not` also hid tags from later plain TAB completions.",
+    "evidence": [
+      "FAIL on the pre-fix binary (3 row(s) differ, one-sided `command not found: _next_tags_completer`)",
+      "PASS on the fixed binary"
+    ]
+  },
+  "observed": {
+    "verdict": "PASS",
+    "detail": "byte-identical grid",
+    "measured": "2026-10-28, a copy of target/debug/zshrs built from the shared tree carrying the fix (zshrs 0.13.56, 133994840 bytes, sha256_16 201b5f494fe2001a) vs zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+    "notes": "both shells: first ^Xn shows `-- first --` / `a1  a2` after TAB showed the same group, the second ^Xn wraps through `_next_tags_completer` back to it. Each lone \\x18 key is reported as `no output at all` (10s) on both shells; that is ZLE waiting on the ^X prefix, not a divergence."
+  },
+  "observed_when_diverging": {
+    "verdict": "FAIL",
+    "detail": "3 row(s) differ",
+    "category": "one-sided-error",
+    "zsh_grid": [
+      "@SFZ@ fzc0000 a",
+      "-- first --",
+      "a1  a2"
+    ],
+    "zshrs_grid": [
+      "@SFZ@ fzc0000 a_main_complete:218: command not found: _next_tags_completer",
+      "-- second --"
+    ],
+    "zsh_diagnostics": [],
+    "zshrs_diagnostics": [
+      "command not found: _next_tags_completer"
+    ],
+    "recorded_under": "2026-10-28, a copy of target/debug/zshrs built from the shared tree at ab5f51192e before the fix (zshrs 0.13.56, 133989832 bytes, sha256_16 7a44909f4100757b)"
+  },
+  "controls": [],
+  "variants": [],
+  "origin": [
+    "lane-9 widget-axis sweep (2026-10-28): stock compinit binds ^Xn to `_next_tags`; found by driving every compinit widget binding by hand, since compsys_spec_fuzz's widget pool and key names have no `_next_tags` / `cx-n` entry"
+  ],
+  "confirmed": {
+    "date": "2026-10-28",
+    "harness_sha256_16": {
+      "scripts/compsys_spec_fuzz.py": "7c0a079a8ae27ee7"
+    },
+    "zsh_binary": {
+      "path": "/opt/homebrew/bin/zsh",
+      "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)"
+    }
+  },
+  "guard_verified": {
+    "date": "2026-10-28",
+    "against": "the pre-fix binary named in observed_when_diverging.recorded_under",
+    "verdict": "CONTROL-MOVED",
+    "detail": "3 row(s) differ"
+  }
+}
