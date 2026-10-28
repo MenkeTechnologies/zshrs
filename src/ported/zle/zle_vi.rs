@@ -159,7 +159,10 @@ pub fn vigetkey() -> i32 {
     // Rust port: getbyte returns Option<u8>; None means EOF.
     // The KUNGETBUF drain path was the previous stub — covered now
     // by getbyte itself which consults the unget buffer first.
-    let byte = match getbyte(1) {
+    // The `0L` is `do_keytmout`: the argument key of `f`/`t`/`r`/`m`/... waits
+    // indefinitely. Passing 1 armed KEYTIMEOUT, so a target key typed more
+    // than $KEYTIMEOUT after `f` read as EOF and was then run as a command.
+    let byte = match getbyte(0) {
         Some(b) => b,
         None => return ZLEEOF, // c:135
     };
