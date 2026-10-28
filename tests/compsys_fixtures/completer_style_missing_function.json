@@ -1,7 +1,7 @@
 {
  "schema": "compsys-fixture/1",
  "id": "completer_style_missing_function",
- "title": "a `completer` style naming a function that does not exist: zsh reports it, zshrs ignores it",
+ "title": "GUARD (fixed in 6566f5a559) — was: a `completer` style naming a function that does not exist: zsh reports it, zshrs ignores it",
  "harness": "comptab_parity",
  "run": {
   "buffer": "CC ",
@@ -13,10 +13,24 @@
    "zstyle ':completion:*' completer _expand _ignored _megacomplete _approximate _correct _fasd_zsh_word_complete_trigger"
   ]
  },
- "expect": "diverges",
+ "expect": "agrees",
+ "retired": {
+  "date": "2026-10-28",
+  "previous_expect": "diverges",
+  "fix_commit": "6566f5a559",
+  "fix_commit_subject": "fix(compsys): _main_complete cites line 214 for an undefined completer",
+  "why": "The recorded 2026-08-30 shape (no diagnostic at all, plus the cc_match_set listing) had already been fixed elsewhere: the port gained the command-not-found diagnostic and the match set converged. What still diverged on every cell was the line number in that diagnostic: the bundled _main_complete is upstream master's (vendor/zsh/functions/_main_complete since 9b0a504806), where `elif \"$tmp\"; then` is sh:214, and the oracle prints `_main_complete:214: command not found: _fasd_zsh_word_complete_trigger`; the port hardcoded 5.9.2's 218 in the eprintln and in set_sh_lineno. 6566f5a559 changes both to 214.",
+  "evidence": "re-verified first-hand with scripts/compsys_regressions.py --only completer_style_missing_function --variants against a pinned copy of the fixed build: the unflipped fixture scored NOW-PASSES for the cell, variant0 and variant1 on two separate runs (one with --confirm-moved 1: NOW-PASSES -> NOW-PASSES each). With expect flipped to agrees, three runs each scored 3 CONTROL-HOLDS."
+ },
  "group": "completer-machinery",
- "fingerprint": "19376c78e1",
+ "fingerprint": null,
+ "fingerprint_when_diverging": "19376c78e1",
  "observed": {
+  "verdict": "PASS",
+  "detail": "0 row(s) differ",
+  "notes": "both shells print `_main_complete:214: command not found: _fasd_zsh_word_complete_trigger` above the same `files` listing, on the cell and both variants."
+ },
+ "observed_when_diverging": {
   "verdict": "FAIL",
   "detail": "4 row(s) differ",
   "fingerprint_label": "cell/row0/col0 | ref/$ CC _main_complete:#: command not found: _fasd_zsh_word_complete_trigger | test/$ CC",
@@ -35,7 +49,8 @@
   "only_zsh_diagnostics": [
    "_main_complete:218: command not found: _fasd_zsh_word_complete_trigger"
   ],
-  "notes": "Two names in the chain do not exist on this host (_megacomplete and _fasd_zsh_word_complete_trigger). zsh runs the chain far enough to hit the missing function and prints 'command not found'; zshrs silently skips it. The match-set half of the difference is fixture cc_match_set showing through — the diagnostic is what is new here."
+  "notes": "Two names in the chain do not exist on this host (_megacomplete and _fasd_zsh_word_complete_trigger). zsh runs the chain far enough to hit the missing function and prints 'command not found'; zshrs silently skips it. The match-set half of the difference is fixture cc_match_set showing through — the diagnostic is what is new here.",
+  "recorded_under": "commit 3b4a01f0cd, zshrs binary 6420c23cecc13c35 (zshrs 0.12.49)"
  },
  "variants": [
   {
@@ -71,29 +86,65 @@
   "scripts/parity_corpus_fuzz/fp_17200719e0.json"
  ],
  "confirmed": {
-  "date": "2026-08-30",
-  "commit": "3b4a01f0cd",
+  "date": "2026-10-28",
+  "commit": "6566f5a559",
   "harness_sha256_16": {
-   "scripts/comptab_parity.py": "517045bc5c73ceee"
+   "scripts/comptab_parity.py": "3adc6a82b3e619ae"
   },
   "zshrs_binary": {
    "path": "target/debug/zshrs",
-   "size": 101601256,
-   "mtime": "2026-08-30 05:50:47",
-   "version": "zshrs 0.12.49",
-   "sha256_16": "6420c23cecc13c35",
-   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)"
+   "size": 134011240,
+   "mtime": "2026-10-28 02:50:09",
+   "version": "zshrs 0.13.56",
+   "sha256_16": "76b548c8def4c96a",
+   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)",
+   "pinned_copy": "the runs executed a byte-identical copy of target/debug/zshrs passed with --zshrs; the shared tree it was built from also held other agents' uncommitted edits"
   },
   "zsh_binary": {
-   "path": "/opt/homebrew/bin/zsh",
-   "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
-   "note": "Homebrew zsh 5.9.2, which is what `zsh` on PATH resolves to here; /bin/zsh is an older build and is NOT what any harness runs."
+   "path": "~/.cache/zshrs/zsh-oracle/bin/zsh",
+   "version": "zsh 5.9.999.3-test [zsh-5.9.0.3-test-476-g8cc5ead] (aarch64-apple-darwin25.5.0)",
+   "note": "the development-tree oracle (scripts/build_zsh_oracle.sh) every harness defaults to since 0711e66ea6; the bundled function tree tracks zsh master and 5.9.2 cannot run all of it"
   },
-  "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
-  "zshrs": "target/debug/zshrs zshrs 0.12.49 (101601256 bytes, 2026-08-30 05:50:47)",
-  "note": "round 6 re-confirmation, from the full gate run in tests/compsys_fixtures/last_gate.json. What that run established: verdict STILL-DIVERGES; the harness's own detail was '4 row(s) differ'; failure fingerprint 19376c78e1, unchanged"
+  "zsh": "zsh 5.9.999.3-test [zsh-5.9.0.3-test-476-g8cc5ead] (aarch64-apple-darwin25.5.0)",
+  "zshrs": "target/debug/zshrs zshrs 0.13.56 (134011240 bytes, 2026-10-28 02:50:09)",
+  "note": "retirement run: fixture cell, variant0 and variant1 PASS on the fixed binary; see retired.evidence and guard_verified."
+ },
+ "guard_verified": {
+  "date": "2026-10-28",
+  "against": "a copy of target/debug/zshrs built 2026-10-28 01:05 from the shared tree before 6566f5a559, zshrs 0.13.56, 133988872 bytes, sha256 358b8bcef8cf2bed",
+  "verdict": "CONTROL-MOVED",
+  "attempts": [
+   "CONTROL-MOVED",
+   "CONTROL-MOVED",
+   "CONTROL-MOVED"
+  ],
+  "detail": "1 row(s) differ",
+  "note": "run with expect flipped: `compsys_regressions.py --only completer_style_missing_function --variants --zshrs <old copy>` exited 1 with 3 CONTROL-MOVED (cell, variant0, variant1). The detail is `1 row(s) differ`, not the `4 row(s) differ` in observed_when_diverging: on the old copy the only differing row is the diagnostic itself (`_main_complete:214:` on zsh against `_main_complete:218:` on zshrs, measured with comptab_parity.py -v), the residue of this finding once the missing diagnostic and the cc_match_set half were fixed upstream of this commit. The guard fails on the diagnostic this fixture is about and not on something else."
  },
  "history": [
+  {
+   "date": "2026-08-30",
+   "commit": "3b4a01f0cd",
+   "harness_sha256_16": {
+    "scripts/comptab_parity.py": "517045bc5c73ceee"
+   },
+   "zshrs_binary": {
+    "path": "target/debug/zshrs",
+    "size": 101601256,
+    "mtime": "2026-08-30 05:50:47",
+    "version": "zshrs 0.12.49",
+    "sha256_16": "6420c23cecc13c35",
+    "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)"
+   },
+   "zsh_binary": {
+    "path": "/opt/homebrew/bin/zsh",
+    "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+    "note": "Homebrew zsh 5.9.2, which is what `zsh` on PATH resolves to here; /bin/zsh is an older build and is NOT what any harness runs."
+   },
+   "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+   "zshrs": "target/debug/zshrs zshrs 0.12.49 (101601256 bytes, 2026-08-30 05:50:47)",
+   "note": "round 6 re-confirmation, from the full gate run in tests/compsys_fixtures/last_gate.json. What that run established: verdict STILL-DIVERGES; the harness's own detail was '4 row(s) differ'; failure fingerprint 19376c78e1, unchanged"
+  },
   {
    "date": "2026-08-30",
    "commit": "132228963a",
