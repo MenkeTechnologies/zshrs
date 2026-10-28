@@ -142,7 +142,7 @@ pub struct CompArenaSnapshot {
 
 /// The scalar completion counters `compadd` maintains, in a fixed order
 /// shared by [`comp_arena_save`] and [`comp_arena_restore`].
-fn arena_counters() -> [&'static std::sync::atomic::AtomicI32; 24] {
+fn arena_counters() -> [&'static std::sync::atomic::AtomicI32; 25] {
     use crate::ported::zle::compcore as cc;
     [
         &cc::mnum,         // c:202
@@ -169,6 +169,7 @@ fn arena_counters() -> [&'static std::sync::atomic::AtomicI32; 24] {
         &cc::permgnum,     // c:155
         &cc::lastpermmnum, // c:155
         &cc::lastpermgnum, // c:155
+        &cc::CUREXPL_NODE, // `curexpl` list identity, saved with `curexpl`
     ]
 }
 

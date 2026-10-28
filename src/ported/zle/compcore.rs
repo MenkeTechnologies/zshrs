@@ -3737,6 +3737,15 @@ pub fn addmatch(str: &str, flags: i32, disp: Option<&str>, line: bool) {
                 e.count += 1;
             }
         }
+        // c:2062 moves the listed entry too: it IS `curexpl` (CUREXPL_NODE).
+        let node = CUREXPL_NODE.load(Ordering::Relaxed);
+        if node >= 0 {
+            if let Ok(mut l) = crate::comp_match_handles::expls_arc().lock() {
+                if let Some(x) = l.get_mut(node as usize) {
+                    x.count += 1;
+                }
+            }
+        }
     }
     let mcell = crate::comp_match_handles::matches_arc(); // c:2066
     if let Ok(mut g) = mcell.lock() {
@@ -3890,12 +3899,14 @@ pub fn addmatches(
         if let Ok(mut g) = curexpl.get_or_init(|| Mutex::new(None)).lock() {
             *g = Some(e);
         }
+        CUREXPL_NODE.store(-1, Ordering::Relaxed); // a fresh object, on no list yet
         if dat.mesg.is_some() && dat.dpar.is_empty() && dat.opar.is_none() && dat.apar.is_none() {
             // c:2129
             addexpl(true); // c:2130
         }
     } else if let Ok(mut g) = curexpl.get_or_init(|| Mutex::new(None)).lock() {
         *g = None; // c:2133
+        CUREXPL_NODE.store(-1, Ordering::Relaxed);
     }
 
     // c:2138 — empty-argv early return.
@@ -5586,6 +5597,19 @@ pub fn add_match_data(
             }
         }
     }
+    // ... and the listed entry, which in C is the same object (CUREXPL_NODE).
+    let node = CUREXPL_NODE.load(Ordering::Relaxed);
+    if node >= 0 {
+        if let Ok(mut l) = crate::comp_match_handles::expls_arc().lock() {
+            if let Some(x) = l.get_mut(node as usize) {
+                if alt != 0 {
+                    x.fcount += 1;
+                } else {
+                    x.count += 1;
+                }
+            }
+        }
+    }
 
     // c:3023-3024 — ai->firstm = cm.
     if let Ok(mut g) = ai_ref.get_or_init(|| Mutex::new(None)).lock() {
@@ -5890,6 +5914,7 @@ pub fn addexpl(always: bool) {
         if let Some(e) = curexpl_snap {
             // c:3159
             g.push(e);
+            CUREXPL_NODE.store(g.len() as i32 - 1, Ordering::Relaxed);
         }
     }
     newmatches.store(1, Ordering::Relaxed); // c:3160
@@ -6882,6 +6907,19 @@ pub static expls: OnceLock<Mutex<std::sync::Arc<Mutex<Vec<Cexpl>>>>> = OnceLock:
 
 /// Port of `mod_export Cexpl curexpl` from compcore.c:221.
 pub static curexpl: OnceLock<Mutex<Option<Cexpl>>> = OnceLock::new(); // c:221
+
+/// The pointer identity C's `addexpl` creates: `addlinknode(expls, curexpl)`
+/// (c:3158) puts the `curexpl` OBJECT itself on the list, so every later
+/// `curexpl->count++` (c:2062 `addmatch`, c:3018-3021 `add_match_data`)
+/// also moves the listed entry. `curexpl` here is a value, and the list
+/// holds a copy, so this is the index of that copy in the current `expls`
+/// list, or -1 while `curexpl` is not on it (never added, or merged into an
+/// existing entry by c:3146-3155, which leaves the object off the list).
+/// Without it the `<all>` match `addmatches` adds AFTER `addexpl(0)`
+/// (c:2609-2613) was missing from the `-X` count: `compadd -X 'n=%n' -C --
+/// a b` listed `n=2` where zsh lists `n=3`, and `compadd -X expl -C --`
+/// with no words lost the explanation line altogether.
+pub static CUREXPL_NODE: AtomicI32 = AtomicI32::new(-1);
 
 /// Port of `LinkList matchers` from compcore.c:236. The C list holds
 /// `Cmatcher` pointers (the parsed match-spec chains pushed by

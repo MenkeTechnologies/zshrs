@@ -4528,6 +4528,7 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, incmd: bool, c
             None
         };
     }
+    crate::ported::zle::compcore::CUREXPL_NODE.store(-1, Ordering::Relaxed);
 
     // c:3101-3113 — compadd chars are ignored at the start of the word
     // and become the ignored-prefix `ipre`.
