@@ -6439,9 +6439,22 @@ pub fn domenuselect(
         } else {
             // c:3276-3285 — unrecognised widget: push it back and exit.
             crate::ported::zle::zle_keymap::ungetkeycmd();
+            // c:3278 `cmd->widget->flags & WIDGET_NCOMP`. C's `cmd` is the
+            // live thingytab node, so a `zle -C` rebinding made after the
+            // keymap was built (compinit's `zle -C delete-char-or-list
+            // .delete-char-or-list _main_complete`) is what it reads. A keymap
+            // slot here holds a CLONE taken at bind time — the default ^D slot
+            // still carries the builtin's bare WIDGET_INT — so resolve the
+            // widget through thingytab by name, as execzlefunc does.
             let ncomp = cmd
                 .as_ref()
-                .and_then(|t| t.widget.as_ref())
+                .and_then(|t| {
+                    crate::ported::zle::zle_thingy::thingytab()
+                        .lock()
+                        .ok()
+                        .and_then(|tab| tab.get(&t.nam).and_then(|n| n.widget.clone()))
+                        .or_else(|| t.widget.clone())
+                })
                 .map(|w| (w.flags & crate::ported::zle::zle_h::WIDGET_NCOMP) != 0)
                 .unwrap_or(false);
             if ncomp {
