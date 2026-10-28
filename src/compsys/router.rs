@@ -617,6 +617,8 @@ fn rust_compsys_lookup(name: &str) -> Option<fn(&[String]) -> i32> {
         "_module_math_func" => Some(|_: &[String]| _module_math_func::_module_math_func()),
         "_most_recent_file" => Some(|_: &[String]| _most_recent_file::_most_recent_file()),
         "_next_tags" => Some(|_: &[String]| _next_tags::_next_tags()),
+        "_next_tags_completer" => Some(|_: &[String]| _next_tags::_next_tags_completer()),
+        "_next_tags_pre" => Some(|_: &[String]| _next_tags::_next_tags_pre()),
         "_nothing" => Some(|_: &[String]| _nothing::_nothing()),
         "_oldlist" => Some(|_: &[String]| _oldlist::_oldlist()),
         "_parameter" => Some(|_: &[String]| _parameter::_parameter()),

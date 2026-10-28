@@ -336,9 +336,13 @@ pub fn _all_labels_impl(args: &[String]) -> i32 {
         //   that the `_next_tags` widget installs via
         //   `unfunction _all_labels; _all_labels() { … }` at sh:10-82 — a
         //   Rust port can't inject a shell-function body, so it consults
-        //   `$_next_tags_not` directly instead. Empty `_next_tags_not`
-        //   makes this a no-op, matching the unshadowed body exactly.
-        if spec_in_not_list(&spec, &getsparam("_next_tags_not").unwrap_or_default()) {
+        //   `$_next_tags_not` directly instead. Outside the widget's
+        //   shadow window (`label_shadow_active()`, cleared by
+        //   `_next_tags_pre` sh:134-135) or with an empty `_next_tags_not`
+        //   this is a no-op, matching the unshadowed body exactly.
+        if crate::compsys::ported::_next_tags::label_shadow_active()
+            && spec_in_not_list(&spec, &getsparam("_next_tags_not").unwrap_or_default())
+        {
             continue;
         }
         let mut comp_tags = getsparam("_comp_tags").unwrap_or_default();

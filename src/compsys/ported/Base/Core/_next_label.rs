@@ -176,9 +176,10 @@ pub fn _next_label_impl(args: &[String]) -> i32 {
     //   port can't inject a shell-function body, so it consults
     //   `$_next_tags_not` directly instead. The sh `continue` (inside the
     //   caller's `while`) is expressed here by recursing to advance to the
-    //   next spec, preserving the 0/1 return contract. Empty
-    //   `_next_tags_not` makes this branch dead, matching the unshadowed
-    //   body exactly.
+    //   next spec, preserving the 0/1 return contract. The branch is dead
+    //   unless `label_shadow_active()` (the widget ran and `_next_tags_pre`
+    //   has not restored the stock body yet) and `_next_tags_not` is
+    //   non-empty, matching the unshadowed body exactly.
     //
     //   DELIBERATELY the raw body `_next_label_impl`, NOT the dispatching
     //   `_next_label`. This recursion stands in for sh `continue`, which is
@@ -192,7 +193,9 @@ pub fn _next_label_impl(args: &[String]) -> i32 {
     //   `_next_label` (a user's own copy would be running its own body here,
     //   not this port), so a by-name re-entry could only land back on this
     //   same fn.
-    if spec_in_not_list(&spec, &getsparam("_next_tags_not").unwrap_or_default()) {
+    if crate::compsys::ported::_next_tags::label_shadow_active()
+        && spec_in_not_list(&spec, &getsparam("_next_tags_not").unwrap_or_default())
+    {
         return _next_label_impl(args);
     }
     let mut comp_tags = getsparam("_comp_tags").unwrap_or_default();

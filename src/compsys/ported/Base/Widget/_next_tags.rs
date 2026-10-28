@@ -63,6 +63,7 @@ use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getaparam, gethkparam, gethparam, getsparam, setaparam, setsparam};
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{options, MAX_OPS};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 fn make_ops() -> options {
     options {
@@ -97,8 +98,10 @@ pub fn _next_tags() -> i32 {
     //   _next_label as $_next_tags_not-filtering versions. We can't inject
     //   a shell-function body from Rust, so the Base/Core ports read
     //   $_next_tags_not natively instead (their `spec_in_not_list` helper,
-    //   sh:39 / sh:66). Here we just keep $_next_tags_not accurate below
-    //   (sh:95) so those ports have the list to consult.
+    //   sh:39 / sh:66), gated on LABEL_SHADOW — the stand-in for "the
+    //   redefined bodies are the ones defined now". _next_tags_pre's
+    //   `unfunction` + `autoload -Uz` (sh:134-135) clears it again.
+    LABEL_SHADOW.store(true, Ordering::Relaxed);
 
     // sh:84  if [[ "${LBUFFER%${PREFIX}}" = "$_next_tags_pre" ]]; then
     let lbuffer = getsparam("LBUFFER").unwrap_or_default();
@@ -178,6 +181,90 @@ pub fn _next_tags() -> i32 {
     ret
 }
 
+/// True while the `_next_tags` widget's redefined `_all_labels` /
+/// `_next_label` bodies (sh:12-82) would be the defined ones: set when the
+/// widget runs (sh:10), cleared when `_next_tags_pre` restores the stock
+/// functions (sh:134-135). The Base/Core ports skip a `$_next_tags_not` spec
+/// only while this holds — the stock bodies have no such filter, so a
+/// leftover `$_next_tags_not` must not hide tags from a later plain TAB.
+static LABEL_SHADOW: AtomicBool = AtomicBool::new(false);
+
+/// Whether the `$_next_tags_not` filter of the redefined label functions
+/// (sh:39 / sh:66) is live. See [`LABEL_SHADOW`].
+pub fn label_shadow_active() -> bool {
+    LABEL_SHADOW.load(Ordering::Relaxed)
+}
+
+/// `_next_tags_completer` — sh:115-120, the wrap-around completer the widget
+/// hands `_main_complete` after `_complete` (sh:101):
+///
+/// ```text
+/// _next_tags_completer() {
+///   _next_tags_not=
+///
+///   _complete
+/// }
+/// ```
+///
+/// Defined by the same autoload file as the widget, so it has no file of its
+/// own on `$fpath`; without a port `_main_complete` reported `command not
+/// found: _next_tags_completer` on the cycle that wraps.
+pub fn _next_tags_completer() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_next_tags_completer");
+    // sh:116  _next_tags_not=
+    let _ = setsparam("_next_tags_not", "");
+    // sh:118  _complete
+    dispatch_function_call("_complete", &[]).unwrap_or(1)
+}
+
+/// `_next_tags_pre` — sh:124-139, the pre-completion hook the widget queues
+/// on `compprefuncs` (sh:110):
+///
+/// ```text
+/// _next_tags_pre() {
+///   if [[ -n $compstate[old_insert] && $WIDGET != _next_tags ]]; then
+///     compstate[old_list]=keep
+///     compstate[insert]=menu:2
+///     return 0
+///   elif [[ ${LBUFFER%${PREFIX}} != ${_next_tags_pre}* ]]; then
+///     unfunction _all_labels _next_label
+///     autoload -Uz _all_labels _next_label
+///   else
+///     compprefuncs+=( _next_tags_pre )
+///   fi
+/// }
+/// ```
+///
+/// Both parameter expansions sit in pattern position unquoted, and with
+/// `GLOB_SUBST` off their values match literally — hence the plain
+/// suffix-strip and prefix test.
+pub fn _next_tags_pre() -> i32 {
+    let _fn_scope = crate::compsys::ported::shared::FnScope::enter("_next_tags_pre");
+    let old_insert = getsparam("compstate[old_insert]").unwrap_or_default();
+    let widget = getsparam("WIDGET").unwrap_or_default();
+    // sh:130
+    if !old_insert.is_empty() && widget != "_next_tags" {
+        let _ = setsparam("compstate[old_list]", "keep"); // sh:131
+        let _ = setsparam("compstate[insert]", "menu:2"); // sh:132
+        return 0; // sh:133
+    }
+    let lbuffer = getsparam("LBUFFER").unwrap_or_default();
+    let prefix = getsparam("PREFIX").unwrap_or_default();
+    let lb_minus_pre = lbuffer.strip_suffix(prefix.as_str()).unwrap_or(&lbuffer);
+    let pre = getsparam("_next_tags_pre").unwrap_or_default();
+    if !lb_minus_pre.starts_with(pre.as_str()) {
+        // sh:134-136  unfunction _all_labels _next_label
+        //             autoload -Uz _all_labels _next_label
+        LABEL_SHADOW.store(false, Ordering::Relaxed);
+    } else {
+        // sh:137  compprefuncs+=( _next_tags_pre )
+        let mut cpf = getaparam("compprefuncs").unwrap_or_default();
+        cpf.push("_next_tags_pre".to_string());
+        setaparam("compprefuncs", cpf);
+    }
+    0
+}
+
 /// sh:89 pattern `(_next_tags|list-*|*complete*)`: exactly `_next_tags`,
 /// or starts with `list-`, or contains `complete`.
 fn lastwidget_matches(w: &str) -> bool {
@@ -235,6 +322,49 @@ mod tests {
             cpf.iter().any(|f| f == "_next_tags_pre"),
             "compprefuncs must contain _next_tags_pre, got {cpf:?}"
         );
+    }
+
+    // sh:10 / sh:134-137 — the widget switches the `$_next_tags_not` label
+    // filter on; `_next_tags_pre` keeps it (and re-queues itself) while the
+    // word before PREFIX still starts with `$_next_tags_pre`, and switches it
+    // off — the `unfunction` + `autoload -Uz` restore of the stock bodies —
+    // once the line has moved on. Without the off-switch a leftover
+    // `$_next_tags_not` hid tags from every later plain TAB.
+    #[test]
+    fn pre_hook_keeps_then_restores_label_shadow() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = setsparam("PREFIX", "");
+        let _ = setsparam("SUFFIX", "");
+        let _ = setsparam("LBUFFER", "ls ");
+        let _ = setsparam("WIDGET", "complete-word");
+        let _ = setsparam("compstate[old_insert]", "");
+        let _ = _next_tags();
+        assert!(label_shadow_active(), "the widget must install the filtering label bodies");
+
+        let _ = setsparam("_next_tags_pre", "ls ");
+        let _ = setsparam("LBUFFER", "ls x");
+        let _ = setsparam("PREFIX", "x");
+        setaparam("compprefuncs", Vec::new());
+        assert_eq!(_next_tags_pre(), 0);
+        assert!(label_shadow_active(), "same word: the shadow stays");
+        assert_eq!(getaparam("compprefuncs").unwrap_or_default(), vec!["_next_tags_pre".to_string()]);
+
+        let _ = setsparam("LBUFFER", "cat ");
+        let _ = setsparam("PREFIX", "");
+        setaparam("compprefuncs", Vec::new());
+        assert_eq!(_next_tags_pre(), 0);
+        assert!(!label_shadow_active(), "a new word restores the stock label bodies");
+        assert!(getaparam("compprefuncs").unwrap_or_default().is_empty());
+    }
+
+    // sh:116 — the wrap-around completer empties the not-list before
+    // re-running `_complete`, so the cycle starts over at the first tag set.
+    #[test]
+    fn completer_resets_not_list() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = setsparam("_next_tags_not", " aaa  bbb ");
+        let _ = _next_tags_completer();
+        assert_eq!(getsparam("_next_tags_not").unwrap_or_default(), "");
     }
 
     #[test]
