@@ -34,7 +34,7 @@ use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
 use crate::ported::subst::filesubstr;
 use crate::ported::utils::{errflag, quotestring};
 use crate::ported::zle::complete::bin_compadd;
-use crate::ported::zsh_h::{options, ERRFLAG_ERROR, MAX_OPS, QT_BACKSLASH};
+use crate::ported::zsh_h::{options, ERRFLAG_ERROR, MAX_OPS, QT_BACKSLASH_SHOWNULL};
 use std::sync::atomic::Ordering;
 
 fn make_ops() -> options {
@@ -94,15 +94,23 @@ pub fn _most_recent_file() -> i32 {
             .iter()
             .map(|f| {
                 let rest = f.strip_prefix(etilde.as_str()).unwrap_or(f);
-                format!("{tilde}{}", quotestring(rest, QT_BACKSLASH))
+                // sh:19 `${(q)^file}` — `^` keeps an empty array empty
+                //   (c:3910 `!plan9`), each element is SHOWNULL-quoted.
+                format!("{tilde}{}", quotestring(rest, QT_BACKSLASH_SHOWNULL))
             })
             .collect()
     } else {
-        // sh:21-22 — `file=(${(q)file})`
-        eval_glob(&prefix, &suffix, 21)
-            .iter()
-            .map(|f| quotestring(f, QT_BACKSLASH))
-            .collect()
+        // sh:21-22 — `file=(${(q)file})`. (q) quotes with
+        //   QT_BACKSLASH_SHOWNULL (Src/subst.c:4111 / 4153), and an EMPTY
+        //   array without `^` is first turned into the scalar "" (c:3910-3912),
+        //   so a glob that matched nothing leaves one word `''` — which sh:24
+        //   then adds as the match (zsh puts `''` on the line).
+        let globbed = eval_glob(&prefix, &suffix, 21);
+        if globbed.is_empty() {
+            vec![quotestring("", QT_BACKSLASH_SHOWNULL)]
+        } else {
+            globbed.iter().map(|f| quotestring(f, QT_BACKSLASH_SHOWNULL)).collect()
+        }
     };
     setaparam("file", file.clone());
 
