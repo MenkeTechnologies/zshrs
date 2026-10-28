@@ -914,8 +914,13 @@ pub fn zwcwidth(wc: char) -> usize {
         // c:738
         return 1; // c:739
     }
-    // c:740-744 — WCWIDTH(wc); negative result → width 1.
-    unicode_width::UnicodeWidthChar::width(wc).unwrap_or(1) // c:740-744
+    // c:740 — `wcw = WCWIDTH(wc);`
+    let wcw = crate::ported::zsh_h::WCWIDTH(wc);
+    // c:742-743 — "if not printable, assume width 1".
+    if wcw < 0 {
+        return 1;
+    }
+    wcw as usize // c:744
 }
 
 /// Port of `pathprog()` from `Src/utils.c:761` — C decl `pathprog(char *prog, char **namep)`.
@@ -8714,33 +8719,16 @@ pub fn mb_metastrlenend(ptr: &str, width: i32, eptr: usize) -> usize {
                 num += 1;
             } else if width != 0 {
                 // c:5715-5726 — WCWIDTH(wc); C turns "not printable" (-1)
-                // into 0 and adds nothing. WCWIDTH is u9_wcwidth in a
-                // --enable-unicode9 build (Src/zsh.h:3302).
-                // On macOS `wchar_t` is the locale's own encoding, not Unicode,
-                // outside a UTF-8 locale (a GB2312 `日` is not U+65E5), so the
-                // Unicode width table cannot be applied to it; ask libc, as a
-                // non-unicode9 zsh build does.
-                #[cfg(target_vendor = "apple")]
-                let utf8_codeset = unsafe {
-                    let cs = libc::nl_langinfo(libc::CODESET);
-                    !cs.is_null() && {
-                        let cs = std::ffi::CStr::from_ptr(cs).to_string_lossy();
-                        cs.eq_ignore_ascii_case("UTF-8") || cs.eq_ignore_ascii_case("utf8")
-                    }
-                };
-                // glibc and musl `wchar_t` is UCS-4 in every locale.
-                #[cfg(not(target_vendor = "apple"))]
-                let utf8_codeset = true;
-                let wcw = if utf8_codeset {
-                    char::from_u32(wc as u32).map_or(-1, crate::ported::compat::u9_wcwidth)
-                } else {
-                    extern "C" {
-                        fn wcwidth(c: libc::wchar_t) -> libc::c_int;
-                    }
-                    unsafe { wcwidth(wc) }
-                };
-                #[cfg(not(target_vendor = "apple"))]
-                let wcw = char::from_u32(wc as u32).map_or(-1, crate::ported::compat::u9_wcwidth);
+                // into 0 and adds nothing. WCWIDTH is u9_wcwidth in the
+                // reference --enable-unicode9 build (Src/zsh.h:3302), and it
+                // is handed the raw `wchar_t` whatever the locale. On macOS
+                // that is the locale's own code outside UTF-8, still looked
+                // up in the Unicode 9 table: GB2312 `\xa5\xa1` (katakana ァ)
+                // decodes to 0xA5A1, a one-column Vai letter to that table,
+                // and zsh answers `${(m)#x}` = 1 where libc `wcwidth(3)`
+                // answers 2; the UTF-8 bytes of `日本語` under ja_JP.eucJP
+                // are 6 columns in zsh and were 3 here through libc.
+                let wcw = crate::ported::compat::u9_wcwidth(wc as u32);
                 if wcw > 0 {
                     let wcw = wcw as usize;
                     // c:5722-5725 — `width == 1` adds the glyph's COLUMNS,

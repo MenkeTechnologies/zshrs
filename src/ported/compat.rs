@@ -496,21 +496,79 @@ pub fn output64(val: i64) -> String {
 }
 
 /// Get the column width of a Unicode character.
-/// Port of `u9_wcwidth(wchar_t ucs)` from Src/compat.c:760 — the C source
-/// ships its own Unicode 9 u9_wcwidth fallback because system
-/// `u9_wcwidth(3)` data ages with libc. Rust uses the
-/// `unicode-width` crate which tracks the latest UCD.
-pub fn u9_wcwidth(ucs: char) -> i32 {
+/// Port of `u9_wcwidth(wchar_t ucs)` from Src/compat.c:760.
+///
+/// `WCWIDTH` is this function in any build configured `--enable-unicode9`
+/// (`Src/zsh.h:3302`), which the reference build is (homebrew-core
+/// Formula/z/zsh.rb `--enable-unicode9`). Its answer is the Unicode 9 table
+/// zsh ships in `Src/wcwidth9.h`, NOT the system `wcwidth(3)` and NOT a newer
+/// UCD: the previous body asked the `unicode-width` crate, which disagrees
+/// with that table wherever Unicode moved on after 9.0 —
+///
+/// ```text
+///     ${(m)#x} of U+1F3F4 + five tag chars (U+E0067 ...), en_US.UTF-8
+///       zsh  : 8   (tags are in no wcwidth9 table: default width 1)
+///       zshrs: 2   (unicode-width: tags are zero-width)
+/// ```
+///
+/// `ucs` is an `int`-valued `wchar_t` in C, and on macOS outside a UTF-8
+/// locale it is the LOCALE's code (a `ja_JP.eucJP` pair `\xe6\x97` decodes
+/// to 0xE697), which zsh still runs through the same Unicode table. So the
+/// argument is the raw `u32`; a value no Rust `char` spells (a surrogate,
+/// or above U+10FFFF) is answered exactly as C answers it.
+pub fn u9_wcwidth(ucs: u32) -> i32 {
     // ucs:760
-    // c:762 `wcwidth9(ucs)` is -1 for exactly the nonprint and not_assigned
-    // tables (Src/wcwidth9.h:1294-1304), i.e. wherever u9_iswprint is false:
-    // `unicode-width` gives an unassigned U+0378 or U+FFFF one column.
-    if !u9_iswprint(ucs) {
-        return -1;
+    // c:762 — `int w = wcwidth9(ucs);`. `wcwidth9` (Src/wcwidth9.h:1286-1323)
+    // is a `static inline` in a header, so it has no entry in the C-name
+    // index build.rs enforces; its body is inlined here, its only caller.
+    let c = ucs;
+    // c:1262-1284 — `wcwidth9_intable()`: binary search over a sorted,
+    // non-overlapping interval table, after C's O(1) `c < table[0].first`
+    // guard (c:1264-1266).
+    let wcwidth9_intable = |table: &[(u32, u32)]| {
+        if table.first().is_none_or(|&(first, _)| c < first) {
+            return false; // c:1265
+        }
+        table
+            .binary_search_by(|&(first, last)| {
+                if last < c {
+                    Ordering::Less // c:1273-1274 `bot = mid + 1`
+                } else if first > c {
+                    Ordering::Greater // c:1275-1276 `top = mid - 1`
+                } else {
+                    Ordering::Equal // c:1277-1279 `return true`
+                }
+            })
+            .is_ok()
+    };
+    let w = if c == 0 {
+        0 // c:1287-1289
+    } else if c > 0x10ffff {
+        -1 // c:1290-1292 (`c < 0` is unrepresentable in a u32)
+    } else if wcwidth9_intable(WCWIDTH9_NONPRINT) || (0xd800..=0xdfff).contains(&c) {
+        // c:1294-1296. `{0xd800, 0xdfff}` (c:28) is not in the const table
+        // because no `char` spells it; it is tested here instead.
+        -1
+    } else if wcwidth9_intable(WCWIDTH9_COMBINING) {
+        0 // c:1298-1300
+    } else if wcwidth9_intable(WCWIDTH9_NOT_ASSIGNED) {
+        -1 // c:1302-1304
+    } else if wcwidth9_intable(WCWIDTH9_PRIVATE) {
+        -3 // c:1306-1308
+    } else if wcwidth9_intable(WCWIDTH9_AMBIGUOUS) {
+        -2 // c:1310-1312
+    } else if wcwidth9_intable(WCWIDTH9_DOUBLEWIDTH) {
+        2 // c:1314-1316
+    } else if wcwidth9_intable(WCWIDTH9_EMOJI_WIDTH) {
+        2 // c:1318-1320
+    } else {
+        1 // c:1322
+    };
+    // c:763-765 — private (-3) and ambiguous (-2) are one column.
+    if w < -1 {
+        return 1;
     }
-    unicode_width::UnicodeWidthChar::width(ucs)
-        .map(|w| w as i32)
-        .unwrap_or(if ucs.is_control() { -1 } else { 1 })
+    w
 }
 
 /// `wcwidth9_nonprint` from `Src/wcwidth9.h:18-32` — the intervals for which
@@ -1195,6 +1253,604 @@ const WCWIDTH9_NOT_ASSIGNED: &[(u32, u32)] = &[
     (0xffffe, 0xfffff), // c:1257
 ];
 
+/// `wcwidth9_private` from `Src/wcwidth9.h:12-16`.
+const WCWIDTH9_PRIVATE: &[(u32, u32)] = &[
+    (0xe000, 0xf8ff), // c:13
+    (0xf0000, 0xffffd), // c:14
+    (0x100000, 0x10fffd), // c:15
+];
+
+/// `wcwidth9_combining` from `Src/wcwidth9.h:34-285`.
+const WCWIDTH9_COMBINING: &[(u32, u32)] = &[
+    (0x0300, 0x036f), // c:35
+    (0x0483, 0x0489), // c:36
+    (0x0591, 0x05bd), // c:37
+    (0x05bf, 0x05bf), // c:38
+    (0x05c1, 0x05c2), // c:39
+    (0x05c4, 0x05c5), // c:40
+    (0x05c7, 0x05c7), // c:41
+    (0x0610, 0x061a), // c:42
+    (0x064b, 0x065f), // c:43
+    (0x0670, 0x0670), // c:44
+    (0x06d6, 0x06dc), // c:45
+    (0x06df, 0x06e4), // c:46
+    (0x06e7, 0x06e8), // c:47
+    (0x06ea, 0x06ed), // c:48
+    (0x0711, 0x0711), // c:49
+    (0x0730, 0x074a), // c:50
+    (0x07a6, 0x07b0), // c:51
+    (0x07eb, 0x07f3), // c:52
+    (0x0816, 0x0819), // c:53
+    (0x081b, 0x0823), // c:54
+    (0x0825, 0x0827), // c:55
+    (0x0829, 0x082d), // c:56
+    (0x0859, 0x085b), // c:57
+    (0x08d4, 0x08e1), // c:58
+    (0x08e3, 0x0903), // c:59
+    (0x093a, 0x093c), // c:60
+    (0x093e, 0x094f), // c:61
+    (0x0951, 0x0957), // c:62
+    (0x0962, 0x0963), // c:63
+    (0x0981, 0x0983), // c:64
+    (0x09bc, 0x09bc), // c:65
+    (0x09be, 0x09c4), // c:66
+    (0x09c7, 0x09c8), // c:67
+    (0x09cb, 0x09cd), // c:68
+    (0x09d7, 0x09d7), // c:69
+    (0x09e2, 0x09e3), // c:70
+    (0x0a01, 0x0a03), // c:71
+    (0x0a3c, 0x0a3c), // c:72
+    (0x0a3e, 0x0a42), // c:73
+    (0x0a47, 0x0a48), // c:74
+    (0x0a4b, 0x0a4d), // c:75
+    (0x0a51, 0x0a51), // c:76
+    (0x0a70, 0x0a71), // c:77
+    (0x0a75, 0x0a75), // c:78
+    (0x0a81, 0x0a83), // c:79
+    (0x0abc, 0x0abc), // c:80
+    (0x0abe, 0x0ac5), // c:81
+    (0x0ac7, 0x0ac9), // c:82
+    (0x0acb, 0x0acd), // c:83
+    (0x0ae2, 0x0ae3), // c:84
+    (0x0b01, 0x0b03), // c:85
+    (0x0b3c, 0x0b3c), // c:86
+    (0x0b3e, 0x0b44), // c:87
+    (0x0b47, 0x0b48), // c:88
+    (0x0b4b, 0x0b4d), // c:89
+    (0x0b56, 0x0b57), // c:90
+    (0x0b62, 0x0b63), // c:91
+    (0x0b82, 0x0b82), // c:92
+    (0x0bbe, 0x0bc2), // c:93
+    (0x0bc6, 0x0bc8), // c:94
+    (0x0bca, 0x0bcd), // c:95
+    (0x0bd7, 0x0bd7), // c:96
+    (0x0c00, 0x0c03), // c:97
+    (0x0c3e, 0x0c44), // c:98
+    (0x0c46, 0x0c48), // c:99
+    (0x0c4a, 0x0c4d), // c:100
+    (0x0c55, 0x0c56), // c:101
+    (0x0c62, 0x0c63), // c:102
+    (0x0c81, 0x0c83), // c:103
+    (0x0cbc, 0x0cbc), // c:104
+    (0x0cbe, 0x0cc4), // c:105
+    (0x0cc6, 0x0cc8), // c:106
+    (0x0cca, 0x0ccd), // c:107
+    (0x0cd5, 0x0cd6), // c:108
+    (0x0ce2, 0x0ce3), // c:109
+    (0x0d01, 0x0d03), // c:110
+    (0x0d3e, 0x0d44), // c:111
+    (0x0d46, 0x0d48), // c:112
+    (0x0d4a, 0x0d4d), // c:113
+    (0x0d57, 0x0d57), // c:114
+    (0x0d62, 0x0d63), // c:115
+    (0x0d82, 0x0d83), // c:116
+    (0x0dca, 0x0dca), // c:117
+    (0x0dcf, 0x0dd4), // c:118
+    (0x0dd6, 0x0dd6), // c:119
+    (0x0dd8, 0x0ddf), // c:120
+    (0x0df2, 0x0df3), // c:121
+    (0x0e31, 0x0e31), // c:122
+    (0x0e34, 0x0e3a), // c:123
+    (0x0e47, 0x0e4e), // c:124
+    (0x0eb1, 0x0eb1), // c:125
+    (0x0eb4, 0x0eb9), // c:126
+    (0x0ebb, 0x0ebc), // c:127
+    (0x0ec8, 0x0ecd), // c:128
+    (0x0f18, 0x0f19), // c:129
+    (0x0f35, 0x0f35), // c:130
+    (0x0f37, 0x0f37), // c:131
+    (0x0f39, 0x0f39), // c:132
+    (0x0f3e, 0x0f3f), // c:133
+    (0x0f71, 0x0f84), // c:134
+    (0x0f86, 0x0f87), // c:135
+    (0x0f8d, 0x0f97), // c:136
+    (0x0f99, 0x0fbc), // c:137
+    (0x0fc6, 0x0fc6), // c:138
+    (0x102b, 0x103e), // c:139
+    (0x1056, 0x1059), // c:140
+    (0x105e, 0x1060), // c:141
+    (0x1062, 0x1064), // c:142
+    (0x1067, 0x106d), // c:143
+    (0x1071, 0x1074), // c:144
+    (0x1082, 0x108d), // c:145
+    (0x108f, 0x108f), // c:146
+    (0x109a, 0x109d), // c:147
+    (0x135d, 0x135f), // c:148
+    (0x1712, 0x1714), // c:149
+    (0x1732, 0x1734), // c:150
+    (0x1752, 0x1753), // c:151
+    (0x1772, 0x1773), // c:152
+    (0x17b4, 0x17d3), // c:153
+    (0x17dd, 0x17dd), // c:154
+    (0x180b, 0x180d), // c:155
+    (0x1885, 0x1886), // c:156
+    (0x18a9, 0x18a9), // c:157
+    (0x1920, 0x192b), // c:158
+    (0x1930, 0x193b), // c:159
+    (0x1a17, 0x1a1b), // c:160
+    (0x1a55, 0x1a5e), // c:161
+    (0x1a60, 0x1a7c), // c:162
+    (0x1a7f, 0x1a7f), // c:163
+    (0x1ab0, 0x1abe), // c:164
+    (0x1b00, 0x1b04), // c:165
+    (0x1b34, 0x1b44), // c:166
+    (0x1b6b, 0x1b73), // c:167
+    (0x1b80, 0x1b82), // c:168
+    (0x1ba1, 0x1bad), // c:169
+    (0x1be6, 0x1bf3), // c:170
+    (0x1c24, 0x1c37), // c:171
+    (0x1cd0, 0x1cd2), // c:172
+    (0x1cd4, 0x1ce8), // c:173
+    (0x1ced, 0x1ced), // c:174
+    (0x1cf2, 0x1cf4), // c:175
+    (0x1cf8, 0x1cf9), // c:176
+    (0x1dc0, 0x1df5), // c:177
+    (0x1dfb, 0x1dff), // c:178
+    (0x20d0, 0x20f0), // c:179
+    (0x2cef, 0x2cf1), // c:180
+    (0x2d7f, 0x2d7f), // c:181
+    (0x2de0, 0x2dff), // c:182
+    (0x302a, 0x302f), // c:183
+    (0x3099, 0x309a), // c:184
+    (0xa66f, 0xa672), // c:185
+    (0xa674, 0xa67d), // c:186
+    (0xa69e, 0xa69f), // c:187
+    (0xa6f0, 0xa6f1), // c:188
+    (0xa802, 0xa802), // c:189
+    (0xa806, 0xa806), // c:190
+    (0xa80b, 0xa80b), // c:191
+    (0xa823, 0xa827), // c:192
+    (0xa880, 0xa881), // c:193
+    (0xa8b4, 0xa8c5), // c:194
+    (0xa8e0, 0xa8f1), // c:195
+    (0xa926, 0xa92d), // c:196
+    (0xa947, 0xa953), // c:197
+    (0xa980, 0xa983), // c:198
+    (0xa9b3, 0xa9c0), // c:199
+    (0xa9e5, 0xa9e5), // c:200
+    (0xaa29, 0xaa36), // c:201
+    (0xaa43, 0xaa43), // c:202
+    (0xaa4c, 0xaa4d), // c:203
+    (0xaa7b, 0xaa7d), // c:204
+    (0xaab0, 0xaab0), // c:205
+    (0xaab2, 0xaab4), // c:206
+    (0xaab7, 0xaab8), // c:207
+    (0xaabe, 0xaabf), // c:208
+    (0xaac1, 0xaac1), // c:209
+    (0xaaeb, 0xaaef), // c:210
+    (0xaaf5, 0xaaf6), // c:211
+    (0xabe3, 0xabea), // c:212
+    (0xabec, 0xabed), // c:213
+    (0xfb1e, 0xfb1e), // c:214
+    (0xfe00, 0xfe0f), // c:215
+    (0xfe20, 0xfe2f), // c:216
+    (0x101fd, 0x101fd), // c:217
+    (0x102e0, 0x102e0), // c:218
+    (0x10376, 0x1037a), // c:219
+    (0x10a01, 0x10a03), // c:220
+    (0x10a05, 0x10a06), // c:221
+    (0x10a0c, 0x10a0f), // c:222
+    (0x10a38, 0x10a3a), // c:223
+    (0x10a3f, 0x10a3f), // c:224
+    (0x10ae5, 0x10ae6), // c:225
+    (0x11000, 0x11002), // c:226
+    (0x11038, 0x11046), // c:227
+    (0x1107f, 0x11082), // c:228
+    (0x110b0, 0x110ba), // c:229
+    (0x11100, 0x11102), // c:230
+    (0x11127, 0x11134), // c:231
+    (0x11173, 0x11173), // c:232
+    (0x11180, 0x11182), // c:233
+    (0x111b3, 0x111c0), // c:234
+    (0x111ca, 0x111cc), // c:235
+    (0x1122c, 0x11237), // c:236
+    (0x1123e, 0x1123e), // c:237
+    (0x112df, 0x112ea), // c:238
+    (0x11300, 0x11303), // c:239
+    (0x1133c, 0x1133c), // c:240
+    (0x1133e, 0x11344), // c:241
+    (0x11347, 0x11348), // c:242
+    (0x1134b, 0x1134d), // c:243
+    (0x11357, 0x11357), // c:244
+    (0x11362, 0x11363), // c:245
+    (0x11366, 0x1136c), // c:246
+    (0x11370, 0x11374), // c:247
+    (0x11435, 0x11446), // c:248
+    (0x114b0, 0x114c3), // c:249
+    (0x115af, 0x115b5), // c:250
+    (0x115b8, 0x115c0), // c:251
+    (0x115dc, 0x115dd), // c:252
+    (0x11630, 0x11640), // c:253
+    (0x116ab, 0x116b7), // c:254
+    (0x1171d, 0x1172b), // c:255
+    (0x11c2f, 0x11c36), // c:256
+    (0x11c38, 0x11c3f), // c:257
+    (0x11c92, 0x11ca7), // c:258
+    (0x11ca9, 0x11cb6), // c:259
+    (0x16af0, 0x16af4), // c:260
+    (0x16b30, 0x16b36), // c:261
+    (0x16f51, 0x16f7e), // c:262
+    (0x16f8f, 0x16f92), // c:263
+    (0x1bc9d, 0x1bc9e), // c:264
+    (0x1d165, 0x1d169), // c:265
+    (0x1d16d, 0x1d172), // c:266
+    (0x1d17b, 0x1d182), // c:267
+    (0x1d185, 0x1d18b), // c:268
+    (0x1d1aa, 0x1d1ad), // c:269
+    (0x1d242, 0x1d244), // c:270
+    (0x1da00, 0x1da36), // c:271
+    (0x1da3b, 0x1da6c), // c:272
+    (0x1da75, 0x1da75), // c:273
+    (0x1da84, 0x1da84), // c:274
+    (0x1da9b, 0x1da9f), // c:275
+    (0x1daa1, 0x1daaf), // c:276
+    (0x1e000, 0x1e006), // c:277
+    (0x1e008, 0x1e018), // c:278
+    (0x1e01b, 0x1e021), // c:279
+    (0x1e023, 0x1e024), // c:280
+    (0x1e026, 0x1e02a), // c:281
+    (0x1e8d0, 0x1e8d6), // c:282
+    (0x1e944, 0x1e94a), // c:283
+    (0xe0100, 0xe01ef), // c:284
+];
+
+/// `wcwidth9_doublewidth` from `Src/wcwidth9.h:287-394`.
+const WCWIDTH9_DOUBLEWIDTH: &[(u32, u32)] = &[
+    (0x1100, 0x115f), // c:288
+    (0x231a, 0x231b), // c:289
+    (0x2329, 0x232a), // c:290
+    (0x23e9, 0x23ec), // c:291
+    (0x23f0, 0x23f0), // c:292
+    (0x23f3, 0x23f3), // c:293
+    (0x25fd, 0x25fe), // c:294
+    (0x2614, 0x2615), // c:295
+    (0x2648, 0x2653), // c:296
+    (0x267f, 0x267f), // c:297
+    (0x2693, 0x2693), // c:298
+    (0x26a1, 0x26a1), // c:299
+    (0x26aa, 0x26ab), // c:300
+    (0x26bd, 0x26be), // c:301
+    (0x26c4, 0x26c5), // c:302
+    (0x26ce, 0x26ce), // c:303
+    (0x26d4, 0x26d4), // c:304
+    (0x26ea, 0x26ea), // c:305
+    (0x26f2, 0x26f3), // c:306
+    (0x26f5, 0x26f5), // c:307
+    (0x26fa, 0x26fa), // c:308
+    (0x26fd, 0x26fd), // c:309
+    (0x2705, 0x2705), // c:310
+    (0x270a, 0x270b), // c:311
+    (0x2728, 0x2728), // c:312
+    (0x274c, 0x274c), // c:313
+    (0x274e, 0x274e), // c:314
+    (0x2753, 0x2755), // c:315
+    (0x2757, 0x2757), // c:316
+    (0x2795, 0x2797), // c:317
+    (0x27b0, 0x27b0), // c:318
+    (0x27bf, 0x27bf), // c:319
+    (0x2b1b, 0x2b1c), // c:320
+    (0x2b50, 0x2b50), // c:321
+    (0x2b55, 0x2b55), // c:322
+    (0x2e80, 0x2e99), // c:323
+    (0x2e9b, 0x2ef3), // c:324
+    (0x2f00, 0x2fd5), // c:325
+    (0x2ff0, 0x2ffb), // c:326
+    (0x3000, 0x303e), // c:327
+    (0x3041, 0x3096), // c:328
+    (0x3099, 0x30ff), // c:329
+    (0x3105, 0x312d), // c:330
+    (0x3131, 0x318e), // c:331
+    (0x3190, 0x31ba), // c:332
+    (0x31c0, 0x31e3), // c:333
+    (0x31f0, 0x321e), // c:334
+    (0x3220, 0x3247), // c:335
+    (0x3250, 0x32fe), // c:336
+    (0x3300, 0x4dbf), // c:337
+    (0x4e00, 0xa48c), // c:338
+    (0xa490, 0xa4c6), // c:339
+    (0xa960, 0xa97c), // c:340
+    (0xac00, 0xd7a3), // c:341
+    (0xf900, 0xfaff), // c:342
+    (0xfe10, 0xfe19), // c:343
+    (0xfe30, 0xfe52), // c:344
+    (0xfe54, 0xfe66), // c:345
+    (0xfe68, 0xfe6b), // c:346
+    (0xff01, 0xff60), // c:347
+    (0xffe0, 0xffe6), // c:348
+    (0x16fe0, 0x16fe0), // c:349
+    (0x17000, 0x187ec), // c:350
+    (0x18800, 0x18af2), // c:351
+    (0x1b000, 0x1b001), // c:352
+    (0x1f004, 0x1f004), // c:353
+    (0x1f0cf, 0x1f0cf), // c:354
+    (0x1f18e, 0x1f18e), // c:355
+    (0x1f191, 0x1f19a), // c:356
+    (0x1f200, 0x1f202), // c:357
+    (0x1f210, 0x1f23b), // c:358
+    (0x1f240, 0x1f248), // c:359
+    (0x1f250, 0x1f251), // c:360
+    (0x1f300, 0x1f320), // c:361
+    (0x1f32d, 0x1f335), // c:362
+    (0x1f337, 0x1f37c), // c:363
+    (0x1f37e, 0x1f393), // c:364
+    (0x1f3a0, 0x1f3ca), // c:365
+    (0x1f3cf, 0x1f3d3), // c:366
+    (0x1f3e0, 0x1f3f0), // c:367
+    (0x1f3f4, 0x1f3f4), // c:368
+    (0x1f3f8, 0x1f43e), // c:369
+    (0x1f440, 0x1f440), // c:370
+    (0x1f442, 0x1f4fc), // c:371
+    (0x1f4ff, 0x1f53d), // c:372
+    (0x1f54b, 0x1f54e), // c:373
+    (0x1f550, 0x1f567), // c:374
+    (0x1f57a, 0x1f57a), // c:375
+    (0x1f595, 0x1f596), // c:376
+    (0x1f5a4, 0x1f5a4), // c:377
+    (0x1f5fb, 0x1f64f), // c:378
+    (0x1f680, 0x1f6c5), // c:379
+    (0x1f6cc, 0x1f6cc), // c:380
+    (0x1f6d0, 0x1f6d2), // c:381
+    (0x1f6eb, 0x1f6ec), // c:382
+    (0x1f6f4, 0x1f6f6), // c:383
+    (0x1f910, 0x1f91e), // c:384
+    (0x1f920, 0x1f927), // c:385
+    (0x1f930, 0x1f930), // c:386
+    (0x1f933, 0x1f93e), // c:387
+    (0x1f940, 0x1f94b), // c:388
+    (0x1f950, 0x1f95e), // c:389
+    (0x1f980, 0x1f991), // c:390
+    (0x1f9c0, 0x1f9c0), // c:391
+    (0x20000, 0x2fffd), // c:392
+    (0x30000, 0x3fffd), // c:393
+];
+
+/// `wcwidth9_ambiguous` from `Src/wcwidth9.h:396-576`.
+const WCWIDTH9_AMBIGUOUS: &[(u32, u32)] = &[
+    (0x00a1, 0x00a1), // c:397
+    (0x00a4, 0x00a4), // c:398
+    (0x00a7, 0x00a8), // c:399
+    (0x00aa, 0x00aa), // c:400
+    (0x00ad, 0x00ae), // c:401
+    (0x00b0, 0x00b4), // c:402
+    (0x00b6, 0x00ba), // c:403
+    (0x00bc, 0x00bf), // c:404
+    (0x00c6, 0x00c6), // c:405
+    (0x00d0, 0x00d0), // c:406
+    (0x00d7, 0x00d8), // c:407
+    (0x00de, 0x00e1), // c:408
+    (0x00e6, 0x00e6), // c:409
+    (0x00e8, 0x00ea), // c:410
+    (0x00ec, 0x00ed), // c:411
+    (0x00f0, 0x00f0), // c:412
+    (0x00f2, 0x00f3), // c:413
+    (0x00f7, 0x00fa), // c:414
+    (0x00fc, 0x00fc), // c:415
+    (0x00fe, 0x00fe), // c:416
+    (0x0101, 0x0101), // c:417
+    (0x0111, 0x0111), // c:418
+    (0x0113, 0x0113), // c:419
+    (0x011b, 0x011b), // c:420
+    (0x0126, 0x0127), // c:421
+    (0x012b, 0x012b), // c:422
+    (0x0131, 0x0133), // c:423
+    (0x0138, 0x0138), // c:424
+    (0x013f, 0x0142), // c:425
+    (0x0144, 0x0144), // c:426
+    (0x0148, 0x014b), // c:427
+    (0x014d, 0x014d), // c:428
+    (0x0152, 0x0153), // c:429
+    (0x0166, 0x0167), // c:430
+    (0x016b, 0x016b), // c:431
+    (0x01ce, 0x01ce), // c:432
+    (0x01d0, 0x01d0), // c:433
+    (0x01d2, 0x01d2), // c:434
+    (0x01d4, 0x01d4), // c:435
+    (0x01d6, 0x01d6), // c:436
+    (0x01d8, 0x01d8), // c:437
+    (0x01da, 0x01da), // c:438
+    (0x01dc, 0x01dc), // c:439
+    (0x0251, 0x0251), // c:440
+    (0x0261, 0x0261), // c:441
+    (0x02c4, 0x02c4), // c:442
+    (0x02c7, 0x02c7), // c:443
+    (0x02c9, 0x02cb), // c:444
+    (0x02cd, 0x02cd), // c:445
+    (0x02d0, 0x02d0), // c:446
+    (0x02d8, 0x02db), // c:447
+    (0x02dd, 0x02dd), // c:448
+    (0x02df, 0x02df), // c:449
+    (0x0300, 0x036f), // c:450
+    (0x0391, 0x03a1), // c:451
+    (0x03a3, 0x03a9), // c:452
+    (0x03b1, 0x03c1), // c:453
+    (0x03c3, 0x03c9), // c:454
+    (0x0401, 0x0401), // c:455
+    (0x0410, 0x044f), // c:456
+    (0x0451, 0x0451), // c:457
+    (0x2010, 0x2010), // c:458
+    (0x2013, 0x2016), // c:459
+    (0x2018, 0x2019), // c:460
+    (0x201c, 0x201d), // c:461
+    (0x2020, 0x2022), // c:462
+    (0x2024, 0x2027), // c:463
+    (0x2030, 0x2030), // c:464
+    (0x2032, 0x2033), // c:465
+    (0x2035, 0x2035), // c:466
+    (0x203b, 0x203b), // c:467
+    (0x203e, 0x203e), // c:468
+    (0x2074, 0x2074), // c:469
+    (0x207f, 0x207f), // c:470
+    (0x2081, 0x2084), // c:471
+    (0x20ac, 0x20ac), // c:472
+    (0x2103, 0x2103), // c:473
+    (0x2105, 0x2105), // c:474
+    (0x2109, 0x2109), // c:475
+    (0x2113, 0x2113), // c:476
+    (0x2116, 0x2116), // c:477
+    (0x2121, 0x2122), // c:478
+    (0x2126, 0x2126), // c:479
+    (0x212b, 0x212b), // c:480
+    (0x2153, 0x2154), // c:481
+    (0x215b, 0x215e), // c:482
+    (0x2160, 0x216b), // c:483
+    (0x2170, 0x2179), // c:484
+    (0x2189, 0x2189), // c:485
+    (0x2190, 0x2199), // c:486
+    (0x21b8, 0x21b9), // c:487
+    (0x21d2, 0x21d2), // c:488
+    (0x21d4, 0x21d4), // c:489
+    (0x21e7, 0x21e7), // c:490
+    (0x2200, 0x2200), // c:491
+    (0x2202, 0x2203), // c:492
+    (0x2207, 0x2208), // c:493
+    (0x220b, 0x220b), // c:494
+    (0x220f, 0x220f), // c:495
+    (0x2211, 0x2211), // c:496
+    (0x2215, 0x2215), // c:497
+    (0x221a, 0x221a), // c:498
+    (0x221d, 0x2220), // c:499
+    (0x2223, 0x2223), // c:500
+    (0x2225, 0x2225), // c:501
+    (0x2227, 0x222c), // c:502
+    (0x222e, 0x222e), // c:503
+    (0x2234, 0x2237), // c:504
+    (0x223c, 0x223d), // c:505
+    (0x2248, 0x2248), // c:506
+    (0x224c, 0x224c), // c:507
+    (0x2252, 0x2252), // c:508
+    (0x2260, 0x2261), // c:509
+    (0x2264, 0x2267), // c:510
+    (0x226a, 0x226b), // c:511
+    (0x226e, 0x226f), // c:512
+    (0x2282, 0x2283), // c:513
+    (0x2286, 0x2287), // c:514
+    (0x2295, 0x2295), // c:515
+    (0x2299, 0x2299), // c:516
+    (0x22a5, 0x22a5), // c:517
+    (0x22bf, 0x22bf), // c:518
+    (0x2312, 0x2312), // c:519
+    (0x2460, 0x24e9), // c:520
+    (0x24eb, 0x254b), // c:521
+    (0x2550, 0x2573), // c:522
+    (0x2580, 0x258f), // c:523
+    (0x2592, 0x2595), // c:524
+    (0x25a0, 0x25a1), // c:525
+    (0x25a3, 0x25a9), // c:526
+    (0x25b2, 0x25b3), // c:527
+    (0x25b6, 0x25b7), // c:528
+    (0x25bc, 0x25bd), // c:529
+    (0x25c0, 0x25c1), // c:530
+    (0x25c6, 0x25c8), // c:531
+    (0x25cb, 0x25cb), // c:532
+    (0x25ce, 0x25d1), // c:533
+    (0x25e2, 0x25e5), // c:534
+    (0x25ef, 0x25ef), // c:535
+    (0x2605, 0x2606), // c:536
+    (0x2609, 0x2609), // c:537
+    (0x260e, 0x260f), // c:538
+    (0x261c, 0x261c), // c:539
+    (0x261e, 0x261e), // c:540
+    (0x2640, 0x2640), // c:541
+    (0x2642, 0x2642), // c:542
+    (0x2660, 0x2661), // c:543
+    (0x2663, 0x2665), // c:544
+    (0x2667, 0x266a), // c:545
+    (0x266c, 0x266d), // c:546
+    (0x266f, 0x266f), // c:547
+    (0x269e, 0x269f), // c:548
+    (0x26bf, 0x26bf), // c:549
+    (0x26c6, 0x26cd), // c:550
+    (0x26cf, 0x26d3), // c:551
+    (0x26d5, 0x26e1), // c:552
+    (0x26e3, 0x26e3), // c:553
+    (0x26e8, 0x26e9), // c:554
+    (0x26eb, 0x26f1), // c:555
+    (0x26f4, 0x26f4), // c:556
+    (0x26f6, 0x26f9), // c:557
+    (0x26fb, 0x26fc), // c:558
+    (0x26fe, 0x26ff), // c:559
+    (0x273d, 0x273d), // c:560
+    (0x2776, 0x277f), // c:561
+    (0x2b56, 0x2b59), // c:562
+    (0x3248, 0x324f), // c:563
+    (0xe000, 0xf8ff), // c:564
+    (0xfe00, 0xfe0f), // c:565
+    (0xfffd, 0xfffd), // c:566
+    (0x1f100, 0x1f10a), // c:567
+    (0x1f110, 0x1f12d), // c:568
+    (0x1f130, 0x1f169), // c:569
+    (0x1f170, 0x1f18d), // c:570
+    (0x1f18f, 0x1f190), // c:571
+    (0x1f19b, 0x1f1ac), // c:572
+    (0xe0100, 0xe01ef), // c:573
+    (0xf0000, 0xffffd), // c:574
+    (0x100000, 0x10fffd), // c:575
+];
+
+/// `wcwidth9_emoji_width` from `Src/wcwidth9.h:578-618`.
+const WCWIDTH9_EMOJI_WIDTH: &[(u32, u32)] = &[
+    (0x1f1e6, 0x1f1ff), // c:579
+    (0x1f321, 0x1f321), // c:580
+    (0x1f324, 0x1f32c), // c:581
+    (0x1f336, 0x1f336), // c:582
+    (0x1f37d, 0x1f37d), // c:583
+    (0x1f396, 0x1f397), // c:584
+    (0x1f399, 0x1f39b), // c:585
+    (0x1f39e, 0x1f39f), // c:586
+    (0x1f3cb, 0x1f3ce), // c:587
+    (0x1f3d4, 0x1f3df), // c:588
+    (0x1f3f3, 0x1f3f5), // c:589
+    (0x1f3f7, 0x1f3f7), // c:590
+    (0x1f43f, 0x1f43f), // c:591
+    (0x1f441, 0x1f441), // c:592
+    (0x1f4fd, 0x1f4fd), // c:593
+    (0x1f549, 0x1f54a), // c:594
+    (0x1f56f, 0x1f570), // c:595
+    (0x1f573, 0x1f579), // c:596
+    (0x1f587, 0x1f587), // c:597
+    (0x1f58a, 0x1f58d), // c:598
+    (0x1f590, 0x1f590), // c:599
+    (0x1f5a5, 0x1f5a5), // c:600
+    (0x1f5a8, 0x1f5a8), // c:601
+    (0x1f5b1, 0x1f5b2), // c:602
+    (0x1f5bc, 0x1f5bc), // c:603
+    (0x1f5c2, 0x1f5c4), // c:604
+    (0x1f5d1, 0x1f5d3), // c:605
+    (0x1f5dc, 0x1f5de), // c:606
+    (0x1f5e1, 0x1f5e1), // c:607
+    (0x1f5e3, 0x1f5e3), // c:608
+    (0x1f5e8, 0x1f5e8), // c:609
+    (0x1f5ef, 0x1f5ef), // c:610
+    (0x1f5f3, 0x1f5f3), // c:611
+    (0x1f5fa, 0x1f5fa), // c:612
+    (0x1f6cb, 0x1f6cf), // c:613
+    (0x1f6e0, 0x1f6e5), // c:614
+    (0x1f6e9, 0x1f6e9), // c:615
+    (0x1f6f0, 0x1f6f0), // c:616
+    (0x1f6f3, 0x1f6f3), // c:617
+];
+
+
 /// Check whether a wide character is printable.
 /// Port of `u9_iswprint(wint_t ucs)` from Src/compat.c:770.
 ///
@@ -1216,52 +1872,15 @@ const WCWIDTH9_NOT_ASSIGNED: &[(u32, u32)] = &[
 ///   zshrs: the raw bytes
 /// ```
 pub fn u9_iswprint(ucs: char) -> bool {
-    // c:772-773 — `if (ucs == 0) return 0;`. Subsumed by the {0,0x1f}
-    // interval below; kept explicit because C keeps it explicit.
+    // c:772-773 — `if (ucs == 0) return 0;`
     if ucs == '\0' {
         return false;
     }
-    // c:774 — `return wcwidth9(ucs) != -1;`. `wcwidth9` returns -1 from
-    // exactly two tables, tested in this order: c:1294-1296 (nonprint) and
-    // c:1302-1304 (not_assigned). The arms between and after them are all
-    // printable to C's `!= -1`: combining 0 (c:1298-1300), private -3
-    // (c:1306-1308), ambiguous -2 (c:1310-1312), doublewidth 2
-    // (c:1314-1316), emoji 2 (c:1318-1320), default 1 (c:1322). Combining is
-    // tested BEFORE not_assigned, but the two tables are disjoint, so the
-    // order is unobservable and the union below is exact.
-    let cp = ucs as u32;
-    // c:1262-1284 — `wcwidth9_intable()`: binary search over the sorted,
-    // non-overlapping interval table. Inlined as a closure because
-    // `wcwidth9_intable` is a `static inline` in a header and so has no entry
-    // in the C-name index build.rs enforces; build.rs's own remedy for that
-    // is "inline the body at every call site".
-    let wcwidth9_intable = |table: &[(u32, u32)]| {
-        // c:1264-1266 — `if (c < table[0].first) return false;`. C's O(1)
-        // guard ahead of the search, and NOT redundant with it: the port had
-        // dropped it, so every ASCII character ran the full binary search over
-        // `wcwidth9_not_assigned`'s 637 intervals (~10 unpredictable branches
-        // through a cold table) where C answers in ONE comparison, that table
-        // starting at U+0378. `quotestring` asks this per character of every
-        // candidate it quotes, so the missing guard showed up as the top
-        // non-idle leaf of a command-position completion profile.
-        if table.first().is_none_or(|&(first, _)| cp < first) {
-            return false; // c:1265
-        }
-        // c:1270-1281 — the bot/top/mid loop, expressed as the equivalent
-        // `binary_search_by`.
-        table
-            .binary_search_by(|&(first, last)| {
-                if last < cp {
-                    Ordering::Less // c:1273-1274 `bot = mid + 1`
-                } else if first > cp {
-                    Ordering::Greater // c:1275-1276 `top = mid - 1`
-                } else {
-                    Ordering::Equal // c:1277-1279 `return true`
-                }
-            })
-            .is_ok()
-    };
-    !(wcwidth9_intable(WCWIDTH9_NONPRINT) || wcwidth9_intable(WCWIDTH9_NOT_ASSIGNED))
+    // c:774 — `return wcwidth9(ucs) != -1;`. `u9_wcwidth` is `wcwidth9` with
+    // only its -2/-3 answers folded to 1 (c:763-764), so it is -1 exactly
+    // where `wcwidth9` is: the nonprint (c:1294-1296) and not_assigned
+    // (c:1302-1304) tables.
+    u9_wcwidth(ucs as u32) != -1
 }
 
 // `convbase` moved out — canonical port lives at
@@ -1536,9 +2155,9 @@ mod tests {
     #[test]
     fn test_wcwidth() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(u9_wcwidth('a'), 1);
-        assert_eq!(u9_wcwidth('中'), 2);
-        assert!(u9_wcwidth('\x00') <= 0);
+        assert_eq!(u9_wcwidth('a' as u32), 1);
+        assert_eq!(u9_wcwidth('中' as u32), 2);
+        assert!(u9_wcwidth('\x00' as u32) <= 0);
     }
 
     // ===== Tests for compat.c shim ports landed this session.
@@ -1781,21 +2400,57 @@ mod tests {
 
     /// `Src/compat.c:760-768` — `u9_wcwidth(ucs)` returns:
     /// `-1` for controls, `0` for combining/zero-width marks, `1` for
-    /// most chars, `2` for CJK/East-Asian-Wide. Rust delegates to the
-    /// `unicode-width` crate. Pin the four-tier output so a future
-    /// crate version mismatch surfaces.
+    /// most chars, `2` for CJK/East-Asian-Wide.
     #[test]
     fn u9_wcwidth_returns_canonical_widths() {
         let _g = crate::test_util::global_state_lock();
-        // -1 for controls (locked at c:766 `is_control` branch in Rust).
-        assert_eq!(u9_wcwidth('\x07'), -1);
+        // -1 for controls (c:19-20 wcwidth9_nonprint).
+        assert_eq!(u9_wcwidth('\x07' as u32), -1);
         // 1 for ordinary ASCII.
-        assert_eq!(u9_wcwidth('a'), 1);
-        assert_eq!(u9_wcwidth(' '), 1);
+        assert_eq!(u9_wcwidth('a' as u32), 1);
+        assert_eq!(u9_wcwidth(' ' as u32), 1);
         // 2 for CJK ideographs.
-        assert_eq!(u9_wcwidth('字'), 2);
+        assert_eq!(u9_wcwidth('字' as u32), 2);
         // 0 for combining marks (U+0301 COMBINING ACUTE ACCENT).
-        assert_eq!(u9_wcwidth('\u{0301}'), 0);
+        assert_eq!(u9_wcwidth('\u{0301}' as u32), 0);
+    }
+
+    /// `Src/compat.c:760-766` over `Src/wcwidth9.h:1286-1323`: every arm of
+    /// `wcwidth9` is the Unicode 9 table's answer, not a newer UCD's.
+    /// Each value was measured against `zsh 5.9.2` (homebrew, built
+    /// `--enable-unicode9`) as `${(m)#x}`:
+    ///
+    /// ```text
+    ///     U+1F3F4 + U+E0067 U+E0062 U+E0073 U+E0063 U+E0074 U+E007F
+    ///       (en_US.UTF-8)                     zsh 8   unicode-width 2
+    ///     GB2312 \xa5\xa1 -> wchar 0xA5A1     zsh 1   libc wcwidth 2
+    ///     GB2312 \xa4\xd0 -> wchar 0xA4D0     zsh 1   libc wcwidth 2
+    /// ```
+    #[test]
+    fn u9_wcwidth_follows_every_wcwidth9_table() {
+        // c:1322 default: tag characters are in no table, so one column each.
+        assert_eq!(u9_wcwidth(0x1f3f4), 2, "c:1314 doublewidth");
+        assert_eq!(u9_wcwidth(0xe0067), 1, "c:1322 default, not zero-width");
+        assert_eq!(u9_wcwidth(0xe007f), 1, "c:1322 default, not zero-width");
+        // c:1306-1308 private (-3) and c:1310-1312 ambiguous (-2) fold to 1.
+        assert_eq!(u9_wcwidth(0xe000), 1, "c:13 private");
+        assert_eq!(u9_wcwidth(0x100000), 1, "c:15 private");
+        assert_eq!(u9_wcwidth(0x00a1), 1, "ambiguous");
+        // c:1318-1320 emoji_width.
+        assert_eq!(u9_wcwidth(0x1f321), 2, "emoji_width");
+        // A locale wchar_t that is not Unicode is still looked up in the table.
+        assert_eq!(u9_wcwidth(0xa5a1), 1, "GB2312 katakana pair as a Vai code");
+        assert_eq!(u9_wcwidth(0xc4e3), 2, "GB2312 pair as a Hangul syllable");
+        // Values no `char` spells: a surrogate (c:28) and beyond U+10FFFF
+        // (c:1290-1292) are not printable.
+        assert_eq!(u9_wcwidth(0xd800), -1);
+        assert_eq!(u9_wcwidth(0x8fa1a1), -1, "EUC-JP three-byte code");
+        // c:1287-1289 — NUL is zero columns, and u9_iswprint still rejects it.
+        assert_eq!(u9_wcwidth(0), 0);
+        assert!(!u9_iswprint('\0'));
+        // u9_iswprint is `wcwidth9 != -1`: private and ambiguous are printable.
+        assert!(u9_iswprint('\u{e000}'));
+        assert!(u9_iswprint('\u{e0067}'));
     }
 
     /// `Src/compat.c:194` — `strerror(errnum)` returns a printable
@@ -2190,13 +2845,13 @@ mod tests {
     /// c:463 — `u9_wcwidth('a')` ASCII letter returns 1.
     #[test]
     fn u9_wcwidth_ascii_letter_returns_one() {
-        assert_eq!(u9_wcwidth('a'), 1, "ASCII letter width = 1");
+        assert_eq!(u9_wcwidth('a' as u32), 1, "ASCII letter width = 1");
     }
 
     /// c:463 — `u9_wcwidth` returns i32 (compile-time type pin).
     #[test]
     fn u9_wcwidth_returns_i32_type() {
-        let _: i32 = u9_wcwidth('a');
+        let _: i32 = u9_wcwidth('a' as u32);
     }
 
     /// c:472 — `u9_iswprint('a')` ASCII letter returns true.

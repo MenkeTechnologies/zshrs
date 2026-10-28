@@ -1480,7 +1480,7 @@ mod alignmultiword_tests {
             "setup precondition: isset(COMBININGCHARS) must be true"
         );
         assert_eq!(
-            crate::ported::compat::u9_wcwidth('\u{0303}'),
+            crate::ported::compat::u9_wcwidth(0x0303),
             0,
             "setup precondition: U+0303 must have width 0 for IS_COMBINING"
         );

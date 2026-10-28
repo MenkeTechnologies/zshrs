@@ -4873,32 +4873,30 @@ pub fn MB_CHARLENCONV(s: &[u8], len: usize) -> (usize, Option<char>) {
     }
 }
 
-/// Port of `WCWIDTH` from `Src/zsh.h:3300` — C macro `WCWIDTH(wc)`. Display width of a
-/// wide character: 0 for combining marks / control chars, 2 for
-/// CJK-wide / emoji, 1 otherwise.
+/// Port of `WCWIDTH` from `Src/zsh.h:3301-3305` — C macro `WCWIDTH(wc)`.
+/// Display width of a wide character: 0 for a combining mark, 2 for a
+/// double-width glyph, -1 for a character that is not printable, 1 otherwise.
 ///
-/// Delegates to the `unicode-width` crate (the same data path
-/// `crate::ported::compat::u9_wcwidth` uses) so combining-mark
-/// detection comes from the latest UCD. The previous inline
-/// CJK-only rule returned 1 for combining marks (e.g. U+0301
-/// combining-acute), which broke `IS_COMBINING(wc)` =
-/// `WCWIDTH(wc) == 0` and silently disabled every cluster-walk
-/// codepath that depended on it (alignmultiwordleft / right,
-/// inccs / deccs realign).
+/// ```text
+///     #ifdef ENABLE_UNICODE9
+///     #define WCWIDTH(wc)	u9_wcwidth(wc)
+///     #else
+///     #define WCWIDTH(wc)	wcwidth(wc)
+///     #endif
+/// ```
+///
+/// The reference build is configured `--enable-unicode9` (homebrew-core
+/// Formula/z/zsh.rb), so this is `u9_wcwidth`: zsh's own Unicode 9 table
+/// (`Src/wcwidth9.h`), not a newer UCD. Control characters are -1
+/// (`wcwidth9_nonprint`, Src/wcwidth9.h:19-20), not 0, so
+/// `IS_COMBINING('\n')` (c:3343, `WCWIDTH(wc) == 0`) stays false and a hard
+/// newline is never absorbed into the preceding character's combining
+/// cluster by the refresh build.
 #[inline]
 #[allow(non_snake_case)]
 pub fn WCWIDTH(wc: char) -> i32 {
-    // c:3300 — `#define WCWIDTH(wc) wcwidth(wc)`: control chars are -1
-    // per wcwidth(3), NOT 0. The previous 0 fallback made
-    // IS_COMBINING('\n') true (c:3343 gates on `WCWIDTH(wc) == 0`), so
-    // the refresh build's combining-cluster absorption swallowed hard
-    // newlines into the preceding char's cluster — a multiline BUFFER
-    // flattened to ONE video row, nextline never ran, and every later
-    // frame painted anchored rows below where VLN said (zsh-expand's
-    // multiline `i ` snippet scrambled the display on each keystroke).
-    unicode_width::UnicodeWidthChar::width(wc)
-        .map(|w| w as i32)
-        .unwrap_or_else(|| if wc.is_control() { -1 } else { 1 })
+    // c:3302
+    crate::ported::compat::u9_wcwidth(wc as u32)
 }
 
 /// Port of `WCWIDTH_WINT` from `Src/zsh.h:3311/3369` — C macro `WCWIDTH_WINT(wc)`.
