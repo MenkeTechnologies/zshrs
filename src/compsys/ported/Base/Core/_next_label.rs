@@ -233,10 +233,13 @@ pub fn _next_label_impl(args: &[String]) -> i32 {
             .map(|s| s.to_string())
             .unwrap_or_else(|| curtag.clone());
         let mut desc_argv = gopt.clone();
-        desc_argv.push(tag_lhs);
+        desc_argv.push(tag_lhs.clone());
         desc_argv.push(name.clone());
         desc_argv.push(descr);
         let _ = _description(&desc_argv);
+
+        // sh:15  curtag="${curtag%:*}"
+        let _ = setsparam("curtag", &tag_lhs);
 
         // sh:16  set -A $2 "${(P@)2}" "${(@)argv[4,-1]}"
         let mut prev = getaparam(&name).unwrap_or_default();

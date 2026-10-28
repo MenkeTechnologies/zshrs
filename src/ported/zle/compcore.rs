@@ -2797,7 +2797,7 @@ pub fn comp_quoting_string(stype: i32) -> &'static str {
 /// Port of `set_comp_sep()` from `Src/Zle/compcore.c:1460`.
 pub fn set_comp_sep() -> i32 {
     use crate::ported::lex::{
-        ctxtlex, noaliases, set_noaliases, set_tok, set_tokstr, tok, tokstr, untokenize,
+        ctxtlex, noaliases, set_noaliases, set_tok, set_tokstr, tok, tokstr, untokenize_ztokens,
         LEX_LEXFLAGS,
     };
     use crate::ported::string::{dupstring_wlen, tricat};
@@ -2909,7 +2909,7 @@ pub fn set_comp_sep() -> i32 {
         String::new()
     };
     WB.store(owb + lip, Ordering::Relaxed);
-    let s = untokenize(&s_after);
+    let s = untokenize_ztokens(&s_after);
     let s_b_full = to_sb(&s); // reconstructed arg, single-byte
 
     // c:1483-1488 — zle_save_positions / addedx / noerrs / zcontext / lexflags.
@@ -3135,8 +3135,14 @@ pub fn set_comp_sep() -> i32 {
     }
     OFFS.store(o_offs, Ordering::Relaxed);
 
-    // c:1735 — ts = untokenize(dupstring(ns)).
-    let ts_str = untokenize(&from_sb(&ns_b));
+    // c:1735 — ts = untokenize(dupstring(ns)). Every `untokenize` in this
+    // function is C's ztokens mapping (Src/exec.c untokenize): a lexed
+    // Snull/Dnull/Bnull comes back as the `'`/`"`/`\` the user typed, so an
+    // inner quote of the other kind (`'a"b c`, `"a 'b c`) or an escaped one
+    // (`"a\"b c`) stays in $PREFIX and $words. The substitution-stream
+    // `untokenize` strips those markers, which dropped the character and,
+    // for the ts copy, shifted the open-quote skip below onto real text.
+    let ts_str = untokenize_ztokens(&from_sb(&ns_b));
     let ts_b = to_sb(&ts_str);
 
     // c:1737-1772 — quote-form detection: instring / inbackt / autoq.
@@ -3319,12 +3325,12 @@ pub fn set_comp_sep() -> i32 {
 
     // c:1894-1907 — compprefix / compsuffix from ns around soffs.
     if !isset(COMPLETEINWORD) {
-        put(&COMPPREFIX, untokenize(&from_sb(&ns_final_b)));
+        put(&COMPPREFIX, untokenize_ztokens(&from_sb(&ns_final_b)));
         put(&COMPSUFFIX, String::new());
     } else {
         let so = (soffs.max(0) as usize).min(ns_final_b.len());
-        put(&COMPPREFIX, untokenize(&from_sb(&ns_final_b[..so])));
-        put(&COMPSUFFIX, untokenize(&from_sb(&ns_final_b[so..])));
+        put(&COMPPREFIX, untokenize_ztokens(&from_sb(&ns_final_b[..so])));
+        put(&COMPSUFFIX, untokenize_ztokens(&from_sb(&ns_final_b[so..])));
     }
     // c:1908-1910 — drop a dangling final backslash from compprefix.
     {
@@ -3356,7 +3362,7 @@ pub fn set_comp_sep() -> i32 {
 
     // c:1926-1934 — rebuild compwords / compcurrent from foo.
     {
-        let words: Vec<String> = foo.iter().map(|w| untokenize(w)).collect();
+        let words: Vec<String> = foo.iter().map(|w| untokenize_ztokens(w)).collect();
         let cnt = words.len() as i32;
         *COMPWORDS
             .get_or_init(|| Mutex::new(Vec::new()))
