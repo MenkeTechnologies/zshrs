@@ -1,0 +1,95 @@
+{
+ "schema": "compsys-fixture/2",
+ "id": "compadd_X_count_includes_all_match",
+ "title": "GUARD (fixed in 87a079a0a1) — was: the `<all>` match `compadd -C` adds after `addexpl(0)` was not counted on the listed `-X` explanation: `%n` one short, and with no words the explanation line vanished",
+ "harness": "compsys_spec_fuzz",
+ "run": {
+  "buffer": "fzxc a",
+  "keys": [
+   "ctrl-d"
+  ],
+  "flags": [],
+  "spec": {
+   "cmd": "fzxc",
+   "kind": "compadd",
+   "seed": 4000003,
+   "case": -1,
+   "widget": "default",
+   "setup": [
+    "bindkey '^I' complete-word"
+   ],
+   "completer": "#compdef fzxc\n\ncompadd -X 'ex n=%n' -C -- ab ac\n"
+  }
+ },
+ "expect": "agrees",
+ "group": "completer-machinery",
+ "fingerprint": null,
+ "observed": {
+  "verdict": "PASS",
+  "detail": "0 row(s) differ",
+  "notes": "Src/Zle/compcore.c addexpl c:3158 `addlinknode(expls, curexpl)` puts the curexpl OBJECT on the list, so the `curexpl->count++` of every later match (c:2062 addmatch, c:3018-3021 add_match_data) also counts on the listed entry. addmatches calls addexpl(0) at c:2609-2610 and only then adds `<all>` (c:2611-2613) and the -E dummies (c:2615-2616), so zsh lists `ex n=3` for two words plus `<all>`."
+ },
+ "observed_when_diverging": {
+  "verdict": "FAIL",
+  "category": "grid-diff",
+  "detail": "1 row(s) differ",
+  "rows": [
+   {
+    "row": 1,
+    "zsh": "ex n=3",
+    "zshrs": "ex n=2"
+   }
+  ],
+  "recorded_under": "main at 87c1835211 plus peer-lane uncommitted edits, target/debug/zshrs zshrs 0.13.56 (built 2026-10-28 02:10), scratch probe p136 under the command name fzl4p136"
+ },
+ "retired": {
+  "date": "2026-10-28",
+  "fix_commit": "87a079a0a1",
+  "why": "compcore.rs addexpl pushed a COPY of curexpl onto expls, so increments made after the push never reached the listed entry. CUREXPL_NODE now records which list entry is the curexpl object (set by the c:3158 push, cleared wherever curexpl is reassigned), and both count++ sites move it too."
+ },
+ "controls": [
+  {
+   "note": "no -C: every match is added before addexpl(0), so both shells list `ex n=2` whether or not the identity is kept",
+   "spec": {
+    "completer": "#compdef fzxc\n\ncompadd -X 'ex n=%n' -- ab ac\n"
+   }
+  }
+ ],
+ "variants": [
+  {
+   "note": "no words at all: zsh lists the explanation over the <all> match (count 1); zshrs listed nothing for it (count 0). Fuzz-found: compsys_spec_fuzz seed 4000003 case 88.",
+   "spec": {
+    "completer": "#compdef fzxc\n\ncompadd -X 'plain expl' -C --\ncompadd -U -Q -J _p -X 'pr' -- n:1\n"
+   },
+   "fingerprint": null
+  }
+ ],
+ "origin": [
+  "compsys_spec_fuzz --seed 4000003 --kind compadd --hostile --locale en_US.UTF-8,C.UTF-8 --cols auto, case0088 (shrunk to `compadd -X 'plain expl' -C --`)",
+  "lane-4 compadd probe p136 (the %n count form)"
+ ],
+ "confirmed": {
+  "date": "2026-10-28",
+  "commit": "87a079a0a1",
+  "harness_sha256_16": {
+   "scripts/compsys_spec_fuzz.py": "7c0a079a8ae27ee7",
+   "scripts/compsys_regressions.py": "619b844636a94cb7"
+  },
+  "zshrs_binary": {
+   "path": "target/debug/zshrs",
+   "size": 134011240,
+   "mtime": "2026-10-28 02:52",
+   "version": "zshrs 0.13.56",
+   "sha256_16": "a855495fab894a11",
+   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)"
+  },
+  "zsh_binary": {
+   "path": "/opt/homebrew/bin/zsh",
+   "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)"
+  },
+  "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "zshrs": "target/debug/zshrs zshrs 0.13.56 (134011240 bytes, 2026-10-28 02:52)",
+  "note": "PASS on the fixed binary for the fixture cell, its control and the variant"
+ },
+ "history": []
+}
