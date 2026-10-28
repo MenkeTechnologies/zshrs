@@ -25429,30 +25429,35 @@ mod tests {
     /// Empty input → empty output.
     #[test]
     fn fixdir_empty_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(fixdir_of("").0, "");
     }
 
     /// Root passes through.
     #[test]
     fn fixdir_root_passes_through() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(fixdir_of("/").0, "/");
     }
 
     /// `/.` → `/` (drop `.`).
     #[test]
     fn fixdir_root_dot_collapses_to_root() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(fixdir_of("/.").0, "/");
     }
 
     /// `/a/./b` → `/a/b` (drop intermediate `.`).
     #[test]
     fn fixdir_strips_dot_components() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(fixdir_of("/a/./b").0, "/a/b");
     }
 
     /// `/a/b/..` → `/a` (`..` pops).
     #[test]
     fn fixdir_dot_dot_pops_previous_component() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(fixdir_of("/usr/bin/.."), ("/usr".to_string(), 0));
         // c:1370-1374 — a missing directory before `..` stops the walk:
         // the rest stays as written and the result is 1.
@@ -25462,30 +25467,35 @@ mod tests {
     /// `/a/b/../c` → `/a/c` (pop then append).
     #[test]
     fn fixdir_dot_dot_then_continue() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(fixdir_of("/usr/bin/../lib"), ("/usr/lib".to_string(), 0));
     }
 
     /// `/..` → `/` (`..` past root silently drops).
     #[test]
     fn fixdir_dot_dot_past_root_drops() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(fixdir_of("/..").0, "/");
     }
 
     /// `/../..` → `/` (multiple `..` past root all drop).
     #[test]
     fn fixdir_multiple_dot_dot_past_root_drops() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(fixdir_of("/../..").0, "/");
     }
 
     /// `//a` → `/a` (collapse `//`).
     #[test]
     fn fixdir_collapses_double_slash() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(fixdir_of("//a").0, "/a");
     }
 
     /// `/a//b///c` → `/a/b/c` (collapse runs of slashes).
     #[test]
     fn fixdir_collapses_repeated_slashes() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(fixdir_of("/a//b///c").0, "/a/b/c");
     }
 
@@ -25493,18 +25503,21 @@ mod tests {
     /// `a/b/c` → `a/b/c` (no change).
     #[test]
     fn fixdir_relative_no_dots_unchanged() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(fixdir_of("a/b/c").0, "a/b/c");
     }
 
     /// `a/./b` → `a/b` (drop `.`).
     #[test]
     fn fixdir_relative_drops_dot() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(fixdir_of("a/./b").0, "a/b");
     }
 
     /// `a/b/..` → `a` — `..` pops.
     #[test]
     fn fixdir_relative_dot_dot_pops() {
+        let _g = crate::test_util::global_state_lock();
         // c:1360-1374 — relative `a/b` is stat()ed as written; it does not
         // exist here, so the path is left as written and the result is 1.
         assert_eq!(fixdir_of("no_such_rel_zshrs/b/.."), ("no_such_rel_zshrs/b/..".to_string(), 1));
@@ -25513,6 +25526,7 @@ mod tests {
     /// `..` (leading) → `..` — relative path keeps leading `..`.
     #[test]
     fn fixdir_leading_dot_dot_preserved_in_relative() {
+        let _g = crate::test_util::global_state_lock();
         // c:1360 — nothing before a leading `..` to pop; it is skipped.
         assert_eq!(fixdir_of("..").0, "");
     }
@@ -25520,12 +25534,14 @@ mod tests {
     /// `../..` (sticky `..`) — both preserved.
     #[test]
     fn fixdir_double_leading_dot_dot_both_preserved() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(fixdir_of("../..").0, "");
     }
 
     /// `../foo/..` → `..` (pop `foo`, leading `..` remains).
     #[test]
     fn fixdir_dot_dot_then_dir_then_dot_dot() {
+        let _g = crate::test_util::global_state_lock();
         // The leading `..` is skipped (c:1360); `foo` then fails stat()
         // (c:1370-1374), so `foo/..` stays as written.
         assert_eq!(fixdir_of("../no_such_rel_zshrs/.."), ("no_such_rel_zshrs/..".to_string(), 1));
@@ -25534,6 +25550,7 @@ mod tests {
     /// `.` alone → `.` (empty body → "." preserved for relative).
     #[test]
     fn fixdir_single_dot_returns_dot() {
+        let _g = crate::test_util::global_state_lock();
         // c:1385-1387 then c:1343-1349 — the `.` section is skipped and
         // nothing is left.
         assert_eq!(fixdir_of("."), (String::new(), 0));
@@ -25542,6 +25559,7 @@ mod tests {
     /// Trailing slash dropped (output never has trailing `/`).
     #[test]
     fn fixdir_trailing_slash_dropped() {
+        let _g = crate::test_util::global_state_lock();
         assert_eq!(fixdir_of("/a/b/").0, "/a/b");
         assert_eq!(fixdir_of("a/b/").0, "a/b");
     }
@@ -25961,12 +25979,14 @@ mod tests {
     /// c:1999 — `fixdir_of("").0` empty returns String (type pin).
     #[test]
     fn fixdir_empty_returns_string_type() {
+        let _g = crate::test_util::global_state_lock();
         let _: String = fixdir_of("").0;
     }
 
     /// c:1999 — `fixdir` is pure.
     #[test]
     fn fixdir_is_pure() {
+        let _g = crate::test_util::global_state_lock();
         for s in ["", "/abs", "rel", "./dot", "../parent", "a/b/c"] {
             let first = fixdir_of(s).0;
             for _ in 0..3 {
