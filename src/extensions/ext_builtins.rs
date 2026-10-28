@@ -3987,9 +3987,9 @@ fn sync_compsys_mirror(
     patcomps: Vec<(String, String)>,
     postpatcomps: Vec<(String, String)>,
 ) {
-    let _ = std::thread::Builder::new()
-        .name("compsys-mirror".into())
-        .spawn(move || {
+    let _ = crate::signal_thread::spawn_with(
+        std::thread::Builder::new().name("compsys-mirror".into()),
+        move || {
             let Ok(mut cache) =
                 crate::compsys::cache::CompsysCache::open(crate::compsys::cache::default_cache_path())
             else {
@@ -12237,7 +12237,7 @@ fn par_run_chunk(exe: &std::path::Path, template: &str, items: &[Vec<u8>]) -> (i
         feed.push(0);
     }
     let stdin = child.stdin.take();
-    let writer = std::thread::spawn(move || {
+    let writer = crate::signal_thread::spawn(move || {
         if let Some(mut stdin) = stdin {
             let _ = stdin.write_all(&feed);
         }

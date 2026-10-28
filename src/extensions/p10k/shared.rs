@@ -241,9 +241,9 @@ pub(crate) fn ttl_cached_bg(
                 .is_some();
             if claimed {
                 let owned = key.to_string();
-                let spawned = std::thread::Builder::new()
-                    .name("p10k-refresh".into())
-                    .spawn({
+                let spawned = crate::signal_thread::spawn_with(
+                    std::thread::Builder::new().name("p10k-refresh".into()),
+                    {
                         let owned = owned.clone();
                         move || {
                             let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run));

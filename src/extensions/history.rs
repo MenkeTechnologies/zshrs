@@ -701,9 +701,9 @@ fn history_writer() -> Option<&'static std::sync::Mutex<std::sync::mpsc::Sender<
         .get_or_init(|| {
             let engine = HistoryEngine::new().ok()?;
             let (tx, rx) = std::sync::mpsc::channel::<WriterJob>();
-            std::thread::Builder::new()
-                .name("history-writer".into())
-                .spawn(move || {
+            crate::signal_thread::spawn_with(
+                std::thread::Builder::new().name("history-writer".into()),
+                move || {
                     let mut pending: Option<(i64, std::time::Instant)> = None;
                     for job in rx {
                         match job {
