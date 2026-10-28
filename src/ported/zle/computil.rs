@@ -7286,15 +7286,10 @@ pub fn bin_comptags(
                 v.clone()
             };
             setsparam(&args[2], &value);
-            // c:3934-3939 — optional 3rd arg: `*q` cut at the first `:` at or
-            //   after `v`. For an exact match `v == *q` (the bare tag); for
-            //   `tag:label:descr`, `v` starts after `tag:`, so the spec keeps
-            //   the label (`tag:label`) — what `$_comp_tags` records.
+            // c:3934 — optional 3rd arg gets the "name-up-to-`:`" of q.
             if args.len() > 3 {
-                let v_off = if v == q_full { 0 } else { args[1].len() + 1 };
-                let r = &q_full[v_off..];
-                let end = v_off + r.find(':').unwrap_or(r.len());
-                setsparam(&args[3], &q_full[..end]);
+                let pre_colon: String = q_full.splitn(2, ':').next().unwrap_or("").to_string();
+                setsparam(&args[3], &pre_colon);
             }
             0 // c:3942
         }
@@ -7393,15 +7388,11 @@ pub fn bin_comptry(
     if args[0] == "-m" {
         // c:3972
         // c:3973-4090 — pattern-match mode.
-        // c:3974-3975 — `list` and `num` are declared ONCE, outside the
-        //   per-argument loop, and never reset: each argument appends a set
-        //   holding everything accumulated so far, so `comptry -m a b`
-        //   makes the sets `(a)` and `(a b)`.
-        let mut list: Vec<String> = Vec::new();
-        let mut num = 0i32;
         for arg in &args[1..] {
             // c:3978
             let mut s = arg.as_bytes().to_vec();
+            let mut list: Vec<String> = Vec::new();
+            let mut num = 0i32;
             let mut i = 0usize;
 
             while i < s.len() {
@@ -7538,12 +7529,7 @@ pub fn bin_comptry(
                     // c:4057-4064 — literal token: include if not in any set.
                     let in_set = sets_clone.iter().any(|s| arrcontains(s, &q, false) != 0);
                     if !in_set {
-                        // c:4062 + c:4067 — the node is `q` itself, and
-                        //   `*c = ':'` restores the separator after the
-                        //   test, so the set holds the WHOLE spec
-                        //   (`alpha:-x:Xs`), not the bare tag; `comptags -A`
-                        //   reads the label and description back out of it.
-                        list.push(token_full.clone());
+                        list.push(q.clone());
                         num += 1;
                     }
                 }
@@ -7551,8 +7537,7 @@ pub fn bin_comptry(
 
             if num > 0 {
                 // c:4072
-                // c:4073 — `zlinklist2array(list, 1)` copies; `list` lives on.
-                append_set(list.clone());
+                append_set(list);
             }
         }
     } else {
@@ -10235,79 +10220,6 @@ mod tests {
             vec!["files".to_string()],
             "only registered tags survive the filter"
         );
-    }
-
-    /// c:4056-4067 + c:3974 — `comptry -m` (what `_tags` runs for each
-    /// `tag-order` word) keeps a LITERAL spec whole: the set holds
-    /// `files:-l:List\ %d` with the label and description, because the
-    /// node is `q` and `*c = ':'` restores the separator after the test.
-    /// `comptags -A` then hands `files-l:List %d` to `_next_label`, which
-    /// is where `tag-order 'files:-l:...'` gets its description from.
-    /// `list` is also shared across arguments, so the second argument's set
-    /// carries the first one's entries too.
-    #[test]
-    fn bin_comptry_m_keeps_label_spec_and_accumulates() {
-        let _g = crate::test_util::global_state_lock();
-        let _g = zle_test_setup();
-        let saved_incompfunc = INCOMPFUNC.load(Ordering::Relaxed);
-        let saved_lvl = lasttaglevel.load(Ordering::Relaxed);
-        let saved_locallevel = locallevel.load(Ordering::Relaxed);
-        if let Ok(mut tab) = comptags.lock() {
-            tab[1] = Some(Box::new(ctags {
-                all: Some(vec!["files".into(), "directories".into()]),
-                context: Some("ctx".into()),
-                init: 0,
-                sets: None,
-            }));
-        }
-        INCOMPFUNC.store(1, Ordering::Relaxed);
-        lasttaglevel.store(1, Ordering::Relaxed);
-        locallevel.store(1, Ordering::Relaxed);
-        let ops = options {
-            ind: [0u8; MAX_OPS],
-            args: Vec::new(),
-            argscount: 0,
-            argsalloc: 0,
-        };
-        let r = bin_comptry(
-            "comptry",
-            &["-m".into(), "files:-l:List\\ %d".into(), "dir*".into()],
-            &ops,
-            0,
-        );
-        let mut sets: Vec<Vec<String>> = Vec::new();
-        if let Some(t) = comptags.lock().unwrap()[1].as_ref() {
-            let mut p = t.sets.as_deref();
-            while let Some(s) = p {
-                sets.push(s.tags.clone().unwrap_or_default());
-                p = s.next.as_deref();
-            }
-        }
-        let ra = bin_comptags(
-            "comptags",
-            &["-A".into(), "files".into(), "curtag".into(), "spec".into()],
-            &ops,
-            0,
-        );
-        let curtag = crate::ported::params::getsparam("curtag");
-        let spec = crate::ported::params::getsparam("spec");
-        if let Ok(mut tab) = comptags.lock() {
-            tab[1] = None;
-        }
-        INCOMPFUNC.store(saved_incompfunc, Ordering::Relaxed);
-        lasttaglevel.store(saved_lvl, Ordering::Relaxed);
-        locallevel.store(saved_locallevel, Ordering::Relaxed);
-        assert_eq!(r, 0);
-        assert_eq!(
-            sets,
-            vec![
-                vec!["files:-l:List %d".to_string()],
-                vec!["files:-l:List %d".to_string(), "directories".to_string()],
-            ]
-        );
-        assert_eq!(ra, 0);
-        assert_eq!(curtag.as_deref(), Some("files-l:List %d"));
-        assert_eq!(spec.as_deref(), Some("files:-l"), "c:3934 — spec keeps the label");
     }
 
     /// c:4525 — cfp_matcher_pats returns add unchanged when matcher

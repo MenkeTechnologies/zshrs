@@ -379,14 +379,10 @@ pub fn _all_labels_impl(args: &[String]) -> i32 {
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| curtag.clone());
             let mut desc_argv = gopt.clone();
-            desc_argv.push(lhs.clone());
+            desc_argv.push(lhs);
             desc_argv.push(name.clone());
             desc_argv.push(descr);
             let _ = _description(&desc_argv);
-
-            // sh:33  curtag="${curtag%:*}" — the action sees the bare
-            //   `tag-label`, not the `:description` tail.
-            let _ = setsparam("curtag", &lhs);
 
             // sh:35  "$4" "${(P@)2}" "${(@)argv[5,-1]}" && ret=0
             //   $4 = argv[3] (0-based); extras = argv[4..].
