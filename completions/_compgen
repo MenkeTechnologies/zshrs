@@ -7,9 +7,8 @@
 # Parsers: builtin_compgen and builtin_complete in
 # src/extensions/ext_builtins.rs; keep in sync.
 #
-# compgen parses like bash getopt: letters cluster (`-fd`), a value is
-# glued or the next word, `--` ends options. complete matches whole words
-# only: every flag is its own word and a value is the NEXT word.
+# Both parse like bash getopt (bashgetopt.c): letters cluster (`-fd`), a
+# value is glued or the next word, `--` ends options.
 #
 # `complete` shares this file because a `_complete` file would shadow
 # compsys's own `_complete` completer.
@@ -53,27 +52,35 @@ case $service in
       ':prefix (keep candidates starting with it): ' && ret=0
     ;;
   complete)
-    # -r removes the specs of every following word and stops. -A takes an
-    # action by name; -o and -X take a value the spec does not store. Any
-    # other dash word is skipped; every non-dash word is a command the
-    # spec is stored for.
-    _arguments -C \
+    # getopt string "abcdefgjko:prsuvA:G:W:P:S:X:F:C:DEI" (complete.def
+    # build_actions); any other letter is an error. -p prints and -r
+    # removes the specs of the named commands. -D/-E/-I store the spec
+    # for the default, empty-line and initial-word cases instead of names.
+    _arguments -C -s \
       '-W[word list]:word list: ' \
       '-F[completion function]:function:->function' \
       '-C[command whose output supplies the words]:command:_command_names' \
       '-G[glob pattern]:glob pattern: ' \
       '-P[prefix added to each word]:prefix: ' \
       '-S[suffix added to each word]:suffix: ' \
+      '-X[filter pattern]:filter pattern: ' \
       '-a[action: alias names]' \
       '-b[action: builtin names]' \
       '-c[action: command names]' \
       '-d[action: directory names]' \
       '-e[action: exported variables]' \
       '-f[action: file names]' \
+      '-g[action: group names]' \
       '-j[action: job names]' \
-      '-A[action by name]:action:->action' \
-      '-o[bash comp-option (accepted and ignored)]:comp-option:->compopt' \
-      '-X[filter pattern (accepted and ignored)]:filter pattern: ' \
+      '-k[action: reserved words]' \
+      '-s[action: service names]' \
+      '-u[action: user names]' \
+      '-v[action: variable names]' \
+      '*-A[action by name]:action:->action' \
+      '*-o[bash comp-option]:comp-option:->compopt' \
+      '-D[spec for commands with no spec of their own]' \
+      '-E[spec for an empty command line]' \
+      '-I[spec for the initial (command) word]' \
       '(- *)-p[print the specs of the named commands, or all]:*:registered command:->registered' \
       '(- *)-r[remove the specs of the named commands]:*:registered command:->registered' \
       '*:command:_command_names' && ret=0
@@ -88,20 +95,22 @@ case $state in
     _wanted functions expl 'function' compadd -k functions && ret=0
     ;;
   action)
-    # The long names each parser maps -A onto (COMPGEN_ACTIONS for compgen;
-    # the a b c d e f j letters for complete).
+    # The long names each parser maps -A onto: COMPGEN_ACTIONS for compgen,
+    # every COMPACTS name (src/extensions/bash_complete.rs) for complete.
     local -a actions
-    actions=( alias builtin command directory export file job )
-    [[ $service == compgen ]] && actions+=(
-        arrayvar disabled enabled function group helptopic keyword
-        service setopt shopt signal user variable
+    actions=(
+        alias arrayvar builtin command directory disabled enabled export
+        file function group helptopic job keyword service setopt shopt
+        signal user variable
     )
+    [[ $service == complete ]] && actions+=( binding hostname running stopped )
     _wanted actions expl 'action' compadd -a actions && ret=0
     ;;
   compopt)
-    # The option names bash's compgen/complete -o accept.
+    # bash's COMPOPTS (bash_complete.rs); compgen rejects fullquote.
     local -a compopts
-    compopts=(
+    [[ $service == complete ]] && compopts=( 'fullquote:quote the whole word, not only the metacharacters' )
+    compopts+=(
       'bashdefault:fall back to the default bash completions'
       'default:fall back to readline default file completion'
       'dirnames:fall back to directory names'

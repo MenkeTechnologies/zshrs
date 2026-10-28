@@ -15,6 +15,7 @@ verbs=(
     'pull:print a subsystem'"'"'s canonical entries'
     'diff:compare a JSON overlay against the canonical entries'
     'watch:stream canonical changes for subsystems until Ctrl-C'
+    '-h:print usage'
     '--help:print usage'
 )
 subsystems=(

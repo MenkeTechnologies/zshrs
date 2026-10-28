@@ -1501,6 +1501,17 @@ pub fn cd_get(params: &[String]) -> i32 {
                     String::with_capacity((cd_pre + cd_premaxw + cd_swidth + 16) as usize);
                 // c:674 — write str.
                 buf.push_str(&str_s);
+                // c:675 `p += str->len;` — `len` is measured at c:540,
+                // BEFORE the `hide` strip at c:559-567 shortens `str`, so
+                // for a `prefix-hidden` option the cursor steps past the
+                // NUL `strcpy` wrote. Padding, separator and description
+                // all land after that NUL and `ztrdup(buf)` (c:718) keeps
+                // only the stripped name: zsh lists `--bb` as bare `bb`.
+                if (s.len.max(0) as usize) > str_s.len() {
+                    mats.push(s.r#match.clone().unwrap_or_default()); // c:673
+                    dpys.push(buf);
+                    return;
+                }
                 // c:676 — pad to premaxw + CM_SPACE.
                 let pad = (cd_premaxw - s.width + CM_SPACE).max(0) as usize;
                 for _ in 0..pad {

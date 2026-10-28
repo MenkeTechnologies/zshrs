@@ -25,6 +25,7 @@ verbs=(
     'kill:send a signal to a job (default TERM)'
     'cancel:TERM, wait --grace seconds, then KILL'
     'wait:block until a job finishes'
+    '-h:print usage'
     '--help:print usage'
 )
 

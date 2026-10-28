@@ -11,6 +11,7 @@
 # Bundled into ~/.zshrs/functions by build.rs.
 
 _arguments -C \
+    '--urgency[notification urgency (default normal)]:urgency:(low normal critical)' \
     '(1 --tag --user)--all[notify every shell]' \
     '(1 --all --user)--tag[notify the shells carrying a tag]:tag:->tags' \
     '(1 --all --tag)--user[notify the shells of a user]:user:_users' \

@@ -158,7 +158,10 @@ case $state in
                         '--additive[omit the wipe prefix]' \
                         '--out[write to a file]:output file:_files' \
                         '--include-sensitive[include files flagged sensitive]' \
-                        '--show-sensitive[print sensitive file contents]' && return 0
+                        '--show-sensitive[print sensitive file contents]' \
+                        '--filter[only rows matching a pattern]:pattern:' \
+                        '--range[row range]:range:' \
+                        '--all[include every row]' && return 0
                 fi
                 case $state in
                     target) _describe -t targets 'target' targets && return 0 ;;

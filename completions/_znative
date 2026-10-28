@@ -30,6 +30,8 @@ verbs=(
     'source:alias for load'
     'up:alias for update'
     'upgrade:alias for update'
+    '-h:alias for help'
+    '--help:alias for help'
 )
 
 _arguments -C \

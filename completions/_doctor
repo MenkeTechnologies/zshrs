@@ -3,8 +3,8 @@
 # Diagnostic report of shell health: environment, config, PATH, fpath,
 # caches, autoload coverage, daemon, memory.
 #
-# zshrs builtin. builtin_doctor (src/extensions/ext_builtins.rs) ignores
-# its arguments, so nothing is completed.
+# zshrs builtin. builtin_doctor (src/extensions/ext_builtins.rs) takes one
+# option, --json (the same report `zshrs --doctor --json` prints).
 # Bundled into ~/.zshrs/functions by build.rs.
 
-_message 'no arguments'
+_arguments '--json[print the report as one JSON object]'
