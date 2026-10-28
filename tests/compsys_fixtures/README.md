@@ -19,9 +19,9 @@ the two `NON_FIXTURE_FILES` in `scripts/compsys_regressions.py`):
 
 | | |
 | --- | --- |
-| fixtures pinned | 35 |
+| fixtures pinned | 36 |
 | `diverges` | 14 |
-| `agrees` — retired as guards | 20 |
+| `agrees` — retired as guards | 21 |
 | `reference-crash` | 1 |
 
 Re-derive it with `scripts/compsys_regressions.py --list`, which boots no
@@ -70,7 +70,7 @@ off `retired.fix_commit`:
 | `677af02625` | `compset_N_pattern_singsub`, `compset_N_empty_end_pattern` |
 | `7b6203cd17` | `next_tags_wraparound_completer` |
 
-Five `agrees` fixtures carry no `retired` block:
+Six `agrees` fixtures carry no `retired` block:
 
 * `multiline_backslash_continuation_cd`, `multiline_dquote_parameter_list`,
   `multiline_squote_corrections` — the fix commit, `96382cfb71`, is named
@@ -81,6 +81,11 @@ Five `agrees` fixtures carry no `retired` block:
 * `second_completion_module_builtin_command` — pinned after the fact; the
   fixture names no commit, and the commit that added it (`831d4082ac`)
   attributes the fix to `dd61c02640`.
+* `tag_order_label_description` — added as an `agrees` cell with the fix
+  to `comptry -m` / `comptags -A` / `_next_label` / `_all_labels` (the commit
+  that adds the fixture); no generated case reaches it, because the `tags`
+  kind never sets `tag-order`. Its `guard_verified` records the pre-fix build
+  it fails on.
 
 ## Running it
 
