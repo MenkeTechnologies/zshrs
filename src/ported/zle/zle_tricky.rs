@@ -2428,6 +2428,12 @@ pub fn get_comp_string() -> Option<String> {
         } else {
             wordpos - 1
         };
+        // c:1450-1451 — `zsfree(clwords[clwnum]); clwords[clwnum] = NULL;`.
+        // The NULL terminates every later walk of the array (compcore.c:641
+        // `for (p = clwords + aadd; *p; p++, q++)`), so words stored by an
+        // EARLIER command of the same line (`a b c; x`, `a b c|x`) and the
+        // dropped trailing word are not part of `$words`.
+        clwords.truncate(clwnum.max(0) as usize);
         t0 = tt0; // c:1452
                   // c:1453-1459 — array-assignment overrides lincmd/linredir.
         if ia != 0 {
@@ -6835,6 +6841,30 @@ mod tests {
             assert_eq!(got, words, "$words for {line:?}");
             assert_eq!(CLWPOS.load(Ordering::SeqCst), pos, "clwpos for {line:?}");
             assert_eq!(word.as_deref(), Some(cur), "cursor word for {line:?}");
+        }
+    }
+
+    /// c:1450-1451 — `clwords[clwnum] = NULL` ends `$words` at the current
+    /// command. A separator resets `wordpos` (c:1307) but leaves the earlier
+    /// command's longer tail in the array; zshrs published it, so
+    /// `fzc a b c|x` gave `words=(x a b c)` and `fzc a b c; fzc y x` gave
+    /// `words=(fzc y x c)` (compsys_spec_fuzz seed 7101 case 5).
+    #[test]
+    fn get_comp_string_words_stop_at_current_command() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let cases: &[(&str, &[&str], i32)] = &[
+            ("fzc a b c|x", &["x"], 0),
+            ("fzc a b c; x", &["x"], 0),
+            ("fzc a b c; fzc y x", &["fzc", "y", "x"], 2),
+            ("fzc a b c && fzc ", &["fzc", ""], 1),
+        ];
+        for &(line, words, pos) in cases {
+            seed_metaline(line, line.chars().count() as i32);
+            let _ = get_comp_string();
+            let got = CLWORDS.lock().unwrap().clone();
+            assert_eq!(got, words, "$words for {line:?}");
+            assert_eq!(CLWPOS.load(Ordering::SeqCst), pos, "clwpos for {line:?}");
         }
     }
 
