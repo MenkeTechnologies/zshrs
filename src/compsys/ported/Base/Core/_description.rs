@@ -610,11 +610,21 @@ pub fn _description_impl(args: &[String]) -> i32 {
     });
     setaparam(&name, final_arr);
 
-    // sh:106-121  fake / fake-always.
-    //   Our port skips the funcstack-recursion guard — `_describe`
-    //   here is dispatched via the exec hook, which returns None when
-    //   no executor is wired, so there's no recursion risk in the
-    //   stand-alone unit-test environment.
+    // sh:106  if ! (( ${funcstack[2,-1][(I)_description]} )); then
+    //   The fake / fake-always block runs `_describe`, which calls
+    //   `_description` again; without this guard that inner call would
+    //   add the fakes again and recurse until `comptags` reports
+    //   "nesting level too deep". `funcstack[1]` is this call's own
+    //   `doshfunc` frame, so only the outer frames are searched.
+    let outer_description = crate::ported::modules::parameter::funcstackgetfn(std::ptr::null_mut())
+        .iter()
+        .skip(1)
+        .any(|f| f == "_description");
+    if outer_description {
+        return 0; // sh:123
+    }
+
+    // sh:107-121  fake / fake-always.
     if gname.is_empty() {
         gname = tag.clone();
     }

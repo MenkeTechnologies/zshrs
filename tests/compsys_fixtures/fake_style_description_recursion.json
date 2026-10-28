@@ -1,0 +1,77 @@
+{
+ "schema": "compsys-fixture/1",
+ "id": "fake_style_description_recursion",
+ "title": "GUARD — was: the `fake` / `fake-always` styles made _description recurse through _describe until `_tags:comptags: nesting level too deep`",
+ "harness": "compsys_spec_fuzz",
+ "run": {
+  "buffer": "fzc6000 ",
+  "keys": [
+   "tab"
+  ],
+  "flags": [],
+  "spec": {
+   "cmd": "fzc6000",
+   "kind": "tags",
+   "seed": 6099000,
+   "case": 0,
+   "setup": [
+    "zstyle ':completion:*:descriptions' format '<%d>'",
+    "zstyle ':completion:*:beta' fake 'bfake:fake descr' 'bf2'",
+    "zstyle ':completion:*:beta' fake-always 'zall:always descr'",
+    "zstyle ':completion:*:beta' ignored-patterns 'a1'"
+   ],
+   "completer": "#compdef fzc6000\nlocal -a d=( 'a1:one' 'a2:two' )\n_describe -t beta 'beta d' d\n_wanted gamma expl 'gamma w' compadd -- g1\n"
+  }
+ },
+ "expect": "agrees",
+ "guard_verified": {
+  "date": "2026-10-28",
+  "against": "debug build carrying e6561b26f5 but not this fix (sha256 437354a3599ddc04) — carries the bug",
+  "verdict": "CONTROL-MOVED",
+  "note": "`compsys_regressions.py --only fake_style_description_recursion --zshrs <that build>` exits 1; the fixed debug build reports CONTROL-HOLDS, exit 0. zsh 5.9.2 (aarch64-apple-darwin25.4.0)."
+ },
+ "group": "completer-machinery",
+ "fingerprint": null,
+ "observed": {
+  "verdict": "PASS",
+  "detail": "PASS",
+  "rows": [
+   {
+    "row": 4,
+    "zsh": "bfake  -- fake descr",
+    "zshrs": "bfake  -- fake descr"
+   },
+   {
+    "row": 5,
+    "zsh": "zall  -- always descr",
+    "zshrs": "zall  -- always descr"
+   },
+   {
+    "row": 6,
+    "zsh": "bf2  g1",
+    "zshrs": "bf2  g1"
+   }
+  ],
+  "notes": "both shells add the fakes once: the described ones through _describe, the bare one through compadd."
+ },
+ "observed_when_diverging": {
+  "verdict": "FAIL",
+  "category": "one-sided-error",
+  "detail": "23 row(s) differ",
+  "rows": [
+   {
+    "row": 0,
+    "zsh": "@SFZ@ fzc6000",
+    "zshrs": "_tags:comptags:67: nesting level too deep"
+   }
+  ],
+  "notes": "the _description port skipped sh:106 `if ! (( ${funcstack[2,-1][(I)_description]} ))`, so the fake block's `_describe` re-entered _description, which ran the fake block again, until locallevel passed MAX_TAGS and comptags refused."
+ },
+ "why_this_fixture_exists": "`fake` is a documented per-tag style and any _describe/_wanted under a tag that sets it hit the recursion; the fuzzer's tags kind sets no styles, so no generated case reaches it.",
+ "controls": [],
+ "variants": [],
+ "origin": [
+  "hand-written lane-6 probe (seed range 6000000-6099999), scratch replay p32 shrunk by dropping one style per run"
+ ],
+ "history": []
+}
