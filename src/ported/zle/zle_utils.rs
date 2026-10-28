@@ -76,22 +76,61 @@ pub fn zleaddtoline(chr: i32) {
     // arm is spelled out here. Region highlights keep character offsets only (no
     // `start_meta`/`end_meta` pair), so there is nothing to shift for them.
     //
-    // `chr` arrives as a whole scalar (zshrs's `ingetc` yields chars where
-    // C's yields metafied bytes), so the slot is `len_utf8` bytes wide and
-    // `zlemetacs`/`zlemetall` advance by that width.
-    let ch = char::from_u32(chr as u32).unwrap_or(char::REPLACEMENT_CHARACTER);
-    let width = ch.len_utf8();
+    // `chr` arrives as a whole scalar of the pipeline's char form (zshrs's
+    // `ingetc` yields chars where C's yields metafied bytes), so the bytes C
+    // would have been handed one call at a time are re-derived here, and
+    // the line stays BYTE-metafied like the rest of `zlemetaline`:
+    //   * the char right after a dangling `Meta` byte is that escape's
+    //     payload — one byte, stored as is;
+    //   * U+0083 is the pipeline's Meta marker (script_bytes.rs
+    //     `push_meta_byte`) — the raw `Meta` byte;
+    //   * ASCII is the byte itself;
+    //   * any other char is its UTF-8 sequence, each `imeta` byte escaped
+    //     as `Meta, b ^ 32` (Src/utils.c:4880-4886).
+    // Storing the bare UTF-8 instead left every character with an `imeta`
+    // byte (`Ä` = c3 84) unescaped, so `doexpandhist`'s c:2843 strcmp saw a
+    // changed line and every completion on such a line was swallowed.
+    use crate::ported::zsh_h::Meta;
+    use crate::ported::ztype_h::imeta;
     let m = ZLEMETALINE.get_or_init(|| std::sync::Mutex::new(String::new()));
     let mut g = m.lock().unwrap();
-    let mut cs = (ZLEMETACS.load(Ordering::SeqCst).max(0) as usize).min(g.len());
-    while !g.is_char_boundary(cs) {
-        cs -= 1;
+    let cs = (ZLEMETACS.load(Ordering::SeqCst).max(0) as usize).min(g.len());
+    let line = g.as_bytes();
+    let mut i = 0usize;
+    let mut dangling_meta = false;
+    while i < cs {
+        if line[i] == Meta {
+            dangling_meta = i + 1 == cs;
+            i += 2;
+        } else {
+            i += 1;
+        }
     }
+    let mut add: Vec<u8> = Vec::with_capacity(8);
+    if (dangling_meta && chr as u32 <= 0xff) || chr as u32 == Meta as u32 || (0..0x80).contains(&chr) {
+        add.push(chr as u8);
+    } else {
+        let ch = char::from_u32(chr as u32).unwrap_or(char::REPLACEMENT_CHARACTER);
+        let mut enc = [0u8; 4];
+        for &b in ch.encode_utf8(&mut enc).as_bytes() {
+            if imeta(b) {
+                add.push(Meta);
+                add.push(b ^ 32);
+            } else {
+                add.push(b);
+            }
+        }
+    }
+    let width = add.len();
     let mark_cur = MARK.load(Ordering::SeqCst);
     if mark_cur > cs {
         MARK.store(mark_cur + width, Ordering::SeqCst); // c:793 mark += ct
     }
-    g.insert(cs, ch); // c:105 zlemetaline[zlemetacs] = chr
+    // c:104-105 — `spaceinline(1); zlemetaline[zlemetacs++] = chr;` per
+    // byte. The line is metafied, so the splice is on its bytes.
+    unsafe {
+        g.as_mut_vec().splice(cs..cs, add);
+    }
     ZLEMETALL.fetch_add(width as i32, Ordering::SeqCst); // c:790 zlemetall += ct
     ZLEMETACS.store((cs + width) as i32, Ordering::SeqCst); // c:105 zlemetacs++
 }
@@ -1138,10 +1177,15 @@ pub fn foredel(ct: i32, flags: i32) {
                     let cs = ZLEMETACS.load(Ordering::Relaxed) as usize;
                     if cs < g.len() {
                         let end = (cs + ct as usize).min(g.len());
-                        let bytes = g.as_bytes();
-                        let new_line: String = String::from_utf8_lossy(&bytes[..cs]).into_owned()
-                            + &String::from_utf8_lossy(&bytes[end..]);
-                        *g = new_line;
+                        // The line is BYTE-metafied, not valid UTF-8 once a
+                        // character carries an `imeta` byte (`Ä` is c3 83 a4),
+                        // so the cut is on its bytes. Rebuilding it through
+                        // `from_utf8_lossy` turned every such escape into a
+                        // 3-byte U+FFFD and shifted the rest of the line under
+                        // the caller's byte offsets.
+                        unsafe {
+                            g.as_mut_vec().drain(cs..end);
+                        }
                         ZLEMETALL.store(g.len() as i32, Ordering::Relaxed);
                     }
                 }
@@ -3563,6 +3607,55 @@ mod findbol_findeol_tests {
         assert_eq!(ZLEMETALL.load(Ordering::SeqCst), 1);
         assert_eq!(ZLEMETACS.load(Ordering::SeqCst), 1);
         // Leave meta mode inactive: other tests branch on `zlemetall > 0`.
+        ZLEMETALINE.get().unwrap().lock().unwrap().clear();
+        ZLEMETALL.store(0, Ordering::SeqCst);
+        ZLEMETACS.store(0, Ordering::SeqCst);
+    }
+
+    /// c:102-106 — `doexpandhist` rebuilds `zlemetaline` through
+    /// `zleaddtoline`, and the result is strcmp'd against the metafied
+    /// original (zle_tricky.c:2843). The rebuild must therefore be BYTE-
+    /// metafied: `Ä` (c3 84) carries the `imeta` byte 0x84 and has to come
+    /// out as c3 83 a4, and a pipeline Meta pair (U+0083, U+00C6 — the raw
+    /// byte 0xe6) as the two bytes 83 c6. Stored as bare UTF-8 the rebuilt
+    /// line differed from the original, `doexpandhist` took it for a history
+    /// expansion and replaced the line, and the completion never ran.
+    #[test]
+    fn zleaddtoline_rebuilds_a_byte_metafied_line() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        use crate::ported::zle::compcore::{ZLEMETACS, ZLEMETALINE, ZLEMETALL};
+        for c in ['a', 'Ä', 'é', '\u{83}', '\u{c6}', 'b'] {
+            zleaddtoline(c as i32);
+        }
+        let got = ZLEMETALINE.get().unwrap().lock().unwrap().as_bytes().to_vec();
+        assert_eq!(got, [b'a', 0xc3, 0x83, 0xa4, 0xc3, 0xa9, 0x83, 0xc6, b'b']);
+        assert_eq!(ZLEMETALL.load(Ordering::SeqCst), 9);
+        assert_eq!(ZLEMETACS.load(Ordering::SeqCst), 9);
+        ZLEMETALINE.get().unwrap().lock().unwrap().clear();
+        ZLEMETALL.store(0, Ordering::SeqCst);
+        ZLEMETACS.store(0, Ordering::SeqCst);
+    }
+
+    /// c:1108-1109 — `foredel(ct, CUT_RAW)` on the metafied line is a byte
+    /// cut. The line `x Ä ab` is c3 83 a4 in the middle; deleting `ab`
+    /// (bytes 6..8) must leave the escape intact. A `from_utf8_lossy`
+    /// rebuild turned the lone a4 into a 3-byte U+FFFD, so every completion
+    /// on such a line inserted its match into shifted garbage.
+    #[test]
+    fn foredel_raw_keeps_metafied_bytes() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        use crate::ported::zle::compcore::{ZLEMETACS, ZLEMETALINE, ZLEMETALL};
+        let line = vec![b'x', b' ', 0xc3, 0x83, 0xa4, b' ', b'a', b'b'];
+        *ZLEMETALINE.get_or_init(|| std::sync::Mutex::new(String::new())).lock().unwrap() =
+            unsafe { String::from_utf8_unchecked(line) };
+        ZLEMETALL.store(8, Ordering::SeqCst);
+        ZLEMETACS.store(6, Ordering::SeqCst);
+        foredel(2, CUT_RAW);
+        let got = ZLEMETALINE.get().unwrap().lock().unwrap().as_bytes().to_vec();
+        assert_eq!(got, [b'x', b' ', 0xc3, 0x83, 0xa4, b' ']);
+        assert_eq!(ZLEMETALL.load(Ordering::SeqCst), 6);
         ZLEMETALINE.get().unwrap().lock().unwrap().clear();
         ZLEMETALL.store(0, Ordering::SeqCst);
         ZLEMETACS.store(0, Ordering::SeqCst);

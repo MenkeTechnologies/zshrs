@@ -4274,8 +4274,75 @@ pub fn gotword() {
     let zlemetacs = crate::ported::zle::compcore::ZLEMETACS.load(Ordering::SeqCst);
     let zlemetall = crate::ported::zle::compcore::ZLEMETALL.load(Ordering::SeqCst);
     let addedx = crate::ported::zle::compcore::ADDEDX.load(Ordering::SeqCst);
-    let inbufct = crate::ported::input::inbufct.with(|c| c.get());
-    let wordbeg = LEX_WORDBEG.get();
+    // C's `inbufct` and `wordbeg` count the METAFIED BYTES left in the
+    // input, the same unit as `zlemetall`/`zlemetacs`. zshrs's input layer
+    // reads the pipeline's char form and counts CHARS, so both are mapped
+    // back to bytes over the text the completion lexer was handed:
+    // `zlemetaline` (placeholder `x` included) plus the `dupstrspace` blank
+    // (zle_tricky.c:1171). A count of chars left is a suffix of that text,
+    // so the widths are summed from the end. Mixing the units put `wb` one
+    // byte per extra UTF-8 byte too far right: `x aéb<TAB>` kept the `a`.
+    let char_widths: Vec<i32> = {
+        use crate::ported::zsh_h::Meta;
+        let line: Vec<u8> = crate::ported::zle::compcore::ZLEMETALINE
+            .get()
+            .and_then(|m| m.lock().ok().map(|g| g.as_bytes().to_vec()))
+            .unwrap_or_default();
+        // Unmetafy, remembering how many metafied bytes each raw byte took.
+        let (mut raw, mut mw) = (Vec::with_capacity(line.len() + 1), Vec::with_capacity(line.len() + 1));
+        let mut i = 0usize;
+        while i < line.len() {
+            if line[i] == Meta && i + 1 < line.len() {
+                raw.push(line[i + 1] ^ 32);
+                mw.push(2);
+                i += 2;
+            } else {
+                raw.push(line[i]);
+                mw.push(1);
+                i += 1;
+            }
+        }
+        raw.push(b' ');
+        mw.push(1);
+        // One entry per pipeline char (script_bytes.rs decode_script_bytes):
+        // a valid UTF-8 sequence is one char; any other byte is the two
+        // chars `Meta`, payload, which share that byte's metafied width.
+        let mut w = Vec::with_capacity(raw.len());
+        let mut p = 0usize;
+        while p < raw.len() {
+            let n = match raw[p] {
+                0x00..=0x7f => 1,
+                0xc2..=0xdf => 2,
+                0xe0..=0xef => 3,
+                0xf0..=0xf4 => 4,
+                _ => 0,
+            };
+            if n > 0 && p + n <= raw.len() && std::str::from_utf8(&raw[p..p + n]).is_ok() {
+                w.push(mw[p..p + n].iter().sum());
+                p += n;
+            } else {
+                w.push(mw[p] - 1);
+                w.push(1);
+                p += 1;
+            }
+        }
+        w
+    };
+    let chars_to_bytes = |left: i32| -> i32 {
+        let left = left.max(0) as usize;
+        let n = char_widths.len();
+        let tail: i32 = char_widths[n - left.min(n)..].iter().sum();
+        tail + (left.saturating_sub(n)) as i32
+    };
+    let inbufct = chars_to_bytes(crate::ported::input::inbufct.with(|c| c.get()));
+    // lex.c:627-628 snapshots `wordbeg` right after reading the word's FIRST
+    // BYTE; the char reader has consumed the whole first char by then, so
+    // its remaining bytes (all but the first) are counted back in.
+    let wordbeg = {
+        let left = LEX_WORDBEG.get().max(0) as usize;
+        let first = char_widths.len().checked_sub(left + 1).map_or(1, |i| char_widths[i]);
+        chars_to_bytes(left as i32) + first - 1
+    };
 
     // c:1884 — `int nwe = zlemetall + 1 - inbufct + (addedx == 2 ? 1 : 0);`
     let nwe = zlemetall + 1 - inbufct + if addedx == 2 { 1 } else { 0 };

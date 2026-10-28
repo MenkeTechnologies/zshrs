@@ -2027,7 +2027,15 @@ pub fn get_comp_string() -> Option<String> {
                          // keep the partial word a usable STRING instead of aborting the
                          // completion with "unmatched \"".
         LEX_LEXFLAGS.set(LEXFLAGS_ZLE | crate::ported::zsh_h::LEXFLAGS_ACTIVE);
-        crate::ported::input::inpush(&dupstrspace(&linptr), 0, None); // c:1171
+        // c:1171 — `inpush(dupstrspace(linptr), 0, NULL)`. `linptr` is
+        // BYTE-metafied; the input layer reads the pipeline's char form, so
+        // it is decoded the way script input is (see `doexpandhist`), and
+        // `gotword` maps the lexer's char counts back to metafied bytes.
+        let mut lin_raw = linptr.as_bytes().to_vec();
+        let lin_raw_len = crate::ported::utils::unmetafy(&mut lin_raw);
+        lin_raw.truncate(lin_raw_len);
+        let lin_input = crate::script_bytes::decode_script_bytes(&lin_raw);
+        crate::ported::input::inpush(&dupstrspace(&lin_input), 0, None); // c:1171
         crate::ported::hist::strinbeg(0); // c:1172
 
         // c:1173 — per-command accumulators.
@@ -5140,7 +5148,19 @@ pub fn doexpandhist() -> i32 {
     LEX_LEXSTOP.set(false);
 
     // c:2817 — "We push ol as it will remain unchanged"
-    crate::ported::input::inpush(&ol, 0, None); // c:2818
+    //
+    // `ol` is BYTE-metafied (not valid UTF-8 once a character carries an
+    // `imeta` byte: `Ä` is c3 83 a4), while zshrs's input layer reads the
+    // pipeline's char form, so it is decoded the way script input is —
+    // unmetafied, valid UTF-8 kept as chars, any other byte Meta-encoded.
+    // Pushed raw, the char reader mis-decoded the escape and the lex
+    // rebuilt a truncated line, which the c:2843 strcmp took for a history
+    // expansion: the line was replaced and the completion never ran.
+    let mut ol_raw = ol.as_bytes().to_vec();
+    let ol_raw_len = crate::ported::utils::unmetafy(&mut ol_raw);
+    ol_raw.truncate(ol_raw_len);
+    let ol_input = crate::script_bytes::decode_script_bytes(&ol_raw);
+    crate::ported::input::inpush(&ol_input, 0, None); // c:2818
     strinbeg(1); // c:2819
     set_noaliases(true); // c:2820
     crate::ported::utils::set_noerrs(1); // c:2821
