@@ -1,0 +1,99 @@
+{
+ "schema": "compsys-fixture/2",
+ "id": "compset_q_inner_quote_kept",
+ "title": "GUARD (fixed in e6561b26f5) — was: `compset -q` on `\"a 'b c` dropped the inner quote of the other kind (and an escaped quote) from $PREFIX and $words",
+ "harness": "compsys_spec_fuzz",
+ "run": {
+  "buffer": "fzcq \"a 'b c",
+  "keys": [
+   "tab"
+  ],
+  "flags": [],
+  "spec": {
+   "cmd": "fzcq",
+   "kind": "compset",
+   "seed": 5000000,
+   "case": -1,
+   "widget": "default",
+   "setup": [],
+   "completer": "#compdef fzcq\n\nlocal -a h\ncompset -q && h+=(q1)\ncompadd -x \"PRE=$PREFIX|SUF=$SUFFIX|IPRE=$IPREFIX|ISUF=$ISUFFIX|QIPRE=$QIPREFIX|QISUF=$QISUFFIX|CUR=$CURRENT|W=${(j:|:)words}|H=${(j:,:)h}\"\ncompadd -U -- xa yb\ncompstate[insert]=; compstate[list]=list\n"
+  }
+ },
+ "expect": "agrees",
+ "group": "completer-machinery",
+ "fingerprint": null,
+ "observed": {
+  "verdict": "PASS",
+  "detail": "0 row(s) differ",
+  "notes": "Src/Zle/compcore.c set_comp_sep runs untokenize (Src/exec.c, the ztokens mapping) on s (c:1476), ts (c:1735), the new $PREFIX/$SUFFIX (c:1897-1906) and $words (c:1929). A lexed Snull/Dnull/Bnull inside the word comes back as the ' \" \\ the user typed, so zsh shows PRE=b c W=a|'b c for `\"a 'b c`."
+ },
+ "observed_when_diverging": {
+  "verdict": "FAIL",
+  "category": "grid-diff",
+  "detail": "1 row(s) differ",
+  "rows": [
+   {
+    "row": null,
+    "zsh": "PRE=b c ... W=a|'b c",
+    "zshrs": "PRE= c ... W=a|b c"
+   }
+  ],
+  "recorded_under": "main at a41a59a796 (before e6561b26f5), target/debug/zshrs, lane-5 scratch grid cell q1l_11 (completer identical, command name fzp). Only the PRE/W fields were kept from that run; the full row text was not saved. Same grid: `'a\"b c` gave zsh PRE=a\"b c, zshrs PRE=ab c; 24 of 80 grid cells failed, all with an inner other-kind or escaped quote."
+ },
+ "retired": {
+  "date": "2026-10-28",
+  "fix_commit": "e6561b26f5",
+  "why": "set_comp_sep calls untokenize_ztokens (the ztokens mapping) at the c:1476, c:1735, c:1897-1906 and c:1929 sites instead of the marker-stripping untokenize."
+ },
+ "controls": [
+  {
+   "note": "no inner quote: both shells agreed before the fix (grid cell q1l_1)",
+   "buffer": "fzcq \"a b c"
+  }
+ ],
+ "variants": [
+  {
+   "note": "inner double quote inside single quotes (grid q1l_13)",
+   "buffer": "fzcq 'a\"b c"
+  },
+  {
+   "note": "escaped double quote inside double quotes (grid q1l_19)",
+   "buffer": "fzcq \"a\\\"b c"
+  },
+  {
+   "note": "cursor mid-word, so the split also sets $SUFFIX (grid q1l_12)",
+   "keys": [
+    "left",
+    "left",
+    "tab"
+   ]
+  }
+ ],
+ "origin": [
+  "lane-5 compset -q probe grid g6, 2026-10-28"
+ ],
+ "confirmed": {
+  "date": "2026-10-28",
+  "commit": "e6561b26f5",
+  "harness_sha256_16": {
+   "scripts/compsys_spec_fuzz.py": "7c0a079a8ae27ee7",
+   "scripts/compsys_regressions.py": "619b844636a94cb7"
+  },
+  "zshrs_binary": {
+   "path": "target/debug/zshrs",
+   "size": 134037160,
+   "mtime": "2026-10-28 03:06:31",
+   "version": "zshrs 0.13.56",
+   "sha256_16": "447c30ef9fc40d63",
+   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)"
+  },
+  "zsh_binary": {
+   "path": "/opt/homebrew/bin/zsh",
+   "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)"
+  },
+  "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "zshrs": "target/debug/zshrs zshrs 0.13.56 (134037160 bytes, 2026-10-28 03:06:31)",
+  "note": "PASS on the fixed binary for the fixture cell, its control and variants"
+ },
+ "history": []
+}
