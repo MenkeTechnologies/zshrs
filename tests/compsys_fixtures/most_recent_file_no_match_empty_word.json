@@ -1,0 +1,77 @@
+{
+  "schema": "compsys-fixture/2",
+  "id": "most_recent_file_no_match_empty_word",
+  "title": "GUARD (fixed in 44a66c4f71) \u2014 was: the `_most_recent_file` widget (^Xm) on a word no file matches leaves the line unchanged, where zsh inserts `''`",
+  "harness": "compsys_spec_fuzz",
+  "run": {
+    "buffer": "fzc0000 zzq",
+    "keys": [
+      "\u0018",
+      "m"
+    ],
+    "flags": [],
+    "spec": {
+      "cmd": "fzc0000",
+      "kind": "files",
+      "widget": "fn:_most_recent_file",
+      "setup": [],
+      "completer": "#compdef fzc0000\n\n_files\n"
+    }
+  },
+  "expect": "agrees",
+  "group": "completer-machinery",
+  "fingerprint": null,
+  "fingerprint_when_diverging": null,
+  "retired": {
+    "date": "2026-10-28",
+    "previous_expect": "diverges",
+    "fix_commit": "44a66c4f71",
+    "fix_commit_subject": "fix(compsys): `_most_recent_file` (^Xm) inserts `''` when no file matches",
+    "why": "Completion/Base/Widget/_most_recent_file sh:21-22 is `eval \"file=($PREFIX*$SUFFIX(om[${NUMERIC:-1}]N))\"` then `file=(${(q)file})`. Without `^`, an EMPTY array in a substitution is first turned into the scalar \"\" (Src/subst.c:3910-3912), and (q) quotes with QT_BACKSLASH_SHOWNULL (c:4153), so a glob that matched nothing leaves one word `''`; sh:24 `(( $#file )) && compadd -U ... -Q -- $file` then adds it and zsh puts `''` on the line. The port quoted with plain QT_BACKSLASH and kept the empty array, so `(( $#file ))` was false and nothing was added. The fix uses QT_BACKSLASH_SHOWNULL in both branches and yields the single `''` word in the non-tilde branch (the tilde branch's `${(q)^file}` keeps an empty array empty, c:3910 `!plan9`).",
+    "evidence": [
+      "FAIL on the pre-fix binary (1 row(s) differ: zsh `fzc0000 ''`, zshrs `fzc0000 zzq`), 3 of 3 attempts",
+      "PASS on the fixed binary"
+    ]
+  },
+  "observed": {
+    "verdict": "PASS",
+    "detail": "byte-identical grid",
+    "measured": "2026-10-28, a copy of target/debug/zshrs built from the shared tree carrying the fix (zshrs 0.13.56, 134037160 bytes, sha256_16 447c30ef9fc40d63) vs zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+    "notes": "both shells: `fzc0000 ''` after ^Xm (compinit's stock `#compdef -k complete-word \\C-xm` binding) on a word that no WORK_FILES entry matches. The lone \\x18 key is ZLE waiting on the ^X prefix on both shells, not a divergence."
+  },
+  "observed_when_diverging": {
+    "verdict": "FAIL",
+    "detail": "1 row(s) differ",
+    "category": "grid-diff",
+    "zsh_grid": [
+      "@SFZ@ fzc0000 ''"
+    ],
+    "zshrs_grid": [
+      "@SFZ@ fzc0000 zzq"
+    ],
+    "zsh_diagnostics": [],
+    "zshrs_diagnostics": [],
+    "recorded_under": "2026-10-28, a copy of target/debug/zshrs built from the shared tree at 9c63da5c42 with _most_recent_file.rs at its pre-fix content (zshrs 0.13.56, 134036856 bytes, sha256_16 360bf13f0c5a0240)"
+  },
+  "controls": [],
+  "variants": [],
+  "origin": [
+    "lane-9 widget-axis sweep (2026-10-28): stock compinit binds ^Xm to `_most_recent_file`; found by driving every compinit widget binding by hand with a pty stepper (`ls aple.txt` ^Xm ^Xm: zsh `ls ''` then `ls 'banana.txt '`, zshrs unchanged), since compsys_spec_fuzz's widget pool has no `_most_recent_file` entry"
+  ],
+  "confirmed": {
+    "date": "2026-10-28",
+    "harness_sha256_16": {
+      "scripts/compsys_spec_fuzz.py": "7c0a079a8ae27ee7"
+    },
+    "zsh_binary": {
+      "path": "/opt/homebrew/bin/zsh",
+      "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)"
+    }
+  },
+  "guard_verified": {
+    "date": "2026-10-28",
+    "against": "the pre-fix binary named in observed_when_diverging.recorded_under",
+    "verdict": "CONTROL-MOVED",
+    "detail": "1 row(s) differ"
+  }
+}
