@@ -16,8 +16,9 @@ This is the comprehensive reference for
 .BR zshrs (1).
 The short option summary lives in
 .BR zshrs (1);
-daemon administration in
-.BR zd (1).
+daemon administration is the
+.B zd
+builtin (see DAEMON COORDINATION).
 .PP
 .B zshrs
 is a strict 1:1 port of the Z shell
@@ -510,7 +511,7 @@ as containing another variable's name (indirection).
 .TP
 .B V
 emit nonprintable bytes in
-.B $'\\x..'
+.B $'\(rsx..'
 form.
 .TP
 .B q / qq / qqq / qqqq
@@ -748,14 +749,15 @@ parameter flag);
 .B $HOME .
 .PP
 .B zshrs-only:
+.B $ZSHRS_HOME
+(state root),
 .B $ZSHRS_CACHE
-(override cache root),
+(\fB0\fR disables the script and autoload caches),
 .B $ZSHRS_LOG
 (tracing filter),
 .B $ZSHRS_LONG_CMD_PRE_THRESHOLD
-(seconds; above which preexec timing hook fires),
-.B $ZSHRS_NO_DAEMON
-(per-invocation suppression).
+(seconds before a still-running command is reported to the daemon).
+See ENVIRONMENT.
 .SH "ARRAYS AND ASSOCIATIVE ARRAYS"
 .B typeset -a arr
 declares a normal array;
@@ -1340,8 +1342,14 @@ Run commands in parallel and wait for all of them. \fBbarrier 'cmd1' ::: 'cmd2' 
 .B base64
 Encode / decode Base64. \fB\-d\fR decodes; \fB\-w0\fR no line wrap. coreutils drop\-in.
 .TP
+.B basename
+Strip leading directories and an optional suffix. \fBbasename /a/b.txt .txt\fR \(-> \fBb\fR. coreutils drop\-in.
+.TP
 .B caller
 Bash\-compatible \fBcaller\fR builtin. With no arg or 0: prints \fBLINE FUNC\fR for the current frame; with N>0: \fBLINE FUNC FILE\fR for the Nth call\-stack frame.
+.TP
+.B cat
+Concatenate files to stdout. \fB\-n\fR numbers lines, \fB\-A\fR shows tabs and line ends. coreutils drop\-in.
 .TP
 .B cdreplay
 Replay the \fBcompdef\fR calls deferred while completion was not yet initialised (zinit turbo mode). \fBcdreplay [\-q]\fR; \fB\-q\fR replays quietly.
@@ -1352,8 +1360,17 @@ Print CRC32 checksum + byte count of each file. coreutils drop\-in.
 .B comm
 Compare two sorted files line\-by\-line. \fB\-1\fR / \fB\-2\fR / \fB\-3\fR suppress columns. coreutils drop\-in.
 .TP
+.B compdef
+Register completion functions for commands. \fBcompdef _git git\fR, \fBcompdef \-d git\fR deletes. zsh's \fBcompdef\fR shell function, as a builtin.
+.TP
 .B compgen
 Bash\-compatible word generator. \fBcompgen \-W 'foo bar baz' fo\fR \(-> \fBfoo\fR. Used by bash\-completion scripts ported to zshrs.
+.TP
+.B compinit
+Initialise the completion system: walk \fB$fpath\fR in parallel, populate the rkyv autoload and completion shards and mark every \fB_*\fR function autoloaded. zsh's \fBcompinit\fR shell function, as a builtin; it does not read or write \fB.zcompdump\fR by default.
+.TP
+.B complete
+Bash\-compatible \fBcomplete\fR: define a completion spec for a command (\fB\-W\fR, \fB\-F\fR, \fB\-C\fR, \fB\-o\fR, ...).
 .TP
 .B cut
 Extract fields or character ranges. \fB\-d':' \-f1,3\fR / \fB\-c5\-10\fR. coreutils drop\-in.
@@ -1367,11 +1384,20 @@ Dump the local zshrs SQLite mirror tables (autoload bodies, completion mirror, h
 .B dircolors
 Emit \fBLS_COLORS\fR from a \fB.dircolors\fR file. coreutils drop\-in.
 .TP
+.B dirname
+Strip the last path component. \fBdirname /a/b/c\fR \(-> \fB/a/b\fR. coreutils drop\-in.
+.TP
 .B doctor
 Diagnostic report of shell health \(em cache stats, autoload coverage, fpath sanity, daemon presence, memory footprint, recent error summary. zshrs\-only.
 .TP
 .B env
 Run a command in a modified environment, or print the current environment. \fBenv \-i\fR empties; \fBenv VAR=val cmd\fR sets. coreutils drop\-in.
+.TP
+.B expand
+Convert tabs to spaces. \fB\-t N\fR tab width, \fB\-i\fR leading tabs only. coreutils drop\-in.
+.TP
+.B expr
+Evaluate an expression (POSIX \fBexpr\fR(1) subset): integer arithmetic, \fB: REGEX\fR, \fBlength\fR, \fBsubstr\fR, \fBindex\fR.
 .TP
 .B factor
 Print prime factors. \fBfactor 60\fR \(-> \fB60: 2 2 3 5\fR. coreutils drop\-in.
@@ -1381,6 +1407,9 @@ Walk the filesystem and print / act on matches. Supports \fB\-name\fR/\fB\-type\
 .TP
 .B fold
 Wrap each input line to a width. \fB\-w N\fR width, \fB\-s\fR break at spaces. coreutils drop\-in.
+.TP
+.B groups
+Print group memberships of the effective user, or \fBUSER : group ...\fR for each named user. coreutils drop\-in.
 .TP
 .B hashinfo
 Print hash\-table statistics for the shell's internal tables (the ZSH_HASH_DEBUG builtin of zsh).
@@ -1403,6 +1432,9 @@ Register an AOP intercept. \fBintercept before|after|around <cmd> { body }\fR ru
 .B intercept_proceed
 Inside an \fBaround\fR intercept body, invoke the underlying command. Required so the intercept doesn't shadow the call permanently.
 .TP
+.B link
+Create a hard link with \fBlink(2)\fR. Exactly two operands and no options, as POSIX requires. coreutils drop\-in.
+.TP
 .B logname
 Print the user's login name. coreutils drop\-in.
 .TP
@@ -1416,7 +1448,7 @@ Create named pipes (FIFOs). \fBmkfifo path ...\fR. coreutils drop\-in.
 Create a temp file or directory with a unique name. \fB\-d\fR directory, \fB\-p DIR\fR parent. coreutils drop\-in.
 .TP
 .B nameref
-Declare a ksh93\-style named reference; same handler as \fBtypeset \-n\fR.
+Declare a ksh93\-style named reference; same handler as \fBtypeset \-n\fR. In zsh this is the \fBzsh/ksh93\fR module's builtin; zshrs has it without \fBzmodload\fR.
 .TP
 .B nice
 Run a command with adjusted scheduling priority. \fBnice \-n 10 cmd\fR. coreutils drop\-in.
@@ -1435,6 +1467,9 @@ Run the template once per line of FILE (\fB{}\fR is the line). FILE is memory\-m
 .TP
 .B par_walk
 Run the template once per file and directory under each PATH (\fB{}\fR is the path), walking the tree in parallel; output is in walk order. \fBpar_walk 'test \-f {} && wc \-l {}' src\fR.
+.TP
+.B paste
+Merge corresponding lines of files, TAB\-separated; \fB\-d LIST\fR cycles through the given delimiters. coreutils drop\-in.
 .TP
 .B patdebug
 Dump the compiled form of a pattern (the ZSH_PAT_DEBUG builtin of zsh). \fBpatdebug [\-p] PATTERN\fR.
@@ -1493,6 +1528,9 @@ Shuffle input lines. \fB\-n N\fR limit, \fB\-e ITEM...\fR shuffle args, \fB\-i L
 .B sleep
 Pause for the given duration. \fBsleep 1\fR, \fBsleep 0.5\fR, \fBsleep 1m\fR. coreutils drop\-in.
 .TP
+.B sort
+Sort lines. \fB\-n\fR numeric, \fB\-r\fR reverse, \fB\-k N\fR by field, \fB\-u\fR unique. coreutils drop\-in.
+.TP
 .B sum
 BSD/sysv checksum + 1K\-block count. coreutils drop\-in.
 .TP
@@ -1525,6 +1563,9 @@ Print system info. \fB\-a\fR all, \fB\-s\fR kernel, \fB\-m\fR machine, \fB\-r\fR
 .TP
 .B unexpand
 Convert leading spaces to tabs. \fB\-a\fR all spaces. coreutils drop\-in.
+.TP
+.B uniq
+Filter adjacent matching lines. \fB\-c\fR prefix counts, \fB\-d\fR only duplicates. coreutils drop\-in.
 .TP
 .B unlink
 Remove a single file via the \fBunlink(2)\fR syscall (no \fB\-r\fR, no prompts). coreutils drop\-in.
@@ -1590,7 +1631,7 @@ Ask another shell for input through the daemon and manage the requests. \fBzask 
 Bake one or more shell scripts into a standalone executable that runs them in order under one shell. \fBzbuild \-\-in a.zsh b.zsh \-\-out app\fR; \fB\-\-native\fR compiles to native code with Cranelift.
 .TP
 .B zcache
-Inspect and manage the zshrs caches: daemon shards, the catalog and the caches the shell writes itself. \fBzcache info\fR, \fBzcache clean [all|shards|shard NAME|index|shell|log|catalog|stats|zwc|zcompdump|legacy] [\-\-dry\-run]\fR, \fBzcache verify\fR, \fBzcache view TARGET\fR, \fBzcache export\fR, \fBzcache import\fR, \fBzcache daemon status|stop|restart\fR.
+Inspect and manage the zshrs caches: daemon shards, the catalog and the caches the shell writes itself. \fBzcache info\fR, \fBzcache clean [all|shards|shard NAME|index|shell|log|catalog|stats|zwc|zcompdump|legacy] [\-\-dry\-run]\fR, \fBzcache verify\fR, \fBzcache view TARGET\fR, \fBzcache export\fR, \fBzcache import\fR, \fBzcache daemon status|stop|restart\fR, \fBzcache compact\fR, \fBzcache list\fR, \fBzcache jobs\fR, \fBzcache hydrate\-view\fR, \fBzcache watch\fR, \fBzcache config get|set|list\fR, \fBzcache doctor\fR; \fBzcache log ...\fR is \fBzlog ...\fR.
 .TP
 .B zcmd\-result
 Responder side of \fBzsend \-\-wait\fR: report the exit status and output of a command a \fBcmd:execute\fR event delivered. \fBzcmd\-result \-\-id DELIVERY_ID [\-\-exit\-code N] [\-\-stdout TEXT] [\-\-stderr TEXT]\fR.
@@ -1598,8 +1639,17 @@ Responder side of \fBzsend \-\-wait\fR: report the exit status and output of a c
 .B zcomplete
 Ask the daemon's \fBcomplete\fR op for candidates (commands, handlers, history) matching a command\-line prefix and print the JSON reply. \fBzcomplete PREFIX [\-\-limit N]\fR.
 .TP
+.B zd
+In\-process form of the standalone \fBzd\fR daemon client: the same verbs (\fBzd prewarm\fR, \fBzd health\fR, ...) over the local socket, without a fork.
+.TP
 .B zhistory
 Read and write the daemon's cross\-shell history store (history.db). \fBzhistory append LINE [\-\-exit\-code N] [\-\-cwd DIR]\fR, \fBzhistory query [\-\-filter PAT] [\-\-mode match|fts|like|prefix|exact] [\-\-cwd DIR] [\-\-limit N]\fR, \fBzhistory count\fR.
+.TP
+.B zid
+Print the client id the daemon assigned to this shell's connection.
+.TP
+.B zjob
+Run and manage jobs owned by the daemon, so they outlive the shell. \fBzjob submit CMD [ARGS] [\-\-cwd DIR] [\-\-tag T] [\-\-env K=V] [\-\-pty]\fR, \fBzjob list\fR, \fBzjob status ID\fR, \fBzjob output ID [\-\-follow]\fR, \fBzjob attach ID\fR, \fBzjob kill ID\fR.
 .TP
 .B zlock
 Named cross\-process locks held by the daemon; a lock is released when its holder dies. \fBzlock try NAME\fR, \fBzlock acquire NAME [\-\-timeout S]\fR, \fBzlock release NAME TOKEN\fR, \fBzlock list\fR.
@@ -1607,8 +1657,23 @@ Named cross\-process locks held by the daemon; a lock is released when its holde
 .B zlog
 Inspect and manage the zshrs log files under ~/.zshrs. \fBzlog\fR (newest log path), \fBzlog tail [\-n N] [\-f] [shell|daemon|recorder]\fR, \fBzlog grep REGEX\fR, \fBzlog clear\fR, \fBzlog stats\fR, \fBzlog level DIRECTIVE\fR, \fBzlog rotate\fR.
 .TP
+.B zls
+List the shells connected to the daemon: id, pid, tty, uptime, tags and cwd. \fBzls \-\-tag NAME\fR lists only shells carrying that tag.
+.TP
+.B znative
+Install, load and manage native (Rust) plugins. \fBznative load [SOURCE...]\fR, \fBadd SOURCE\fR, \fBremove NAME\fR, \fBlist\fR, \fBinfo NAME\fR, \fBupdate [NAME]\fR, \fBgc [\-\-dry\-run]\fR, \fBclean\fR; SOURCE is \fBowner/repo\fR, \fBgithub:o/r\fR, \fBgit+URL\fR or \fBpath:DIR\fR.
+.TP
+.B znotify
+Show a notification in other shells through the daemon. \fBznotify SHELL_ID|\-\-all|\-\-tag NAME|\-\-user USER MESSAGE\fR.
+.TP
+.B zping
+Round\-trip probe against the daemon: prints its uptime and the round\-trip time. \fBzping \-\-all\fR also lists every registered shell.
+.TP
 .B zpublish
 Publish an event on the daemon's pub/sub bus from this shell's scope. \fBzpublish TOPIC [DATA | \-\-json JSON]\fR; subscribers receive it via \fBzsubscribe\fR.
+.TP
+.B zsend
+Send a command line to other shells through the daemon. \fBzsend [\-\-json] [\-\-wait] [\-\-timeout S] SHELL_ID|\-\-all|\-\-tag NAME|\-\-user USER CMD...\fR; \fB\-\-wait\fR relays the target's output and exit status.
 .TP
 .B zsleep
 Sleep for a possibly fractional number of seconds. \fBzsleep 0.25\fR; exactly one argument, no options.
@@ -1616,11 +1681,17 @@ Sleep for a possibly fractional number of seconds. \fBzsleep 0.25\fR; exactly on
 .B zsource
 Ask the daemon's compiled\-file registry whether a sourced file's cached body is a hit, stale or a miss. \fBzsource PATH\fR, \fBzsource \-\-stat PATH\fR.
 .TP
+.B zsubscribe
+Subscribe to pub/sub events and stream them to stdout. \fBzsubscribe [\-\-json] [\-\-count N] SCOPE.TOPIC\fR, \fBzsubscribe \-\-list\fR, \fB\-\-pause\fR / \fB\-\-resume [\-\-id N | \-\-all]\fR.
+.TP
 .B zsuggest
 Ask the daemon for a suggestion completing a command\-line prefix. \fBzsuggest PREFIX [\-\-cwd DIR]\fR.
 .TP
 .B zsync
 Move canonical subsystem state (aliases, functions, options, ...) between this shell and the daemon. \fBzsync up SUBSYSTEM KEY VALUE\fR, \fBzsync up \-\-all\fR, \fBzsync pull SUBSYSTEM\fR, \fBzsync diff SUBSYSTEM \-\-overlay JSON\fR, \fBzsync watch SUBSYSTEM...\fR.
+.TP
+.B ztag
+Add tags to this shell's daemon session and print its tag list. Other shells address tagged shells with \fBzls \-\-tag\fR, \fBzsend \-\-tag\fR, \fBznotify \-\-tag\fR and \fBtag:NAME.*\fR subscriptions.
 .TP
 .B ztest_run
 Print the per\-block test summary (green OK All N passed / red FAIL M of N failed) and roll the per\-block \fBztest_pass_count\fR / \fBztest_fail_count\fR / \fBztest_skip_count\fR into the run\-wide \fB_total\fR counters, then zero the per\-block counters so a second test block in the same file starts fresh. A sticky \fBztest_run_failed\fR flag latches when any block reports failures \(em the \fB\-\-ztest\fR worker reads it to exit non\-zero even if the script ends with \fBexit 0\fR. Alias: \fBrun_tests\fR. Returns 0 on all\-pass, 1 if any assertion failed.
@@ -2102,9 +2173,13 @@ keys include
 .SS "Caching"
 zshrs caches the compiled completion graph as rkyv shards under
 .IR ~/.zshrs/ ;
-the daemon invalidates them when any file in
+an autoload entry is used only while the producing
+.B zshrs
+binary, the resolved
 .B $fpath
-changes. First-time
+directory, the definition file's mtime and length, and a SHA-256 of the
+definition text all still match; otherwise it is a miss and is
+recompiled. First-time
 .B compinit
 on a fresh machine takes typical zsh time; subsequent shell starts
 mmap the cache and skip parse entirely.
@@ -2119,7 +2194,7 @@ xattrs;
 .B zsh/cap
 POSIX capabilities (gated on Linux and a \fBlibcap\fR cargo feature that the crate does not declare, so absent from every current build);
 .B zsh/clone
-fork helper;
+start a copy of the shell on another terminal;
 .B zsh/complete , zsh/complist , zsh/computil
 \(em compsys engine;
 .B zsh/curses
@@ -2127,7 +2202,11 @@ zcurses bindings;
 .B zsh/datetime
 .B $EPOCHSECONDS / $EPOCHREALTIME / strftime;
 .B zsh/db/gdbm
-key-value DB tied to assoc params;
+key-value DB tied to assoc params (needs the
+.B gdbm
+cargo feature, which is not in the default build; without it
+.B "zmodload zsh/db/gdbm"
+fails);
 .B zsh/example
 demo;
 .B zsh/files
@@ -2137,8 +2216,10 @@ etc;
 .B zsh/hlgroup
 syntax-highlight groups;
 .B zsh/ksh93
-.B $KSH_VERSION
-emulation;
+.B nameref
+and the
+.B .sh.*
+parameters;
 .B zsh/langinfo
 .BR nl_langinfo ;
 .B zsh/mapfile
@@ -2165,9 +2246,9 @@ seed;
 ERE;
 .B zsh/sched
 delayed-command scheduler;
-.B zsh/socket
+.B zsh/net/socket
 .B zsocket
-TCP / Unix sockets;
+Unix-domain sockets;
 .B zsh/stat
 .B zstat
 file metadata;
@@ -2175,7 +2256,7 @@ file metadata;
 .BR "zsystem flock" ,
 .BR sysopen ,
 .BR sysseek ;
-.B zsh/tcp
+.B zsh/net/tcp
 .BR ztcp ;
 .B zsh/termcap
 termcap entries;
@@ -2215,10 +2296,12 @@ addressed via
 .IR ~/.zshrs/daemon.sock .
 The daemon owns ALL mutation:
 .IP \fBfsnotify\fR 8
-watches
-.IR ~/.zshrc ,
-.BR $fpath ,
-plugin trees; invalidates affected cache shards on change.
+watches the registered source trees and pushes a
+.B shard_updated
+event to subscribed shells on change. It is notification-only: the daemon
+never re-walks sources; re-running
+.B zshrs\-recorder
+produces fresh canonical state.
 .IP \fBcompile\fR 8
 rkyv image writes for script_cache, plugin_cache, autoload_cache,
 catalog.db rebuilds, log rotation, integrity scans.
@@ -2233,20 +2316,32 @@ shell registry
 .BR zid ,
 .BR zping ),
 and the session-persistent job supervisor
-.RB ( zjob ,
-planned).
+.RB ( zjob ).
 .PP
 100+ thin
 .B zshrs
 clients (e.g. one per tmux pane) mmap the daemon's outputs directly
 for hot lookups (zero IPC) and use the socket only for control-plane
 events (rebuild, fpath_changed, stats_flush, cross-shell dispatch).
-Clients spawn zero background threads, polling timers, or SQLite
-handles. See
-.BR zd (1)
-for daemon administration.
+The client's own SQLite handle is its
+.I zshrs_history.db
+writer, which runs on one background thread so the prompt never waits on
+it. The
+.B zd
+builtin (and the standalone
+.B zd
+binary, built with
+.BR "\-\-features zd" )
+administers the daemon.
 .PP
-.B POSIX mode never spawns the daemon.
+The shell never spawns the daemon. It probes the socket once at startup
+and uses the daemon when it answers;
+.B "enabled = \(dqoff\(dq"
+under
+.B [daemon]
+in
+.I zshrs.toml
+skips the probe. Parity modes never connect.
 .SH "AHEAD-OF-TIME COMPILATION"
 The
 .B zbuild
@@ -2297,16 +2392,26 @@ and the rest of the
 .B zpwr
 introspection stack.
 .SH "WORKERS & NO-FORK ARCHITECTURE"
-zshrs ships a persistent worker pool: long-lived processes that
-service builtins, common externals
-.RB ( ls ", " cat ", " grep ", "
-etc., on the user's allowlist), and pipeline stages without invoking
-.BR fork (2)
-on every command. This is invisible to scripts: pipelines compose,
-redirections work, job control behaves identically. Workers can be
-disabled via
-.B "setopt no_workers"
-or by the parity flags.
+zshrs ships a persistent worker pool: a fixed set of threads fed by a
+bounded queue, sized by
+.B size
+under
+.B [worker_pool]
+in
+.I zshrs.toml
+(0 or unset: the CPU count, clamped to 2..18). Work that zsh would hand to a
+forked child runs on it instead: the
+.B async
+and
+.B barrier
+builtins,
+.BR compinit 's
+cache rebuild, and asynchronous prompt work. The data-parallel builtins
+.RB ( pmap ,
+.BR peach ,
+.BR par_lines ,
+\&...) run on a separate work-stealing thread pool. Ordinary commands,
+pipelines and job control keep zsh's process semantics.
 .SH "RECORDER"
 .B zshrs-recorder
 .RI ( bins/zshrs-recorder.rs )
@@ -2337,18 +2442,25 @@ Override the state root (caches, databases, logs, daemon socket). Default:
 .IR ~/.zshrs/ .
 .TP
 .B ZSHRS_CACHE
-Set to \fB0\fR to disable the caches and the daemon. The parity modes
-(\fB\-\-zsh\fR, \fB\-\-bash\fR, \fB\-\-ksh\fR, \fB\-\-sh\fR, \fB\-\-csh\fR, \fB\-\-posix\fR) set it.
+Set to \fB0\fR, \fBfalse\fR or \fBno\fR to disable the script and autoload
+caches. It does not affect the daemon. The parity modes disable the caches
+in-process without setting the variable, so it does not appear in
+\fB$parameters\fR.
 .TP
 .B ZSHRS_LOG
 .BR tracing -style filter for the structured log, for example
 .BR info " or " "zshrs=info" .
 .TP
 .B ZSHRS_LONG_CMD_PRE_THRESHOLD
-Seconds. Commands taking longer fire the preexec long-cmd hook.
+Seconds (default 5) a command must still be running before the shell
+reports it to the daemon as long-running (the
+.B cmd_started
+op). No effect without a running daemon.
 .TP
-.B ZSHRS_NO_DAEMON
-Suppress daemon connection (per-invocation override of full mode).
+.B ZSHRS_PROVENANCE
+\fB0\fR disables the
+.B provenance
+lineage engine, as \fB[provenance] enabled = false\fR does.
 .TP
 .B ANTHROPIC_API_KEY
 Key for the
@@ -2405,8 +2517,7 @@ and the configuration files
 .BR zshrs-recorder.toml ).
 .TP
 .I ~/.zshrs/zshrs-daemon.toml
-Optional daemon config; see
-.BR zd (1).
+Optional daemon config, seeded with defaults on the daemon's first start.
 .TP
 .I ~/.zshenv,\ ~/.zprofile,\ ~/.zshrc,\ ~/.zlogin,\ ~/.zlogout
 Standard zsh startup files (used identically to upstream zsh).
@@ -2425,8 +2536,10 @@ fire before the actual exit syscall.
 .B zshrs
 treats the zsh upstream
 .B C
-source under
-.IR src/zsh/Src/
+source
+.RI ( Src/*.c ;
+its function names are snapshotted in
+.IR tests/data/zsh_c_fn_names.txt )
 as the spec floor. Bytecode and SQLite formats are versioned and
 migration-safe; old caches either upgrade cleanly or rebuild
 silently. A
@@ -2453,18 +2566,22 @@ fusevm bytecode is the only executor.
 shape; pinned by tests.
 .IP "" 4
 .B port_purity
+\(em every Rust file under
+.B src/ported/
+has a C file of the same stem, and every function in it carries a
+.B "/// Port of"
+citation.
+.IP "" 4
+.B ported_fn_names_match_c
 \(em every
-.B pub fn
+.B fn
 under
 .B src/ported/
-maps to a real
-.B Src/x.c
-function name (allowlist in
-.BR tests/data/fake_fn_allowlist.txt ).
-.IP "" 4
-.B file_mapping
-\(em ports live in the Rust file matching their C basename
-(allowlist in
+names a real C function from the snapshot (allowlist in
+.BR tests/data/fake_fn_allowlist.txt ;
+.B build.rs
+runs the same check and fails the build), and lives in the Rust file
+matching its C basename (allowlist in
 .BR tests/data/ported_fn_file_mapping_allowlist.txt ).
 .SH "DIAGNOSTICS"
 Errors take the form
@@ -2498,7 +2615,6 @@ Full diagnostic report.
 .BR tracing -style filter on the structured log.
 .SH "SEE ALSO"
 .BR zshrs (1),
-.BR zd (1),
 .BR zsh (1),
 .BR zshall (1),
 .BR zshbuiltins (1),
@@ -2537,13 +2653,15 @@ https://github.com/MenkeTechnologies/zshrs
 .B zshrs
 is developed by MenkeTechnologies. Built on the zsh upstream
 .RB ( https://www.zsh.org )
-which remains the source-of-truth spec; zshrs's port-purity test
-.RB ( tests/port_purity.rs )
+which remains the source-of-truth spec;
+.B build.rs
 fails the build if any
 .IR src/ported/
-function diverges from its
+function has no
 .IR Src/<file>.c
-counterpart.
+counterpart, and
+.B tests/port_purity.rs
+fails if a ported file or function lacks one.
 .SH "BUGS"
 Report at
 .UR https://github.com/MenkeTechnologies/zshrs/issues

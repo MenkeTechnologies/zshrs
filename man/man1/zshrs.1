@@ -47,8 +47,9 @@ intercepts on every command; rkyv-backed bytecode image caches for
 scripts, plugins, and autoload functions; an optional
 singleton coordinator daemon
 .RB ( zshrs-daemon ,
-see
-.BR zd (1));
+administered with the
+.B zd
+builtin);
 and ahead-of-time compilation
 .RB ( AOT )
 through the
@@ -67,8 +68,9 @@ Print the zshrs version and exit.
 zsh's own option: run as zsh with a full
 .B emulate
 .I MODE
-installed before any later option word is read. It must be the first
-option word.
+installed before any later option word is read. It must precede every
+other option word except
+.BR \-\-zsh " and " \-\-zsh\-compat .
 .TP
 .B \-\-doctor
 Full diagnostic report of shell health, cache state, daemon presence,
@@ -102,8 +104,10 @@ definition file still matches the recorded mtime and length are skipped.
 Runs in its own process on purpose: the parser walks process-global lexer
 state and must not run beside a live line editor. The same pass runs at
 the end of every
-.BR zshrs\-recorder (1)
-run, and is reachable through the daemon as
+.B zshrs\-recorder
+run (unless it is given
+.BR \-\-no\-prewarm ),
+and is reachable through the daemon as
 .BR "zd prewarm" .
 Inside a shell the
 .B prewarm\-autoloads
@@ -370,8 +374,12 @@ emits the same corpus as HTML chapter sections, one
 per name.
 .TP
 .B \-\-dump\-plugins
-Emit JSON for every sourced plugin, grouped by the manager that installed
-it (zinit, oh\-my\-zsh, prezto, antidote, antigen, zplug, or loose). The
+Emit JSON for every plugin the recorded session sourced, grouped by the
+manager that installed it (zinit, oh\-my\-zsh, prezto, antidote, antigen,
+zplug, zsh\-more\-completions, zpwr, or loose). The list is read from
+.IR plugins.db ,
+which the daemon fills from each recorder shard it ingests; the array is
+empty until one has been ingested. The
 JetBrains plugin turns each entry into an IDE library root, so plugin
 functions are navigable and renameable across plugin boundaries.
 .TP
@@ -567,8 +575,8 @@ In
 mode the bash
 .B $PS1
 backslash escapes
-.RB ( \\u ", " \\h ", " \\w ", " \\W ", " \\$ ", " \\t ", " \\A ", " \\d ,
-.BR \\D{ fmt } ", " \\j ", " \\[ / \\] ,
+.RB ( \(rsu ", " \(rsh ", " \(rsw ", " \(rsW ", " \(rs$ ", " \(rst ", " \(rsA ", " \(rsd ,
+.BR \(rsD{ fmt } ", " \(rsj ", " \(rs[ / \(rs] ,
 octal) are expanded as bash expands them, and
 .B ${var@P}
 reports the expansion.
@@ -723,16 +731,28 @@ State root for caches, databases, logs and the daemon socket (default
 .IR $HOME/.zshrs ).
 .TP
 .B ZSHRS_CACHE
-Set to \fB0\fR to disable the caches and the daemon.
+Set to \fB0\fR, \fBfalse\fR or \fBno\fR to disable the script and autoload
+caches. It does not affect the daemon; that is switched off with
+.B enabled = \(dqoff\(dq
+under
+.B [daemon]
+in
+.IR $ZSHRS_HOME/zshrs.toml .
 .TP
 .B ZSHRS_LOG
 .BR tracing -style
 filter for the structured log written to
-.IR $HOME/.zshrs/zshrs.log
-.RB "(default " info ).
+.IR $ZSHRS_HOME/zshrs.log
+.RB ( zshrs\-lsp.log " under " \-\-lsp ,
+.BR zshrs\-dap.log " under " \-\-dap ;
+default level
+.BR info ).
 .TP
 .B ZSHRS_LONG_CMD_PRE_THRESHOLD
-Seconds before a long-running command warning fires.
+Seconds (default 5) a command must still be running before the shell
+reports it to the daemon as long-running (the
+.B cmd_started
+op). No effect without a running daemon.
 .TP
 .BR ANTHROPIC_API_KEY ", " OPENAI_API_KEY ", " GOOGLE_API_KEY ", " GEMINI_API_KEY
 Provider keys for the
@@ -770,7 +790,10 @@ Contains
 (compiled script chunks, keyed by path + mtime),
 .B autoloads.rkyv
 (one compiled definition program per autoloaded function, keyed by name
-and stamped with the definition file's mtime + length),
+and stamped with the producing binary, the resolved
+.I $fpath
+directory, the definition file's mtime + length and a SHA-256 of the
+definition text),
 .I images/
 (the daemon's canonical-state and bytecode shards) with
 .B index.rkyv
@@ -793,8 +816,14 @@ a WAL database written by a background thread per shell, so the prompt
 never waits on it when many shells share the file.
 .TP
 .I ~/.zshrs/zshrs-daemon.toml
-Optional daemon configuration. See
-.BR zd (1).
+Optional daemon configuration, seeded with defaults on the daemon's first
+start. The
+.B zd
+builtin (and the standalone
+.B zd
+binary, built with
+.BR "\-\-features zd" )
+administers the running daemon.
 .TP
 .I /etc/zshenv
 ,
@@ -820,7 +849,6 @@ builtin call. Non-existent commands exit with status 127; permission
 errors with 126.
 .SH SEE ALSO
 .BR zshrsall (1),
-.BR zd (1),
 .BR zsh (1),
 .BR zshbuiltins (1),
 .BR zshoptions (1),

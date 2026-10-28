@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-10-18T06:48:06.654832+00:00
+Generated: 2026-10-28T05:00:00.016467+00:00
 
 ## Method
 
@@ -16,7 +16,7 @@ Regenerate via:
 python3 scripts/gen_port_stubs.py
 ```
 
-## Summary: 62 stubs across 30 files
+## Summary: 61 stubs across 30 files
 
 | File | Stubs | Worst (Rust / C lines) |
 |---|---|---|
@@ -28,7 +28,6 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/compat.rs` | 2 | `zgettime_monotonic_if_available` (23 / 404) |
 | `src/ported/module.rs` | 2 | `load_and_bind` (1 / 20) |
 | `src/ported/modules/zutil.rs` | 2 | `freestylenode` (2 / 10) |
-| `src/ported/parse.rs` | 2 | `load_dump_file` (12 / 47) |
 | `src/ported/zle/compctl.rs` | 2 | `createcompctltable` (4 / 14) |
 | `src/ported/builtins/rlimits.rs` | 1 | `printrlim` (1 / 13) |
 | `src/ported/exec.rs` | 1 | `namedpipe` (24 / 1085) |
@@ -42,6 +41,7 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/modules/watch.rs` | 1 | `readwtab` (24 / 183) |
 | `src/ported/modules/zpty.rs` | 1 | `ptysettyinfo` (6 / 21) |
 | `src/ported/options.rs` | 1 | `createoptiontable` (4 / 16) |
+| `src/ported/parse.rs` | 1 | `load_dump_file` (12 / 47) |
 | `src/ported/signals.rs` | 1 | `wait_for_processes` (14 / 102) |
 | `src/ported/zle/compcore.rs` | 1 | `freematches` (6 / 26) |
 | `src/ported/zle/complete.rs` | 1 | `bin_compadd` (61 / 235) |
@@ -76,7 +76,7 @@ python3 scripts/gen_port_stubs.py
 | 1692 | `hashdir` | 4 | 58 | 6% |
 | 1651 | `createcmdnamtable` | 1 | 14 | 7% |
 | 1903 | `createshfunctable` | 1 | 13 | 7% |
-| 3379 | `createhisttable` | 1 | 13 | 7% |
+| 3372 | `createhisttable` | 1 | 13 | 7% |
 | 1556 | `expandhashtable` | 2 | 15 | 13% |
 | 1567 | `resizehashtable` | 4 | 18 | 22% |
 | 2029 | `freeshfuncnode` | 4 | 17 | 23% |
@@ -86,13 +86,13 @@ python3 scripts/gen_port_stubs.py
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
-| 7535 | `unmeta` | 4 | 35 | 11% |
-| 8456 | `mb_metacharlenconv_r` | 5 | 32 | 15% |
+| 7540 | `unmeta` | 4 | 35 | 11% |
+| 8461 | `mb_metacharlenconv_r` | 5 | 32 | 15% |
 | 113 | `set_widearray` | 6 | 30 | 20% |
-| 7370 | `metafy` | 11 | 54 | 20% |
-| 3974 | `timespec_diff_us` | 5 | 18 | 27% |
-| 1726 | `delprepromptfn` | 4 | 14 | 28% |
-| 7910 | `niceztrlen` | 4 | 14 | 28% |
+| 7375 | `metafy` | 11 | 54 | 20% |
+| 3979 | `timespec_diff_us` | 5 | 18 | 27% |
+| 1731 | `delprepromptfn` | 4 | 14 | 28% |
+| 7915 | `niceztrlen` | 4 | 14 | 28% |
 
 ### `src/ported/zle/zle_keymap.rs` — 3 stubs
 
@@ -121,8 +121,8 @@ python3 scripts/gen_port_stubs.py
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
-| 3746 | `load_and_bind` | 1 | 20 | 5% |
-| 4118 | `module_func` | 1 | 16 | 6% |
+| 3765 | `load_and_bind` | 1 | 20 | 5% |
+| 4137 | `module_func` | 1 | 16 | 6% |
 
 ### `src/ported/modules/zutil.rs` — 2 stubs
 
@@ -130,13 +130,6 @@ python3 scripts/gen_port_stubs.py
 |---|---|---|---|---|
 | 173 | `freestylenode` | 2 | 10 | 20% |
 | 859 | `setstypat` | 15 | 58 | 25% |
-
-### `src/ported/parse.rs` — 2 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 5533 | `load_dump_file` | 12 | 47 | 25% |
-| 2631 | `par_subsh` | 9 | 34 | 26% |
 
 ### `src/ported/zle/compctl.rs` — 2 stubs
 
@@ -155,13 +148,13 @@ python3 scripts/gen_port_stubs.py
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
-| 3985 | `namedpipe` | 24 | 1085 | 2% |
+| 4005 | `namedpipe` | 24 | 1085 | 2% |
 
 ### `src/ported/glob.rs` — 1 stubs
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
-| 1671 | `zglob` | 72 | 616 | 11% |
+| 1672 | `zglob` | 72 | 616 | 11% |
 
 ### `src/ported/hashnameddir.rs` — 1 stubs
 
@@ -173,7 +166,7 @@ python3 scripts/gen_port_stubs.py
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
-| 5116 | `lockhistfile` | 25 | 124 | 20% |
+| 5123 | `lockhistfile` | 25 | 124 | 20% |
 
 ### `src/ported/loop.rs` — 1 stubs
 
@@ -217,11 +210,17 @@ python3 scripts/gen_port_stubs.py
 |---|---|---|---|---|
 | 178 | `createoptiontable` | 4 | 16 | 25% |
 
+### `src/ported/parse.rs` — 1 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 5615 | `load_dump_file` | 12 | 47 | 25% |
+
 ### `src/ported/signals.rs` — 1 stubs
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
-| 328 | `wait_for_processes` | 14 | 102 | 13% |
+| 331 | `wait_for_processes` | 14 | 102 | 13% |
 
 ### `src/ported/zle/compcore.rs` — 1 stubs
 

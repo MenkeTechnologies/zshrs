@@ -23,68 +23,68 @@ Three dispositions:
 ## PORT — real C work faked (priority order: compat floor first)
 
 ### Completion result/list engine (highest blast radius — ZLE completion)
-- [ ] `zle/compresult.rs::do_single` — C compresult.c:963 (180) — replaces minfo/brace/AUTO_REMOVE_SLASH logic with a 1-line `instmatch` delegate
-- [ ] `zle/compresult.rs::cline_str` — C compresult.c:165 (271) — missing `ins=1` buffer-edit mode, brace insertion, posl population
-- [ ] `zle/compresult.rs::instmatch` — C compresult.c:578 (99) — ipre/pre/ppre/str insertion + brace position (brpl) tracking missing
-- [ ] `zle/compresult.rs::cut_cline` — C compresult.c:46 (110) — Rust sig changed to trivial truncation; Cline-chain restructuring gone
-- [ ] `zle/compresult.rs::instmatch`/`do_allmatches` — C compresult.c:895 (49) — `matches.join(sep)` vs LinkList walk + flag branching
-- [ ] `zle/compresult.rs::hasbrpsfx` — C compresult.c:683 (39) — `contains('{')` heuristic vs metafy_line/instmatch/lastpre-postbr compare
-- [ ] `zle/compresult.rs::valid_match` — C compresult.c:1206 (32) — starts/ends_with predicate vs minfo/amatches chain walk w/ CMF_DUMMY/MULT
-- [ ] `zle/compresult.rs::build_pos_string` — C compresult.c:489 (23) — `format!("{}/{}")` vs LinkList colon-string build
-- [ ] `zle/complist.rs::domenuselect` — C complist.c:2383 (940) — interactive menu loop (keys, incremental search, refresh) stubbed to var decls + guards
-- [ ] `zle/complist.rs::clnicezputs` — C complist.c:715 (107) — color/width/right-align formatting reduced to demeta-only
-- [ ] `zle/compmatch.rs::bld_line` — C compmatch.c:1734 (139) — ~25% (CPAT walk); brace nesting + accent-equivalence + cross-class missing
+- [x] `zle/compresult.rs::do_single` — C compresult.c:963 (180) — replaces minfo/brace/AUTO_REMOVE_SLASH logic with a 1-line `instmatch` delegate — **RESOLVED (re-audit 2026-10-28, v0.13.56)**: full minfo/brace/insert body with `// c:` citations — d54efb42be (more ports)
+- [x] `zle/compresult.rs::cline_str` — C compresult.c:165 (271) — missing `ins=1` buffer-edit mode, brace insertion, posl population — **RESOLVED (re-audit 2026-10-28, v0.13.56)**: `ins != 0` buffer-edit mode, brace insertion and `posl` population ported — d54efb42be (more ports); byte-exact metafied rebuild 264a6255bc
+- [x] `zle/compresult.rs::instmatch` — C compresult.c:578 (99) — ipre/pre/ppre/str insertion + brace position (brpl) tracking missing — **RESOLVED (re-audit 2026-10-28, v0.13.56)**: ipre/pre/ppre/str insertion + brpl tracking ported — d54efb42be (more ports); brace-suffix filter 0055b4fef7
+- [x] `zle/compresult.rs::cut_cline` — C compresult.c:46 (110) — Rust sig changed to trivial truncation; Cline-chain restructuring gone — **RESOLVED (re-audit 2026-10-28, v0.13.56)**: takes `Option<Box<Cline>>` and walks/restructures the Cline chain (c:46-155) — d54efb42be (more ports)
+- [x] `zle/compresult.rs::instmatch`/`do_allmatches` — C compresult.c:895 (49) — `matches.join(sep)` vs LinkList walk + flag branching — **RESOLVED (re-audit 2026-10-28, v0.13.56)**: `do_allmatches` walks the match groups with flag branching — d54efb42be (more ports)
+- [x] `zle/compresult.rs::hasbrpsfx` — C compresult.c:683 (39) — `contains('{')` heuristic vs metafy_line/instmatch/lastpre-postbr compare — **RESOLVED (re-audit 2026-10-28, v0.13.56)**: metafy_line/instmatch/lastprebr-lastpostbr compare (c:683-721) — d54efb42be (more ports); brace-suffix fix 0055b4fef7
+- [x] `zle/compresult.rs::valid_match` — C compresult.c:1206 (32) — starts/ends_with predicate vs minfo/amatches chain walk w/ CMF_DUMMY/MULT — **RESOLVED (re-audit 2026-10-28, v0.13.56)**: minfo/amatches group walk with CMF_DUMMY/NOLIST/MULT + hasbrpsfx under menuacc, zmult-directed wrap (c:1206-1239) — d54efb42be (more ports)
+- [x] `zle/compresult.rs::build_pos_string` — C compresult.c:489 (23) — `format!("{}/{}")` vs LinkList colon-string build — **RESOLVED (re-audit 2026-10-28, v0.13.56)**: verified line-for-line against compresult.c:489-518 (sprintf `%ld` per node, `:`-joined); the `&[i32]` signature is the LinkList-of-long idiom — d54efb42be (more ports)
+- [x] `zle/complist.rs::domenuselect` — C complist.c:2383 (940) — interactive menu loop (keys, incremental search, refresh) stubbed to var decls + guards — **RESOLVED (re-audit 2026-10-28, v0.13.56)**: interactive loop (key dispatch, incremental search, refresh, skip predicates) ported with `// c:` citations — d54efb42be (more ports); menu-select filtering ea61badce7
+- [x] `zle/complist.rs::clnicezputs` — C complist.c:715 (107) — color/width/right-align formatting reduced to demeta-only — **RESOLVED (re-audit 2026-10-28, v0.13.56)**: colour/width formatting ported — d54efb42be (more ports); non-ASCII nice-printing d33eefcfb1
+- [x] `zle/compmatch.rs::bld_line` — C compmatch.c:1734 (139) — ~25% (CPAT walk); brace nesting + accent-equivalence + cross-class missing — **RESOLVED (re-audit 2026-10-28, v0.13.56)**: two-pass genpatarr (c:1772-1875) with CPAT_EQUIV word-side resolution via `mword`; live callers `compmatch.rs::join_strs` (c:2057) and `compmatch.rs::join_sub` pass real word slices — d54efb42be (more ports)
 
 ### Completion core / compctl
-- [ ] `zle/compcore.rs::set_comp_sep` — C compcore.c:1459 (321) — lexer replay / token narrowing / qp-qs split / wb-we-offs update stubbed
-- [ ] `zle/compcore.rs::callcompfunc` — C compcore.c:543 (345) — shfunc dispatch / arg build / lex wrap / post-return only ~50 lines of ~391
-- [ ] `zle/compctl.rs::makecomplistflags` — C compctl.c:3043 (745) — ~15% of CC_* flag matrix (files/dirs/named/func/ylist/str); rest missing
-- [ ] `zle/compctl.rs::makecomplistext` — C compctl.c:2647 (150) — numeric-range only; evalcompcond string/pattern path missing
-- [ ] `zle/compctl.rs::makecomplistctl` — C compctl.c:2313 (74) — recursion bookkeeping + incompfunc state missing
-- [ ] `zle/compctl.rs::addmatch` — C compctl.c:1926 (103) — ADDWHAT heuristic vs file-test/path-build/CC_* filtering
-- [ ] `zle/complete.rs::bin_compadd` — C complete.c:611 (233) — flag parse + Cadata build + match insertion (~70 of 252 lines)
-- [ ] `zle/computil.rs::cfp_add_sdirs` — C computil.c:4763 (73) — GLOBDOTS / COMPPREFIX path handling missing
+- [x] `zle/compcore.rs::set_comp_sep` — C compcore.c:1459 (321) — lexer replay / token narrowing / qp-qs split / wb-we-offs update stubbed — **RESOLVED (re-audit 2026-10-28, v0.13.56)**: lexer replay / qp-qs split / wb-we-offs update ported — 530e9e481f (port: set_comp_sep + completion-globals dedup + inbufct lexer fix)
+- [x] `zle/compcore.rs::callcompfunc` — C compcore.c:543 (345) — shfunc dispatch / arg build / lex wrap / post-return only ~50 lines of ~391 — **RESOLVED (re-audit 2026-10-28, v0.13.56)**: shfunc dispatch, param assignment and post-return handling ported — 42833964e8 (more compsys); complete.c globals 9d4f0e850a
+- [x] `zle/compctl.rs::makecomplistflags` — C compctl.c:3043 (745) — ~15% of CC_* flag matrix (files/dirs/named/func/ylist/str); rest missing — **RESOLVED (re-audit 2026-10-28, v0.13.56)**: full CC_* matrix — 3f5088c6e1 (compctl: complete makecomplistflags; real runhookdef for compctl_make/cleanup; newzstyletable)
+- [x] `zle/compctl.rs::makecomplistext` — C compctl.c:2647 (150) — numeric-range only; evalcompcond string/pattern path missing — **RESOLVED (re-audit 2026-10-28, v0.13.56)**: evalcompcond string/pattern paths ported — d54efb42be (more ports); -x lexer path 742c833bd4
+- [x] `zle/compctl.rs::makecomplistctl` — C compctl.c:2313 (74) — recursion bookkeeping + incompfunc state missing — **RESOLVED (re-audit 2026-10-28, v0.13.56)**: recursion bookkeeping + incompfunc state — d54efb42be (more ports)
+- [x] `zle/compctl.rs::addmatch` — C compctl.c:1926 (103) — ADDWHAT heuristic vs file-test/path-build/CC_* filtering — **RESOLVED (re-audit 2026-10-28, v0.13.56)**: file-test/path-build/fignore/CC_* filtering ported — d54efb42be (more ports); 742c833bd4
+- [x] `zle/complete.rs::bin_compadd` — C complete.c:611 (233) — flag parse + Cadata build + match insertion (~70 of 252 lines) — **RESOLVED (re-audit 2026-10-28, v0.13.56)**: body now lives in `complete.rs::bin_compadd_body` (char-by-char flag parse a8859a7813; Cadata build + addmatches insertion 42833964e8 (more compsys)); `bin_compadd` is the c:609 guard + compadd-override dispatch
+- [x] `zle/computil.rs::cfp_add_sdirs` — C computil.c:4763 (73) — GLOBDOTS / COMPPREFIX path handling missing — **RESOLVED (re-audit 2026-10-28, v0.13.56)**: GLOBDOTS / COMPPREFIX `.` gate (c:4776) + fake-entry expansion ported — d54efb42be (more ports)
 
 ### ZLE refresh / input / search engines
-- [ ] `zle/zle_refresh.rs::zrefresh` — C zle_refresh.c:975 (658) — screen-refresh engine, 13% present
-- [ ] `zle/zle_refresh.rs::tc_rightcurs` — C zle_refresh.c:2237 (63) — termcap cursor-right movement choices
+- [~] `zle/zle_refresh.rs::zrefresh` — C zle_refresh.c:975 (658) — screen-refresh engine, 13% present — **PARTIAL (re-audit 2026-10-28, v0.13.56)**: build + NBUF/OBUF diff output ported with `// c:` citations (88c1240ae6, 816fc87958, a9f3611ae1, 0ae92f6835); remaining deferrals named in-body: MB `extra_ellipsis` back-off (c:1571-1592, c:1614-1631), `rpmpt_attr` folding into `prompt_attr`, `olnct = min(t0, winh)` restore (c:1131/1154)
+- [x] `zle/zle_refresh.rs::tc_rightcurs` — C zle_refresh.c:2237 (63) — termcap cursor-right movement choices — **RESOLVED (re-audit 2026-10-28, v0.13.56)**: capability preference + tab/prompt/video-cell/space-pad fallbacks (c:2237-2315) — b5b0e0b27e, e9b5da5077 (feat(zle/refresh): port tc_rightcurs full body)
 - [x] `zle/zle_refresh.rs::moveto` — C zle_refresh.c:2163 (44) — cursor move w/ line-wrap + coord handling — **FIXED**: emitted absolute CSI H but left VCS/VLN stale; C updates vln/vcs as the cursor moves (c:2159-2204) and the diff renderer reads them for the next frame. Now sets VLN=row, VCS=col. Proof: moveto_updates_vcs_vln.
-- [ ] `zle/zle_hist.rs::doisearch` — C zle_hist.c:1083 (462) — incremental-search engine; 26-line stub, no UI loop
-- [ ] `zle/zle_hist.rs::getvisrchstr` — C zle_hist.c:1815 (118) — minibuffer search-string read w/ keymap switch; snapshots buffer only
-- [~] `zle/zle_main.rs::getbyte` — C zle_main.c:861 (76) — core done (raw_getbyte + \n/\r swap + LASTCHAR); remaining: EINTR retry loop + EIO device-reattach edge cases. **[ZLE engine Phase 1]**
+- [x] `zle/zle_hist.rs::doisearch` — C zle_hist.c:1083 (462) — incremental-search engine; 26-line stub, no UI loop — **RESOLVED (re-audit 2026-10-28, v0.13.56)**: full incremental-search loop ported — d54efb42be (more ports)
+- [x] `zle/zle_hist.rs::getvisrchstr` — C zle_hist.c:1815 (118) — minibuffer search-string read w/ keymap switch; snapshots buffer only — **RESOLVED (re-audit 2026-10-28, v0.13.56)**: minibuffer read loop with keymap switch ported — d54efb42be (more ports)
+- [x] `zle/zle_main.rs::getbyte` — C zle_main.c:861 (76) — core done (raw_getbyte + \n/\r swap + LASTCHAR); remaining: EINTR retry loop + EIO device-reattach edge cases. **[ZLE engine Phase 1]** — **RESOLVED (re-audit 2026-10-28, v0.13.56)**: EOF/IGNOREEOF retry, EINTR, EWOULDBLOCK and fatal-read-error arms (c:865-937) — 643fe726a9 (fix(zle): port getbyte's EOF and read-error arms from zle_main.c:865-937)
 - [x] `zle/zle_main.rs::raw_getbyte` — C zle_main.c:506 (242) — **PORTED [ZLE engine Phase 1]**: replaced the busy-wait sleep loop with a real `poll(2)` over SHTTY + the `zle -F` watched fds (c:532-589), dispatching watch handlers (widget → `zlecallhook`, function → `callhookfunc` with fd + err/hup/nval flags, c:715-772). Substrate (`WATCH_FDS`/`watch_fd`/`zlecallhook`/`callhookfunc`) already existed — wired it. 93 input tests green (raw_getbyte/getbyte/getfullchar/watch).
-- [ ] `zle/zle_main.rs::zleread` — C zle_main.c:1216 (127+) — skeleton; undo/history/hooks/prompt setup missing
+- [x] `zle/zle_main.rs::zleread` — C zle_main.c:1216 (127+) — skeleton; undo/history/hooks/prompt setup missing — **RESOLVED (re-audit 2026-10-28, v0.13.56)**: initundo/histline/stackhist/handleundo/viinsert_init/zle-line-init hook setup ported (c:1260-1356) — e099f489df, 8697c6b53b (fix(zle): zleread never popped the buffer stack)
 - [x] `zle/zle_utils.rs::showmsg` — C zle_utils.c:1310 (72) — multibyte width-aware message display — **PORTED** non-MB branch (c:1389-1408): trashzle + metafied byte scan w/ nicechar expansion + cc/up column tracking + clearflag cursor-restore (tcmultout TCUP). MB branch (mbrtowc/wcs_nicechar) deferred on multibyte substrate. Proof: showmsg_emits_message_and_trailing_newline.
-- [ ] `zle/zle_utils.rs::spaceinline` — C zle_utils.c:784 (54) — buffer insertion w/ region-highlight adjustment
-- [ ] `zle/zle_move.rs::backwardmetafiedchar` — C zle_move.c:170 (75) — UTF-8/Meta backward scan w/ combining chars
+- [x] `zle/zle_utils.rs::spaceinline` — C zle_utils.c:784 (54) — buffer insertion w/ region-highlight adjustment — **DONE** 9f35916026 (see triage section)
+- [ ] `zle/zle_move.rs::backwardmetafiedchar` — C zle_move.c:170 (75) — UTF-8/Meta backward scan w/ combining chars — (re-audit 2026-10-28, v0.13.56: unchanged — still the no-arg ZLECS decrement; callers inline the walk)
 - [x] `zle/zle_vi.rs::vireplacechars` — C zle_vi.c:594 (62) — **PORTED** (was faking the key read with `LASTCHAR` and dropping the region/visual path; now reads via `vigetkey`, handles char/line region selection, the `<return>`→single-newline special case, and `shiftchars`/`spaceinline` width fixup; all deps verified present; 77 zle_vi tests green)
-- [ ] `zle/termquery.rs::probe_terminal` — C termquery.c:200 (208) — response-matching state machine / feature extraction; reads raw bytes only
-- [ ] `zle/zle_main.rs::describekeybriefly` — C zle_main.c:1892 (28) — delegates to helper + faked 0
+- [x] `zle/termquery.rs::probe_terminal` — C termquery.c:200 (208) — response-matching state machine / feature extraction; reads raw bytes only — **RESOLVED (re-audit 2026-10-28, v0.13.56)**: response-matching state machine ported — 8e21e67351 (zle: pre-redraw hook never ran, zle -T tc was ignored, ...)
+- [x] `zle/zle_main.rs::describekeybriefly` — C zle_main.c:1892 (28) — delegates to helper + faked 0 — **RESOLVED (re-audit 2026-10-28, v0.13.56)**: the delegate `zle_main.rs::describe_key_briefly` is a line-by-line port of c:1898-1922 (statusline guard, start_edit/zrefresh, visual keymap, getkeymapcmd, bindztrdup/nicedup, showmsg) — d54efb42be (more ports)
 
 ### Core shell
 - [x] `utils.rs::lchdir` — C utils.c:7400 (161) — symlink-attack detect (lstat pre/post), dev/inode checks, dirfd fallback, hard/soft modes — **PORTED** (was 9-line `set_current_dir` fake; now full per-component lstat→chdir→re-lstat dev/ino integrity descent + restoredir + HOME/`/` fallback; signature restored to `(path, d, hard) -> i32`; 3 callers in builtin.rs/glob.rs updated, cd_get_dest return-value bug fixed to return `buf` per c:1181)
-- [ ] `utils.rs::checkmailpath` — C utils.c:1621 (89) — dir recursion / S_ISDIR / parsestr+singsub param subst missing
+- [x] `utils.rs::checkmailpath` — C utils.c:1621 (89) — dir recursion / S_ISDIR / parsestr+singsub param subst missing — **RESOLVED (re-audit 2026-10-28, v0.13.56)**: e2d8cd0579 (fix(utils): faithful checkmailpath port — real mtime/atime/size + dir recursion + MAILWARNING)
 - [x] `utils.rs::findsep` — C utils.c:3784 (52) — **PORTED** (was `str::find` on `is_ascii_whitespace`, dropped `quote` + multibyte + ISEP semantics; now faithful `(s: &mut String, pos, sep, quote) -> i32`: ISEP/`$IFS` split, in-place backslash stripping for `\<sep>` and `\\`→`\`, empty-sep single-char advance, multi-byte literal sep; 5 unit tests added; no callers — kept as faithful name anchor since `splitstring`/`findword`/`wordcount` inline the logic)
-- [ ] `glob.rs::zglob` — C glob.c:1213 (614) — glob-qualifier parse (c:1240-2012) deferred; ~35-line `glob_path` delegate
-- [ ] `glob.rs::scanner` — C glob.c:500 (162) — chdir+opendir tree walk simplified to `fs::read_dir`; lchdir diagnostics gone
-- [ ] `hist.rs::savehistfile` — C hist.c:2922 (199) — write modes / ownership / atomic rename / HISTORY_IGNORE / backslash escaping
-- [ ] `hist.rs::lockhistfile` — C hist.c:3182 (124) — symlink/link/open retry-loop locking simplified to fs2 try_lock
-- [ ] `init.rs::source` — C init.c:1584 (97) — state save/restore present; parse-exec + .zwc load deferred to executor
-- [ ] `signals.rs::wait_for_processes` — C signals.c:249 (102) — per-PID job-table update / cmdoutpid / execstack walk deferred
-- [ ] `builtin.rs::cd_new_pwd` — C builtin.c:1188 (71) — dirstack ops (rolllist/remnode) / symlink resolve / dup detect deferred to caller
-- [ ] `prompt.rs::promptexpand` — C prompt.c:182 (43) — init_term / PROMPTSUBST / putpromptchar loop / Inpar-Outpar strip in helper
-- [ ] `prompt.rs::match_highlight` — C prompt.c:2031 (75) — hl=/fg=/bg=/layer=/opacity= attribute loop parser missing
-- [ ] `compat.rs::zgetdir` — C compat.c:355 (146) — getcwd + walk-based fallback (stat/opendir) reduced to current_dir
-- [ ] `exec.rs::execpline` — C exec.c:1724 (237) — pipe/fork/job-table primitives deferred (structural stub)
-- [ ] `parse.rs::par_subsh` — C parse.c:1619 (34) — structure parsed; wordcode emit deferred
-- [ ] `parse.rs::load_dump_file` — C parse.c:3675 (47) — mmap + page-align lost; plain read_to_end
-- [ ] `hashtable.rs::addhistnode` — C hashtable.c:1427 (17) — HIST_MAKEUNIQUE/FOREIGN dup-flag state machine reduced to plain insert
+- [x] `glob.rs::zglob` — C glob.c:1213 (614) — glob-qualifier parse (c:1240-2012) deferred; ~35-line `glob_path` delegate — **RECLASSIFIED NOT-FAKE** (see VERIFY section)
+- [x] `glob.rs::scanner` — C glob.c:500 (162) — chdir+opendir tree walk simplified to `fs::read_dir`; lchdir diagnostics gone — **RECLASSIFIED NOT-FAKE** (see VERIFY section)
+- [x] `hist.rs::savehistfile` — C hist.c:2922 (199) — write modes / ownership / atomic rename / HISTORY_IGNORE / backslash escaping — **RESOLVED (re-audit 2026-10-28, v0.13.56)**: write modes, HISTSAVEBYCOPY rename, fchown, HISTORY_IGNORE, `:` escaping ported — d54efb42be (more ports)
+- [ ] `hist.rs::lockhistfile` — C hist.c:3182 (124) — symlink/link/open retry-loop locking simplified to fs2 try_lock — (re-audit 2026-10-28, v0.13.56: still open — flockhistfile + 100ms retry loop, no link/symlink lock-file protocol)
+- [~] `init.rs::source` — C init.c:1584 (97) — state save/restore present; parse-exec + .zwc load deferred to executor — **PARTIAL (re-audit 2026-10-28, v0.13.56)**: FS_SOURCE push 47a91ebae0; SOURCETRACE 95d53efe7b; caller lineno restore e1c00a42a3. Still missing: `trap_state = TRAP_STATE_INACTIVE`, SHINSTDIN toggle
+- [ ] `signals.rs::wait_for_processes` — C signals.c:249 (102) — per-PID job-table update / cmdoutpid / execstack walk deferred — (re-audit 2026-10-28, v0.13.56: still open — wait4 reap + reaped_status publish; per-PID findproc/jobtab update not ported)
+- [x] `builtin.rs::cd_new_pwd` — C builtin.c:1188 (71) — dirstack ops (rolllist/remnode) / symlink resolve / dup detect deferred to caller — **DONE** (DIRSTACKSIZE cap fac4b266f6; see VERIFY section)
+- [x] `prompt.rs::promptexpand` — C prompt.c:182 (43) — init_term / PROMPTSUBST / putpromptchar loop / Inpar-Outpar strip in helper — **RECLASSIFIED NOT-FAKE** (see VERIFY section)
+- [x] `prompt.rs::match_highlight` — C prompt.c:2031 (75) — hl=/fg=/bg=/layer=/opacity= attribute loop parser missing — **RESOLVED (re-audit 2026-10-28, v0.13.56)**: rewritten as the zsh 5.9.2 parser (fg=/bg=/none/bold/standout/underline; `layer=`/`opacity=` are dev-tree-only and intentionally absent) — f88334a8f3; the zle_refresh duplicate now delegates to it — a9f3611ae1
+- [x] `compat.rs::zgetdir` — C compat.c:355 (146) — getcwd + walk-based fallback (stat/opendir) reduced to current_dir — **RECLASSIFIED NOT-FAKE** (see VERIFY section)
+- [x] `exec.rs::execpline` — C exec.c:1724 (237) — pipe/fork/job-table primitives deferred (structural stub) — **RECLASSIFIED NOT-FAKE** (see VERIFY section)
+- [x] `parse.rs::par_subsh` — C parse.c:1619 (34) — structure parsed; wordcode emit deferred — **RECLASSIFIED NOT-FAKE** (see VERIFY section)
+- [ ] `parse.rs::load_dump_file` — C parse.c:3675 (47) — mmap + page-align lost; plain read_to_end — **VESTIGIAL** (re-audit 2026-10-28, v0.13.56: still callerless, body unchanged)
+- [x] `hashtable.rs::addhistnode` — C hashtable.c:1427 (17) — HIST_MAKEUNIQUE/FOREIGN dup-flag state machine reduced to plain insert — **RESOLVED (re-audit 2026-10-28, v0.13.56)**: HIST_MAKEUNIQUE/HIST_FOREIGN dup state machine + hist_ignore_all_dups freehistnode (c:1429-1445), ring flags mutated via `hist_ring` `iter_mut` (no `ring_get_mut` needed) — d54efb42be (more ports)
 
 ### Modules
-- [ ] `modules/curses.rs::zccmd_input` — C Modules/curses.c:1082 (173) — wgetch loop / EINTR / mouse decode stubbed
-- [ ] `modules/zutil.rs::setstypat` — C Modules/zutil.c:295 (58) — weight-scoring present; parse_string eval-body parse (c:304-318) skipped
-- [ ] `modules/db_gdbm.rs::gdbmhashsetfn` — C Modules/db_gdbm.c:464 (47) — gdbm_reorganize (c:489) skipped, else faithful
-- [ ] `modules/db_gdbm.rs::unmetafy_zalloc` — C Modules/db_gdbm.c:760 (11) — omits zalloc buffer + memcpy; returns heap String
+- [x] `modules/curses.rs::zccmd_input` — C Modules/curses.c:1082 (173) — wgetch loop / EINTR / mouse decode stubbed — **RESOLVED (re-audit 2026-10-28, v0.13.56)**: KEY_MOUSE branch (c:1209-1263) via an in-crate xterm-mouse decoder feeding `PENDING_MOUSE` — d54efb42be (more ports)
+- [x] `modules/zutil.rs::setstypat` — C Modules/zutil.c:295 (58) — weight-scoring present; parse_string eval-body parse (c:304-318) skipped — **DONE** 077c1323a7 (see triage section)
+- [x] `modules/db_gdbm.rs::gdbmhashsetfn` — C Modules/db_gdbm.c:464 (47) — gdbm_reorganize (c:489) skipped, else faithful — **DONE** 5820064aa1 (see triage section)
+- [ ] `modules/db_gdbm.rs::unmetafy_zalloc` — C Modules/db_gdbm.c:760 (11) — omits zalloc buffer + memcpy; returns heap String — (re-audit 2026-10-28, v0.13.56: unchanged — `unmeta` + len; idiom question tracked in triage section)
 
 ---
 
@@ -98,8 +98,15 @@ The 4 candidates the audit first flagged here were each read and found
   real work routes through `setup_module → m->u.linked->setup`. Name anchors.
 - `parse.rs::build_cur_dump` (L4495) — already honest: emits
   `zwarnnam(... "wordcode dump-current emit not yet ported")` + `return 1`.
+  **Superseded (re-audit 2026-10-28, v0.13.56):** the warn-and-return-1
+  body is gone; `build_cur_dump` is now a cited port of the `.zwc`
+  current-function dump emit — d54efb42be (more ports), 6ab47eb8ec
+  (ported: finish deferred bodies in jobs, exec, builtin, ...).
 - `utils.rs::read_poll` (L3005) — does real `libc::poll`; signature narrowed
   (drops C's char-read peek) but it's an honest `read -t` poll wrapper.
+  **Superseded (re-audit 2026-10-28, v0.13.56):** signature restored to C's
+  `(fd, readchar: &mut i32, polltty, timeout)` with the char-read peek —
+  d54efb42be (more ports).
 
 ---
 
@@ -175,22 +182,33 @@ largely illusory: on close inspection most have hidden substrate gaps
   ("CPAT_CHAR-only path"), so the EQUIV branch never fires. Faithful
   bld_line (C's two-pass genpatarr, c:1772-1875) + a non-empty mword
   require porting the completion-matcher chain first.
+  **Resolved (re-audit 2026-10-28, v0.13.56):** d54efb42be (more ports)
+  ported the two-pass bld_line; `compmatch.rs::join_strs` (c:2057) and
+  `compmatch.rs::join_sub` call it with real word slices.
 - [BLOCKED] `hashtable.rs::addhistnode` — `ring_get` returns a clone; no
   `ring_get_mut`, so the C `he->node.flags |= HIST_DUP` ring mutation
   can't be expressed without a new mutable ring accessor
+  **Resolved (re-audit 2026-10-28, v0.13.56):** d54efb42be (more ports)
+  mutates the flags through `hist_ring.lock().iter_mut()` located by
+  `histnum`; full c:1429-1445 state machine present.
 - [x] `modules/zutil.rs::setstypat` — **done** (the `-e` eval path faked
   the program with an empty `eprog::default()`; now `parse_string` →
   `dupeprog` stores the real Eprog in `stypat.eval`; `bin_zstyle` routed
   through `setstypat` to match C and avoid a re-lock; new test pins
   `len > 0`. Residual ratio flag is a detector artifact — C inlines the
   weight scoring in `setstypat`; the Rust factored it into `set`.)
-- [ ] `compcore.rs::callcompfunc`, `complete.rs::bin_compadd` (VERIFY — may
-  already be adequate)
+- [x] `compcore.rs::callcompfunc`, `complete.rs::bin_compadd` (VERIFY — may
+  already be adequate) — **Resolved (re-audit 2026-10-28, v0.13.56):**
+  callcompfunc 42833964e8 + 9d4f0e850a; bin_compadd body in
+  `complete.rs::bin_compadd_body` (a8859a7813, 42833964e8)
 - [BLOCKED] `modules/curses.rs::zccmd_input` — non-mouse path already
   faithful; the `KEY_MOUSE` event-decode branch (c:1162-1216) needs xterm
   SGR-mouse sequence parsing in `read_key_sequence`. libncurses is NOT
   linked (curses.rs:61), so ncurses `getmouse`/`MEVENT` are unavailable —
   the decode must be reimplemented in the input layer. BLOCKED.
+  **Resolved (re-audit 2026-10-28, v0.13.56):** d54efb42be (more ports)
+  added the in-crate xterm mouse decoder that fills `PENDING_MOUSE`, and
+  `zccmd_input` now runs the c:1209-1263 KEY_MOUSE branch.
 - likely NOT-FAKE (idiom): `modules/db_gdbm.rs::unmetafy_zalloc` — the C
   `zalloc`+`memcpy`+`zsfree` exact-size-copy dance is exactly what an owned
   Rust `String` provides; current port returns `(String, len)` — faithful
@@ -214,6 +232,11 @@ largely illusory: on close inspection most have hidden substrate gaps
   `wait_for_processes` (unless already adequate — see VERIFY)
 - linklist + param-subst + `shout`: `checkmailpath`
 - HISTORY_IGNORE/atomic-rename/lock-retry: `savehistfile`, `lockhistfile`
+
+Re-audit (as of 2026-10-28, v0.13.56): of the fns in this BLOCKED list,
+only `zrefresh` (partial), `backwardmetafiedchar`, `wait_for_processes`
+and `lockhistfile` remain unresolved; the rest are marked with their
+resolving commits in the PORT list above.
 
 **VERIFY — drained.** All items audited and reclassified or partially
 ported.
@@ -285,6 +308,13 @@ ported.
   touches the zle_refresh/hlgroup call sites. Neither impl yet covers
   C's `layer=`/`opacity=` clauses (tracked). Reclassified out of PORT
   (the flagged fn isn't the live highlight parser).
+  **Resolved (re-audit 2026-10-28, v0.13.56):** f88334a8f3 rewrote
+  `prompt.rs::match_highlight` as the zsh 5.9.2 parser (returns
+  `(atr, mask, rest)`); a9f3611ae1 made `zle_refresh.rs::match_highlight`
+  a one-line delegate to it, and `hlgroup.rs` calls the prompt.rs parser.
+  The consolidation action item is closed. `layer=`/`opacity=` are
+  dev-tree-only syntax that zsh 5.9.2 does not parse, so their absence
+  is parity, not a gap.
 
 - [VERIFIED NOT-FAKE] `prompt.rs::promptexpand` — audited against C: the
   heavy lifting is faithful. `promptexpand` delegates to `expand_prompt`,
@@ -350,6 +380,23 @@ ported.
 
 ## Counts
 
+**Re-audit (as of 2026-10-28, v0.13.56).** Every entry in the PORT list
+above was re-read against its C body; resolved entries carry the
+resolving commit inline (found with `git log -L` on the fn body since
+2026-06-15). All 54 PORT-list fns still exist. Status of the 54 entries:
+
+- resolved / done: 41 (faithful ports with `// c:` citations)
+- reclassified NOT-FAKE (VERIFY section): 6 (`zglob`, `scanner`,
+  `execpline`, `par_subsh`, `zgetdir`, `promptexpand`)
+- partial: 2 (`zrefresh` — MB extra_ellipsis back-off, `rpmpt_attr`
+  folding, `olnct` restore deferred; `source` — `trap_state` and the
+  SHINSTDIN toggle missing)
+- vestigial: 1 (`load_dump_file` — callerless)
+- still open: 4 (`backwardmetafiedchar`, `wait_for_processes`,
+  `lockhistfile`, `unmetafy_zalloc`)
+
+The June 2026 counts below are kept as the historical record.
+
 - PORT: 52  (genuine fakes — C work faked; require faithful port)
   - done: 7 full + 1 partial (`lchdir`, `findsep`, `vireplacechars`,
     `gdbmhashsetfn`, `setstypat`, `cd_new_pwd`, `spaceinline`; partial:
@@ -384,7 +431,8 @@ ported.
     load_dump_header; `prompt.rs::match_highlight` — test-only duplicate,
     live parser is zle_refresh.rs::match_highlight)
   - ACTION ITEM flagged: consolidate the two `match_highlight` impls
-    (no-duplicate-implementations rule; needs boss sign-off)
+    (no-duplicate-implementations rule; needs boss sign-off) — closed
+    by a9f3611ae1 (re-audit 2026-10-28, v0.13.56)
   - confirmed BLOCKED: `zccmd_input` (mouse decode / no ncurses)
   - NOTE: READY bucket exhausted. Remaining items are completion/ZLE-
     engine-blocked or VERIFY-bucket audits. Continued *porting* throughput
