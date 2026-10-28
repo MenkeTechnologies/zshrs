@@ -781,9 +781,11 @@ fn has_unescaped_colon(s: &str) -> bool {
     false
 }
 
-/// sh:118's `:s/\\:/:/` — replace every `\:` with `:`.
+/// sh:118's `:s/\\:/:/` — replace the FIRST `\:` with `:`. `:s` without
+/// the `g` modifier substitutes one occurrence (zshexpn "s/l/r[/]"), so
+/// `p\:q\:r` becomes `p:q\:r`.
 fn unescape_colons(s: &str) -> String {
-    s.replace("\\:", ":")
+    s.replacen("\\:", ":", 1)
 }
 
 #[cfg(test)]
@@ -879,7 +881,7 @@ mod tests {
 
     #[test]
     fn unescape_colons_replaces_backslash_colon() {
-        assert_eq!(unescape_colons("a\\:b\\:c"), "a:b:c");
+        assert_eq!(unescape_colons("a\\:b\\:c"), "a:b\\:c");
         assert_eq!(unescape_colons("plain"), "plain");
     }
 
