@@ -200,7 +200,13 @@ pub fn _alternative_impl(args: &[String]) -> i32 {
             let _ = _description(&[tag.clone(), "expl".to_string(), descr.clone()]);
 
             // sh:30 action dispatch
-            if action.trim().is_empty() {
+            // sh:30  `[[ "$action" = \ # ]]` — under the EXTENDED_GLOB
+            // compsys runs with, `\ #` is zero or more SPACES and nothing
+            // else. `trim()` also ate tabs and newlines, so an action of one
+            // tab became a message where zsh takes the sh:64 arm, evals it to
+            // an empty array and runs `"$action[1]"` — the empty command word
+            // (`_alternative:71: permission denied: `).
+            if action.bytes().all(|b| b == b' ') {
                 // sh:30  Empty action → defer to messages collection.
                 mesgs.push(format!("{}:{}", tag, descr));
             } else if action.starts_with("((") && action.ends_with("))") {
@@ -324,22 +330,27 @@ pub fn _alternative_impl(args: &[String]) -> i32 {
                         Ok(words) => words,
                         Err(scalar) => crate::compsys::ported::scalar_action_call(&scalar),
                     };
-                if let Some((cmd, rest)) = parts.split_first() {
-                    loop {
-                        let nl = vec![tag.clone(), "expl".to_string(), descr.clone()];
-                        if _next_label(&nl) != 0 {
-                            break;
-                        }
-                        let expl = getaparam("expl").unwrap_or_default();
-                        let mut call_argv: Vec<String> = subopts.clone();
-                        call_argv.extend(expl);
-                        call_argv.extend(rest.iter().cloned());
-                        // sh:71 — `"$action[1]" "$subopts[@]" "$expl[@]"
-                        // "${(@)action[2,-1]}"`, the line the callee's frame
-                        // records as its caller line.
-                        // Same silent-dispatch gap as the sh:63 arm above.
-                        let _ = crate::compsys::ported::shared::dispatch_action_command(cmd, &call_argv, 71);
+                // sh:71 `"$action[1]"` is quoted, so an action that evals to
+                // NO words still runs a command: the empty word, with
+                // `$subopts`/`$expl` as its arguments.
+                let (cmd, rest): (&str, &[String]) = match parts.split_first() {
+                    Some((c, r)) => (c.as_str(), r),
+                    None => ("", &[]),
+                };
+                loop {
+                    let nl = vec![tag.clone(), "expl".to_string(), descr.clone()];
+                    if _next_label(&nl) != 0 {
+                        break;
                     }
+                    let expl = getaparam("expl").unwrap_or_default();
+                    let mut call_argv: Vec<String> = subopts.clone();
+                    call_argv.extend(expl);
+                    call_argv.extend(rest.iter().cloned());
+                    // sh:71 — `"$action[1]" "$subopts[@]" "$expl[@]"
+                    // "${(@)action[2,-1]}"`, the line the callee's frame
+                    // records as its caller line.
+                    // Same silent-dispatch gap as the sh:63 arm above.
+                    let _ = crate::compsys::ported::shared::dispatch_action_command(cmd, &call_argv, 71);
                 }
             }
         }
