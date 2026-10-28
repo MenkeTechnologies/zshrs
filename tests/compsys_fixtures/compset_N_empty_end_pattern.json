@@ -1,0 +1,84 @@
+{
+ "schema": "compsys-fixture/2",
+ "id": "compset_N_empty_end_pattern",
+ "title": "GUARD (fixed in 677af02625) — was: `compset -N '-*' ''` treated the EMPTY end pattern as absent; zsh searches for it, finds the empty current word, and the test fails",
+ "harness": "compsys_spec_fuzz",
+ "run": {
+  "buffer": "fzce -x a ",
+  "keys": [
+   "tab"
+  ],
+  "flags": [],
+  "spec": {
+   "cmd": "fzce",
+   "kind": "compset",
+   "seed": 5000000,
+   "case": -1,
+   "widget": "default",
+   "setup": [],
+   "completer": "#compdef fzce\n\nlocal -a h\ncompset -N '-*' '' && h+=(hit)\ncompadd -x \"CUR=$CURRENT W=${(j:|:)words} H=$h\"\ncompadd -U -- xa yb\n"
+  }
+ },
+ "expect": "agrees",
+ "group": "completer-machinery",
+ "fingerprint": null,
+ "observed": {
+  "verdict": "PASS",
+  "detail": "0 row(s) differ",
+  "notes": "Src/Zle/complete.c do_comp_vars CVT_RANGEPAT tests `if (t && sb)` — a NULL test. `''` is a non-NULL empty pattern: the forward walk matches the empty current word, so `tt && i < compcurrent` clears t and compset returns 1 without restricting words (CUR=4, W=fzp|-x|a|)."
+ },
+ "observed_when_diverging": {
+  "verdict": "FAIL",
+  "category": "grid-diff",
+  "detail": "1 row(s) differ",
+  "rows": [
+   {
+    "row": 2,
+    "zsh": "PRE=|SUF=|IPRE=|ISUF=|QIPRE=|QISUF=|CUR=4|W=fzp|-x|a||H=",
+    "zshrs": "PRE=|SUF=|IPRE=|ISUF=|QIPRE=|QISUF=|CUR=2|W=a||H=Ne"
+   }
+  ],
+  "recorded_under": "main at 87c1835211 plus the uncommitted singsub half of this commit, target/debug/zshrs zshrs 0.13.56, witness completer `compset -N '-*' '' && h+=(Ne)` under the command name fzp"
+ },
+ "retired": {
+  "date": "2026-10-28",
+  "fix_commit": "677af02625",
+  "why": "do_comp_vars takes `sb: Option<&str>`; bin_compset passes argv[2] through as Some even when empty, cond_psfix/cond_range pass None for C's NULL."
+ },
+ "controls": [
+  {
+   "note": "no end pattern: both shells restrict words to a| and hit",
+   "spec": {
+    "completer": "#compdef fzce\n\nlocal -a h\ncompset -N '-*' && h+=(hit)\ncompadd -x \"CUR=$CURRENT W=${(j:|:)words} H=$h\"\ncompadd -U -- xa yb\n"
+   }
+  }
+ ],
+ "variants": [],
+ "origin": [
+  "lane-5 compset probe grid, 2026-10-28 (scratch probe Nempty_3)"
+ ],
+ "confirmed": {
+  "date": "2026-10-28",
+  "commit": "677af02625",
+  "harness_sha256_16": {
+   "scripts/compsys_spec_fuzz.py": "7c0a079a8ae27ee7",
+   "scripts/compsys_regressions.py": "619b844636a94cb7"
+  },
+  "zshrs_binary": {
+   "path": "target/debug/zshrs",
+   "size": 133994840,
+   "mtime": "2026-10-28 02:05:26",
+   "version": "zshrs 0.13.56",
+   "sha256_16": "4b2ce28c39d4a1e6",
+   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)"
+  },
+  "zsh_binary": {
+   "path": "/opt/homebrew/bin/zsh",
+   "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)"
+  },
+  "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "zshrs": "target/debug/zshrs zshrs 0.13.56 (133994840 bytes, 2026-10-28 02:05:26)",
+  "note": "PASS on the fixed binary for the fixture cell and its control"
+ },
+ "history": []
+}

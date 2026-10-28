@@ -1,0 +1,96 @@
+{
+ "schema": "compsys-fixture/2",
+ "id": "compset_N_pattern_singsub",
+ "title": "GUARD (fixed in 677af02625) — was: `compset -N` compiled its patterns without `singsub`, so `compset -N '-*' '=*'` matched where zsh runs `=` expansion on the end pattern and aborts with `* not found`",
+ "harness": "compsys_spec_fuzz",
+ "run": {
+  "buffer": "fzcs -x a=b c=d",
+  "keys": [
+   "tab"
+  ],
+  "flags": [],
+  "spec": {
+   "cmd": "fzcs",
+   "kind": "compset",
+   "seed": 5000000,
+   "case": -1,
+   "widget": "default",
+   "setup": [],
+   "completer": "#compdef fzcs\n\nlocal -a h\ncompset -N '-*' '=*' && h+=(hit)\ncompadd -x \"CUR=$CURRENT W=${(j:|:)words} H=$h\"\ncompadd -U -- xa yb\n"
+  }
+ },
+ "expect": "agrees",
+ "group": "completer-machinery",
+ "fingerprint": null,
+ "observed": {
+  "verdict": "PASS(err)",
+  "detail": "both shells report: _fzcs:4: * not found",
+  "notes": "Src/Zle/complete.c do_comp_vars CVT_RANGEPAT runs `singsub(&sa)` before patcompile and, once the begin pattern matched, `singsub(&sb)` for the end pattern. The operand reaching it was tokenized by bin_compset, so `=*` carries an Equals token and is equals-expanded: `* not found`, errflag, the completion function aborts and the line is redrawn without a listing."
+ },
+ "observed_when_diverging": {
+  "verdict": "FAIL",
+  "category": "one-sided-error",
+  "detail": "2 row(s) differ",
+  "rows": [
+   {
+    "row": 1,
+    "zsh": "_fzp:4: * not found",
+    "zshrs": "PRE=c=d|SUF=|IPRE=|ISUF=|QIPRE=|QISUF=|CUR=2|W=a=b|c=d|H=N2"
+   },
+   {
+    "row": 2,
+    "zsh": "@SFZ@ fzp -x a=b c=d",
+    "zshrs": "<absent>"
+   }
+  ],
+  "recorded_under": "main at 87c1835211, target/debug/zshrs zshrs 0.13.56 (sha256 a584f827d2287793), witness completer `compset -N '-*' '=*' && h+=(N2)` under the command name fzp"
+ },
+ "retired": {
+  "date": "2026-10-28",
+  "fix_commit": "677af02625",
+  "why": "do_comp_vars CVT_RANGEPAT now runs singsub on sa (c:968) and sb (c:982), keeping the operand when singsub raised errflag as C's in-place singsub does (Src/subst.c:521-522)."
+ },
+ "controls": [
+  {
+   "note": "same line, end pattern without a token: no expansion error, both shells restrict words to a=b|c=d and hit",
+   "spec": {
+    "completer": "#compdef fzcs\n\nlocal -a h\ncompset -N '-*' 'zz' && h+=(hit)\ncompadd -x \"CUR=$CURRENT W=${(j:|:)words} H=$h\"\ncompadd -U -- xa yb\n"
+   }
+  }
+ ],
+ "variants": [
+  {
+   "note": "the begin pattern given through a parameter: singsub expands `$pat`, so the range starts after `-x`",
+   "spec": {
+    "completer": "#compdef fzcs\n\nlocal -a h\nlocal pat='-*'\ncompset -N '$pat' && h+=(hit)\ncompadd -x \"CUR=$CURRENT W=${(j:|:)words} H=$h\"\ncompadd -U -- xa yb\n"
+   }
+  }
+ ],
+ "origin": [
+  "lane-5 compset probe grid, 2026-10-28 (scratch probe N_two_3)"
+ ],
+ "confirmed": {
+  "date": "2026-10-28",
+  "commit": "677af02625",
+  "harness_sha256_16": {
+   "scripts/compsys_spec_fuzz.py": "7c0a079a8ae27ee7",
+   "scripts/compsys_regressions.py": "619b844636a94cb7"
+  },
+  "zshrs_binary": {
+   "path": "target/debug/zshrs",
+   "size": 133994840,
+   "mtime": "2026-10-28 02:05:26",
+   "version": "zshrs 0.13.56",
+   "sha256_16": "4b2ce28c39d4a1e6",
+   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)"
+  },
+  "zsh_binary": {
+   "path": "/opt/homebrew/bin/zsh",
+   "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)"
+  },
+  "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "zshrs": "target/debug/zshrs zshrs 0.13.56 (133994840 bytes, 2026-10-28 02:05:26)",
+  "note": "PASS on the fixed binary for the fixture cell, its control and its variant"
+ },
+ "history": []
+}
