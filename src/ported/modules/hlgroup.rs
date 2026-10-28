@@ -501,7 +501,16 @@ mod tests {
             len[TCUNDERLINEBEG as usize] = 4;
         }
         crate::ported::params::TERMFLAGS.store(0, Ordering::SeqCst);
+        // `zattrescape` renders against `txtcurrentattrs` (prompt.c:260,
+        // :1647), so start from the clean state a fresh shell has.
+        use crate::ported::prompt::{current_attrs_lock, pending_attrs_lock, txtunknownattrs};
+        let saved_cur = std::mem::take(&mut *current_attrs_lock().lock().unwrap());
+        let saved_pnd = std::mem::take(&mut *pending_attrs_lock().lock().unwrap());
+        let saved_unk = txtunknownattrs.swap(0, Ordering::SeqCst);
         let r = f();
+        *current_attrs_lock().lock().unwrap() = saved_cur;
+        *pending_attrs_lock().lock().unwrap() = saved_pnd;
+        txtunknownattrs.store(saved_unk, Ordering::SeqCst);
         *crate::ported::init::tclen.lock().unwrap() = saved_len;
         *crate::ported::init::tcstr.lock().unwrap() = saved_str;
         crate::ported::params::TERMFLAGS.store(saved_flags, Ordering::SeqCst);
@@ -898,6 +907,7 @@ mod tests {
     /// c:58 — `convertattr` returns String (compile-time type pin).
     #[test]
     fn convertattr_returns_string_type() {
+        let _g = crate::test_util::global_state_lock();
         let _: String = convertattr("", false);
         let _: String = convertattr("fg=red", true);
     }
@@ -905,6 +915,7 @@ mod tests {
     /// c:58 — `convertattr("", _)` is well-defined (empty or default).
     #[test]
     fn convertattr_empty_input_no_panic() {
+        let _g = crate::test_util::global_state_lock();
         let _ = convertattr("", false);
         let _ = convertattr("", true);
     }
@@ -938,18 +949,21 @@ mod tests {
     /// c:210 — `getgroup` returns Option<String>.
     #[test]
     fn getgroup_returns_option_string_type() {
+        let _g = crate::test_util::global_state_lock();
         let _: Option<String> = getgroup("any", false);
     }
 
     /// c:283 — `scangroup` returns Vec (compile-time pin).
     #[test]
     fn scangroup_returns_vec_type() {
+        let _g = crate::test_util::global_state_lock();
         let _: Vec<(String, String)> = scangroup(false);
     }
 
     /// c:283 — `scangroup` is deterministic.
     #[test]
     fn scangroup_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
         let first = scangroup(false);
         for _ in 0..3 {
             assert_eq!(scangroup(false), first, "scangroup must be deterministic");
@@ -959,18 +973,21 @@ mod tests {
     /// c:297 — `getpmesc(empty)` is a PM_UNSET node.
     #[test]
     fn getpmesc_empty_returns_none() {
+        let _g = crate::test_util::global_state_lock();
         assert!(getpmesc(std::ptr::null_mut(), "").is_some_and(|p| p.node.flags as u32 & crate::ported::zsh_h::PM_UNSET != 0));
     }
 
     /// c:313 — `getpmsgr(empty)` is a PM_UNSET node.
     #[test]
     fn getpmsgr_empty_returns_none() {
+        let _g = crate::test_util::global_state_lock();
         assert!(getpmsgr(std::ptr::null_mut(), "").is_some_and(|p| p.node.flags as u32 & crate::ported::zsh_h::PM_UNSET != 0));
     }
 
     /// c:305 + c:321 — `scanpmesc`/`scanpmsgr` return Vec (type pin).
     #[test]
     fn scanpm_variants_return_vec_type() {
+        let _g = crate::test_util::global_state_lock();
         let _: Vec<(String, String)> = collect_scan(scanpmesc);
         let _: Vec<(String, String)> = collect_scan(scanpmsgr);
     }
@@ -999,12 +1016,14 @@ mod tests {
     /// c:58 — `convertattr` returns String (compile-time pin, alt).
     #[test]
     fn convertattr_returns_string_pin_alt() {
+        let _g = crate::test_util::global_state_lock();
         let _: String = convertattr("fg=red", false);
     }
 
     /// c:58 — `convertattr` empty input is deterministic across modes.
     #[test]
     fn convertattr_empty_input_both_modes_deterministic() {
+        let _g = crate::test_util::global_state_lock();
         let a1 = convertattr("", false);
         let a2 = convertattr("", false);
         assert_eq!(a1, a2, "empty(false) must be pure");
@@ -1016,6 +1035,7 @@ mod tests {
     /// c:210 — `getgroup` for empty name is deterministic.
     #[test]
     fn getgroup_empty_name_deterministic() {
+        let _g = crate::test_util::global_state_lock();
         let a = getgroup("", false);
         let b = getgroup("", false);
         assert_eq!(
@@ -1028,12 +1048,14 @@ mod tests {
     /// c:210 — `getgroup` returns Option<String> for sgr=true too.
     #[test]
     fn getgroup_sgr_mode_returns_option_string_type() {
+        let _g = crate::test_util::global_state_lock();
         let _: Option<String> = getgroup("name", true);
     }
 
     /// c:283 — `scangroup(true)` returns Vec (sgr-mode pin).
     #[test]
     fn scangroup_sgr_mode_returns_vec_type() {
+        let _g = crate::test_util::global_state_lock();
         let _: Vec<(String, String)> = scangroup(true);
     }
 
@@ -1041,6 +1063,7 @@ mod tests {
     /// both deterministic per call.
     #[test]
     fn scangroup_both_modes_deterministic() {
+        let _g = crate::test_util::global_state_lock();
         let f1 = scangroup(false);
         let f2 = scangroup(false);
         assert_eq!(f1, f2, "scangroup(false) must be deterministic");
@@ -1052,18 +1075,21 @@ mod tests {
     /// c:297 — `getpmesc` returns Option<Param> (compile-time pin).
     #[test]
     fn getpmesc_returns_option_string_type() {
+        let _g = crate::test_util::global_state_lock();
         let _: Option<crate::ported::zsh_h::Param> = getpmesc(std::ptr::null_mut(), "anykey");
     }
 
     /// c:313 — `getpmsgr` returns Option<Param> (compile-time pin).
     #[test]
     fn getpmsgr_returns_option_string_type() {
+        let _g = crate::test_util::global_state_lock();
         let _: Option<crate::ported::zsh_h::Param> = getpmsgr(std::ptr::null_mut(), "anykey");
     }
 
     /// c:305 — `scanpmesc` is deterministic.
     #[test]
     fn scanpmesc_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
         let a = collect_scan(scanpmesc);
         let b = collect_scan(scanpmesc);
         assert_eq!(a, b, "scanpmesc must be deterministic");
@@ -1072,6 +1098,7 @@ mod tests {
     /// c:321 — `scanpmsgr` is deterministic.
     #[test]
     fn scanpmsgr_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
         let a = collect_scan(scanpmsgr);
         let b = collect_scan(scanpmsgr);
         assert_eq!(a, b, "scanpmsgr must be deterministic");
@@ -1080,6 +1107,7 @@ mod tests {
     /// c:283 — `scangroup` results: all keys non-empty (every group has a name).
     #[test]
     fn scangroup_keys_all_non_empty() {
+        let _g = crate::test_util::global_state_lock();
         for (k, _) in scangroup(false) {
             assert!(
                 !k.is_empty(),
