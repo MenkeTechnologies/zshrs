@@ -997,26 +997,28 @@ pub fn _main_complete(args: &[String]) -> i32 {
             // call, so the sh:224 test below sees only what THIS completer set.
             let _ = setsparam("_comp_mesg", "");
 
-            // sh:218 — `elif "$tmp"; then`. `$tmp` is an ordinary command
+            // sh:214 — `elif "$tmp"; then` (line 214 of the bundled master
+            // file, vendor/zsh/functions/_main_complete; 218 in the 5.9.2
+            // release this port was first written against). `$tmp` is an ordinary command
             // word, so a completer named by the `completer` style but never
             // defined is a plain command-not-found: zsh prints
-            // `_main_complete:218: command not found: NAME` on stderr and the
+            // `_main_complete:214: command not found: NAME` on stderr and the
             // call yields 127, which just moves the chain along. `None` here
             // is that case (undefined, or `disable -f`'d — C's lookupshfunc
             // returns NULL for both and falls through to PATH). The port
             // folded `None` into a silent non-zero, so a typo in the
             // `completer` style produced no diagnostic whatsoever.
-            // sh:218 — publish the calling line so the completer's frame
-            // records `_main_complete:218`, matching zsh's `$functrace`. The
+            // sh:214 — publish the calling line so the completer's frame
+            // records `_main_complete:214`, matching zsh's `$functrace`. The
             // diagnostic below already cites this line; the frame has to agree.
-            crate::compsys::ported::shared::set_sh_lineno(218);
+            crate::compsys::ported::shared::set_sh_lineno(214);
             match dispatch_function_call(&bare, &[]) {
                 Some(0) => {
                     ret = 0;
                     break;
                 }
                 Some(_) => {}
-                None => eprintln!("_main_complete:218: command not found: {}", bare),
+                None => eprintln!("_main_complete:214: command not found: {}", bare),
             }
             matcher_num += 1;
         }
