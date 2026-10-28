@@ -19,9 +19,9 @@ the two `NON_FIXTURE_FILES` in `scripts/compsys_regressions.py`):
 
 | | |
 | --- | --- |
-| fixtures pinned | 40 |
+| fixtures pinned | 41 |
 | `diverges` | 13 |
-| `agrees` — retired as guards | 26 |
+| `agrees` — retired as guards | 27 |
 | `reference-crash` | 1 |
 
 Re-derive it with `scripts/compsys_regressions.py --list`, which boots no
@@ -90,9 +90,9 @@ Seven `agrees` fixtures carry no `retired` block:
   that adds the fixture); no generated case reaches it, because the `tags`
   kind never sets `tag-order`. Its `guard_verified` records the pre-fix build
   it fails on.
-* `fake_style_description_recursion` — added as an `agrees` cell with the
-  `_description` recursion-guard fix (the commit that adds the fixture); the
-  `tags` kind sets no styles, so no generated case reaches it. Its
+* `compvalues_v_empty_line_clears_assoc` — added as an `agrees` cell
+  with the `cv_parse_word` fix (the commit that adds the fixture); `_values`
+  ignores the `compvalues -v` status, so no generated case reaches it. Its
   `guard_verified` records the pre-fix build it fails on.
 
 ## Running it

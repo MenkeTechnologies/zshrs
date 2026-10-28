@@ -6549,11 +6549,12 @@ pub fn cv_parse_word(d: &mut cvdef) {
             d: Some(Box::new(d.clone())),
             def: state_def,
             val: state_val,
-            vals: if state_vals.is_empty() {
-                None
-            } else {
-                Some(state_vals)
-            },
+            // c:3388 `state.vals = (LinkList) znewlinklist();` — the list
+            // always exists, even with no value on the line, so
+            // `compvalues -v` (c:3685 `if (cv_laststate.vals)`) returns 0
+            // and sets the assoc to EMPTY rather than failing and leaving
+            // the caller's old contents in place.
+            vals: Some(state_vals),
         };
     }
 }

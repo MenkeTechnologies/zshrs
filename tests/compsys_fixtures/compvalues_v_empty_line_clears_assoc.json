@@ -1,0 +1,75 @@
+{
+ "schema": "compsys-fixture/2",
+ "id": "compvalues_v_empty_line_clears_assoc",
+ "title": "`compvalues -v` with no value on the line: zsh returns 0 and empties the assoc, zshrs returned 1 and left the old contents",
+ "harness": "compsys_spec_fuzz",
+ "run": {
+  "buffer": "fzc0000 ",
+  "keys": [
+   "tab"
+  ],
+  "flags": [],
+  "spec": {
+   "cmd": "fzc0000",
+   "kind": "values",
+   "widget": "default",
+   "seed": 2099801,
+   "case": 0,
+   "setup": [
+    "setopt no_beep"
+   ],
+   "completer": "#compdef fzc0000\ntypeset -A va; va=(stale 1)\ncompvalues -i -s , hdr \"aa[one]\" \"bb[two]\"\ncompvalues -v va; local r=$?\ncompadd -U -Q -J p -X probe -- \"v=$r\" \"va=${(kv)va}\" zz\n"
+  }
+ },
+ "expect": "agrees",
+ "group": "completer-machinery",
+ "fingerprint": null,
+ "observed": {
+  "verdict": "PASS",
+  "detail": "PASS",
+  "rows": [
+   {
+    "row": 2,
+    "zsh": "v=0  va=  zz",
+    "zshrs": "v=0  va=  zz"
+   }
+  ],
+  "measured": "2026-10-28, target/debug/zshrs built from 7b4e4af21b plus the cv_parse_word fix (zshrs 0.13.56, 134043080 bytes, sha256 5b74da8ced9d7aba) vs zsh 5.9.2, scripts/compsys_spec_fuzz.py --replay",
+  "notes": "cv_parse_word always allocates the value list (Src/Zle/computil.c:3388 `state.vals = (LinkList) znewlinklist();`), so bin_compvalues -v (c:3685 `if (cv_laststate.vals)`) takes the sethparam branch even when the list is empty: status 0 and the caller's assoc replaced by an empty one. The port stored None for an empty list and fell to `return 1`, leaving `va=(stale 1)` in place."
+ },
+ "observed_when_diverging": {
+  "verdict": "FAIL",
+  "category": "grid-diff",
+  "detail": "1 row(s) differ",
+  "rows": [
+   {
+    "row": 2,
+    "zsh": "v=0  va=  zz",
+    "zshrs": "v=1         va=stale 1  zz"
+   }
+  ],
+  "recorded_under": "copy of target/debug/zshrs at db058fbede before the fix (zshrs 0.13.56, 133988872 bytes, sha256 358b8bcef8cf2bed)"
+ },
+ "guard_verified": {
+  "date": "2026-10-28",
+  "against": "pre-fix debug build (sha256 358b8bcef8cf2bed)",
+  "verdict": "FAIL",
+  "detail": "1 row(s) differ",
+  "note": "compsys_spec_fuzz --replay of this cell: FAIL on the pre-fix build, PASS on the fixed one."
+ },
+ "why_this_fixture_exists": "Found by driving compvalues directly from a completer and adding each subcommand's status and output as matches; _values itself ignores the -v status and always passes a fresh local assoc, so no generated _values spec can reach this.",
+ "controls": [
+  {
+   "note": "same completer with `aa,` already on the line: the list is non-empty on both sides and both shells agree (v=0, va=aa).",
+   "buffer": "fzc0000 aa,",
+   "keys": [
+    "tab"
+   ]
+  }
+ ],
+ "variants": [],
+ "origin": [
+  "hand probe lane2/probes/r1.zsh (compsys_spec_fuzz --replay)"
+ ],
+ "history": []
+}
