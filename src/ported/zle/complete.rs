@@ -40,7 +40,7 @@ use crate::ported::params::{
     strvarsetfn,
 };
 use crate::ported::pattern::{patcompile, pattry, range_type};
-use crate::ported::utils::{zerr, zwarnnam};
+use crate::ported::utils::{errflag, zerr, zwarnnam};
 use crate::ported::zle::comp_h::{
     Cmatcher, Cpattern, CAF_ALL, CAF_ARRAYS, CAF_KEYS, CAF_MATCH, CAF_MATSORT, CAF_NOSORT,
     CAF_QUOTE, CAF_UNIQALL, CAF_UNIQCON, CLF_LINE, CLF_SUF, CMF_DISPLINE, CMF_FILE, CMF_HIDE,
@@ -1689,7 +1689,7 @@ pub fn do_comp_vars(
     mut na: i32,
     sa: &str, // c:935
     mut nb: i32,
-    sb: &str,
+    sb: Option<&str>, // c:935 `char *sb` — NULL vs "" is significant (c:980)
     mod_: i32,
 ) -> i32 {
     match test {
@@ -1736,13 +1736,18 @@ pub fn do_comp_vars(
             if i < 0 || i >= l {
                 return 0;
             } // c:965
-              // c:968 — singsub(&sa); — caller already expanded.
-              // c:969 — the operand is compiled AS GIVEN. Both callers hand
-              // it over already tokenized: `bin_compset` runs
-              // `tokenize`/`remnulargs` in its own switch (c:1192-1196), and
-              // `cond_range` gets what `cond_str(a, n, 1)` (c:1688) kept from
-              // the lexer / `$~`'s GLOB_SUBST.
-            let pp = patcompile(sa, PAT_HEAPDUP, None); // c:969
+            // c:968 — `singsub(&sa);`. The operand arrives tokenized (by
+            // `bin_compset`'s own `tokenize`/`remnulargs`, c:1192-1196, or
+            // by `cond_str(a, n, 1)` for `cond_range`, c:1688) and is
+            // substituted HERE, so `compset -N '$pat'` matches against the
+            // value of `$pat`, and `compset -N '=*'` runs `=` expansion
+            // (zsh 5.9.2: `* not found`, completion aborted). C's `singsub`
+            // returns before storing into `*s` when it raised `errflag`
+            // (Src/subst.c:521-522), so the operand then stays as it was;
+            // the Rust `singsub` returns "" there instead.
+            let subbed = crate::ported::subst::singsub(sa); // c:968
+            let sa = if errflag.load(Ordering::Relaxed) != 0 { sa.to_string() } else { subbed };
+            let pp = patcompile(&sa, PAT_HEAPDUP, None); // c:969
                                                         // c:971-977 — walk compwords backward looking for sa match.
             i -= 1; // c:971
             while i >= 0 {
@@ -1757,10 +1762,14 @@ pub fn do_comp_vars(
                 i -= 1;
             }
             // c:980-993 — if matched and sb given, walk forward for sb.
-            if t != 0 && !sb.is_empty() {
-                // c:980
+            // c:980 — `if (t && sb)`: a NULL test, so an EMPTY end pattern
+            // (`compset -N '-*' ''`) is still searched for and matches an
+            // empty word, e.g. the empty current word.
+            if let (true, Some(sb)) = (t != 0, sb) {
                 let mut tt = 0i32;
-                let pp2 = patcompile(sb, PAT_HEAPDUP, None); // c:983
+                let subbed = crate::ported::subst::singsub(sb); // c:982 `singsub(&sb);`
+                let sb = if errflag.load(Ordering::Relaxed) != 0 { sb.to_string() } else { subbed };
+                let pp2 = patcompile(&sb, PAT_HEAPDUP, None); // c:983
                 i += 1; // c:984
                 while i < l {
                     if let Some(ref prog) = pp2 {
@@ -2188,7 +2197,7 @@ pub fn bin_compset(
     // (C-boolean); the `compset` BUILTIN reports success as exit status 0
     // (compsys tests `compset -P … && …` / `== 0`), so match → 0, no match → 1
     // (C's `return !do_comp_vars(...)`).
-    if do_comp_vars(test, na, pat, nb, sb_ref.unwrap_or(""), 1) != 0 {
+    if do_comp_vars(test, na, pat, nb, sb_ref, 1) != 0 {
         0
     } else {
         1
@@ -3345,12 +3354,12 @@ pub fn cond_psfix(a: &[String], id: i32) -> i32 {
             //           cond_str(a,1,1), 0, NULL, 0);`
             let na = crate::ported::cond::cond_val(a, 0) as i32;
             let sa = crate::ported::cond::cond_str(a, 1, true);
-            return do_comp_vars(id, na, &sa, 0, "", 0);
+            return do_comp_vars(id, na, &sa, 0, None, 0);
         } else {
             // c:1669 — `else return do_comp_vars(id, -1, cond_str(a,0,1),
             //           0, NULL, 0);`
             let sa = crate::ported::cond::cond_str(a, 0, true);
-            return do_comp_vars(id, -1, &sa, 0, "", 0);
+            return do_comp_vars(id, -1, &sa, 0, None, 0);
         }
     }
     0 // c:1671
@@ -3368,11 +3377,11 @@ pub fn cond_range(a: &[String], id: i32) -> i32 {
     // matched against the unexpanded text.
     let sa = crate::ported::cond::cond_str(a, 0, true); // c:1688
     let sb = if id != 0 {
-        crate::ported::cond::cond_str(a, 1, true) // c:1689
+        Some(crate::ported::cond::cond_str(a, 1, true)) // c:1689
     } else {
-        String::new()
+        None
     };
-    do_comp_vars(CVT_RANGEPAT, 0, &sa, 0, &sb, 0) // c:1688
+    do_comp_vars(CVT_RANGEPAT, 0, &sa, 0, sb.as_deref(), 0) // c:1688
 }
 
 /// Direct port of `int setup_(UNUSED(Module m))` from `Src/Zle/complete.c:1720`.
