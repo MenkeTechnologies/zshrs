@@ -3423,6 +3423,18 @@ pub fn refreshline(ln: i32) {
             } else {
                 nl = padded.clone();
             }
+            // c:1799 — C's `nl` IS `nbuf[ln]`, so the memcpy pads the row
+            // in place: "next time obuf will be up-to-date". `nl` here is a
+            // copy, so store it back. Without this the next refresh saw the
+            // short unpadded row as `ol`, missed c:1825's clear-to-eol, and
+            // erased a shortened tail with ` \b` where zsh sends `\e[K`.
+            // Only edit-buffer rows: C's `ln` 0 is PROMPT_LAST_ROW here
+            // (c:1787 bridge above), and rows above it are prompt-only.
+            if ln > rp_row {
+                if let Some(row) = NBUF.lock().unwrap().get_mut(ln as usize) {
+                    *row = nl.clone();
+                }
+            }
         } else {
             // c:1800
             nl = padded; // c:1801
@@ -7046,6 +7058,60 @@ mod tests {
     /// Diff-path proof, shorten case: OBUF="abcd" → NBUF="ab". The old
     /// trailing "cd" must be erased — when the terminal lacks clear-to-eol
     /// (none in a headless test), refreshline overwrites it with spaces.
+    #[test]
+    fn refreshline_cleareol_pads_nbuf_row_in_place() {
+        // c:1798-1799 — `if (ln && nbuf[ln]) ZR_memcpy(nl, p1, winw + 2);
+        // /* next time obuf will be up-to-date */`. `nl` is `nbuf[ln]` in C,
+        // so a cleareol refresh of an edit row leaves that row padded with
+        // spaces to winw. The next refresh then reads a winw-long `ol` and
+        // c:1825 clears a shortened tail with `\e[K`; the port padded a copy
+        // and lost it, so it erased with ` \b` instead (compsys_spec_fuzz
+        // seed 7001000 case 115: unique match wrapping at cols 31, then BS).
+        use std::os::unix::io::FromRawFd;
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        let mut fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe()");
+        let old_shtty = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(fds[1], Ordering::SeqCst);
+
+        let mk = |s: &str| -> REFRESH_STRING {
+            s.chars()
+                .map(|c| REFRESH_ELEMENT { chr: c, atr: 0 })
+                .chain(std::iter::once(REFRESH_ELEMENT { chr: '\0', atr: 0 }))
+                .collect()
+        };
+        let old_winw = WINW.load(Ordering::SeqCst);
+        WINW.store(10, Ordering::SeqCst);
+        *OBUF.lock().unwrap() = vec![mk("p")];
+        *NBUF.lock().unwrap() = vec![mk("p"), mk("ab")];
+        NLNCT.store(2, Ordering::SeqCst);
+        OLNCT.store(1, Ordering::SeqCst);
+        PROMPT_LAST_ROW.store(0, Ordering::SeqCst);
+        VCS.store(0, Ordering::SeqCst);
+        VLN.store(0, Ordering::SeqCst);
+        CLEAREOL.store(1, Ordering::SeqCst); // c:1674 — row 1 is newly used
+        LPROMPTW.store(0, Ordering::SeqCst);
+        crate::ported::init::hasam.store(0, Ordering::SeqCst);
+
+        refreshline(1);
+
+        CLEAREOL.store(0, Ordering::SeqCst);
+        WINW.store(old_winw, Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(old_shtty, Ordering::SeqCst);
+        unsafe {
+            libc::close(fds[1]);
+            drop(std::fs::File::from_raw_fd(fds[0]));
+        }
+        let row: String = NBUF.lock().unwrap()[1]
+            .iter()
+            .take_while(|e| e.chr != '\0')
+            .map(|e| e.chr)
+            .collect();
+        assert_eq!(row, "ab        ", "nbuf[1] must keep the winw padding");
+    }
+
     #[test]
     fn refreshline_erases_shortened_tail() {
         use std::io::Read;
