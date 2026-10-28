@@ -13,15 +13,15 @@ gate fails if the two shells stop matching again.
 
 ## Where the set stands
 
-The fixture set as of 2026-10-27, v0.13.56, read off the `expect` field of each
+The fixture set as of 2026-10-28, v0.13.56, read off the `expect` field of each
 fixture file (every `*.json` here except `groups.json` and `last_gate.json`,
 the two `NON_FIXTURE_FILES` in `scripts/compsys_regressions.py`):
 
 | | |
 | --- | --- |
-| fixtures pinned | 31 |
+| fixtures pinned | 32 |
 | `diverges` | 14 |
-| `agrees` — retired as guards | 16 |
+| `agrees` — retired as guards | 17 |
 | `reference-crash` | 1 |
 
 Re-derive it with `scripts/compsys_regressions.py --list`, which boots no
@@ -55,7 +55,7 @@ That run had six guards. They were re-verified three times before their
 `expect` was flipped, and each was then run against a zshrs that still carries
 its bug to check that it fails there — see `guard_verified` in the fixture.
 
-The guards as of 2026-10-27, v0.13.56, and the commit each one protects, read
+The guards as of 2026-10-28, v0.13.56, and the commit each one protects, read
 off `retired.fix_commit`:
 
 | fix commit | guards |
@@ -66,6 +66,7 @@ off `retired.fix_commit`:
 | `5538e5f86b` | `alternative_nested_action_bad_option` |
 | `c67727aaa8` | `files_glob_from_zle_c_widget` |
 | `f799727619` | `complete_help_caller_frame` |
+| `db058fbede` | `describe_prefix_hidden_drops_description` |
 
 Five `agrees` fixtures carry no `retired` block:
 

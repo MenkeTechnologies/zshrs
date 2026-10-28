@@ -1,0 +1,124 @@
+{
+ "schema": "compsys-fixture/2",
+ "id": "describe_prefix_hidden_drops_description",
+ "title": "GUARD (fixed in db058fbede) — was: `_describe -o` under `prefix-hidden`: zsh lists `--bb` as bare `bb`, zshrs listed `bb-- same`",
+ "harness": "compsys_spec_fuzz",
+ "run": {
+  "buffer": "fzc0000 --",
+  "keys": [
+   "tab",
+   "tab"
+  ],
+  "flags": [],
+  "spec": {
+   "cmd": "fzc0000",
+   "kind": "describe",
+   "widget": "default",
+   "seed": 2099942,
+   "case": 0,
+   "setup": [
+    "setopt no_beep"
+   ],
+   "completer": "#compdef fzc0000\nzstyle ':completion:*:options' prefix-hidden true\nzstyle ':completion:*' list-grouped false\nlocal -a _m\n_m=( '--aa:same' '--bb:same' '--cc:other' )\n_describe -o hdr _m\n"
+  }
+ },
+ "expect": "agrees",
+ "retired": {
+  "date": "2026-10-28",
+  "previous_expect": "diverges",
+  "fix_commit": "db058fbede",
+  "fix_commit_subject": "completions: add the arguments builtin handlers accept but completers missed (carries the unrelated cd_get hunk; see why_this_fixture_exists)",
+  "why": "cd_get's CRT_DESC arm (src/ported/zle/computil.rs) now honours C's `p += str->len` (Src/Zle/computil.c:675): when the hide strip left str shorter than len, the display is the stripped name alone, as ztrdup(buf) at c:718 yields in zsh.",
+  "evidence": "compsys_spec_fuzz --replay: FAIL (3 row(s) differ) on the pre-fix copy, PASS on the fixed copy; compsys_regressions.py --only on each, see guard_verified.",
+  "kept_because": "a fixed bug is worth more as a guard than as a deleted file."
+ },
+ "group": "completer-machinery",
+ "fingerprint": null,
+ "observed": {
+  "verdict": "PASS",
+  "detail": "PASS",
+  "rows": [
+   {
+    "row": 0,
+    "zsh": "@SFZ@ fzc0000 --aa",
+    "zshrs": "@SFZ@ fzc0000 --aa"
+   },
+   {
+    "row": 1,
+    "zsh": "aa",
+    "zshrs": "aa"
+   },
+   {
+    "row": 2,
+    "zsh": "bb",
+    "zshrs": "bb"
+   },
+   {
+    "row": 3,
+    "zsh": "cc",
+    "zshrs": "cc"
+   }
+  ],
+  "measured": "2026-10-28, a copy of target/debug/zshrs built from db058fbede plus the cd_get fix (zshrs 0.13.56, 133994840 bytes, sha256 2eef4bc952208aa3) vs zsh 5.9.2, scripts/compsys_spec_fuzz.py --replay",
+  "notes": "With prefix-hidden, compdescribe -I strips the leading `--` from each cdstr's display string at Src/Zle/computil.c:559-567, AFTER str->len was measured at c:540. The CRT_DESC arm of cd_get then does `strcpy(p, str->str); p += str->len;` (c:674-675): the cursor steps past the NUL strcpy wrote, the padding, separator and description land after it, and `ztrdup(buf)` (c:718) keeps only the stripped name. zsh therefore lists `bb`, with no description. list-grouped false forces the CRT_DESC arm for every row."
+ },
+ "observed_when_diverging": {
+  "verdict": "FAIL",
+  "category": "grid-diff",
+  "detail": "3 row(s) differ",
+  "rows": [
+   {
+    "row": 1,
+    "zsh": "aa",
+    "zshrs": "aa-- same"
+   },
+   {
+    "row": 2,
+    "zsh": "bb",
+    "zshrs": "bb-- same"
+   },
+   {
+    "row": 3,
+    "zsh": "cc",
+    "zshrs": "cc-- other"
+   }
+  ],
+  "recorded_under": "copy of target/debug/zshrs at db058fbede before the fix (zshrs 0.13.56, 133988872 bytes, sha256 358b8bcef8cf2bed)"
+ },
+ "guard_verified": {
+  "date": "2026-10-28",
+  "against": "pre-fix debug build (zshrs 0.13.56, 133988872 bytes, sha256 358b8bcef8cf2bed) — carries the bug",
+  "verdict": "CONTROL-MOVED",
+  "attempts": [
+   "ERROR",
+   "ERROR",
+   "CONTROL-MOVED"
+  ],
+  "detail": "3 row(s) differ",
+  "controls_on_the_old_binary": "describe_prefix_hidden_drops_description/control0: CONTROL-HOLDS (PASS)",
+  "note": "`python3.14 scripts/compsys_regressions.py --only describe_prefix_hidden_drops_description --zshrs <pre-fix copy>` exit 1 with the same detail observed_when_diverging records; the same command against the fixed copy (sha256 2eef4bc952208aa3) exit 0, both cells CONTROL-HOLDS. The two ERROR attempts were load (real zsh disagreed with itself between runs), re-run by --confirm-moved."
+ },
+ "why_this_fixture_exists": "The port computed padding from the stale width and appended separator and description, which C never shows. Found by hand-probing the `_describe -o` surface in the values/describe fuzz lane; the generator does not emit the prefix-hidden style. The cd_get hunk (src/ported/zle/computil.rs, the `p += str->len` arm) landed inside db058fbede, a concurrent commit on main that picked up the staged index; that commit's subject does not describe it.",
+ "controls": [
+  {
+   "note": "same completer without prefix-hidden: no strip, str->len matches the string, and both shells list `--aa  -- same` rows. Pins that the fix only fires when len outruns the stripped string.",
+   "buffer": "fzc0000 --",
+   "keys": [
+    "tab",
+    "tab"
+   ],
+   "spec": {
+    "widget": "default",
+    "setup": [
+     "setopt no_beep"
+    ],
+    "completer": "#compdef fzc0000\nzstyle ':completion:*' list-grouped false\nlocal -a _m\n_m=( '--aa:same' '--bb:same' '--cc:other' )\n_describe -o hdr _m\n"
+   }
+  }
+ ],
+ "variants": [],
+ "origin": [
+  "hand probe lane2/probes/e12.zsh (compsys_spec_fuzz --replay)"
+ ],
+ "history": []
+}
