@@ -7398,14 +7398,25 @@ mod tests {
         CLEARFLAG.store(0, Ordering::SeqCst);
         crate::ported::init::hasam.store(0, Ordering::SeqCst);
 
-        // Frame 1: ["L0","XX","L2"] → /dev/null (becomes OBUF).
+        // Frame 1: ["L0","XX","L2"] → /dev/null (becomes OBUF), drawn twice.
+        // The first draw uses every row for the first time, so c:1673
+        // `if (iln >= olnct) cleareol = 1` makes refreshline pad each nbuf
+        // row with spaces to winw in place (c:1856-1857, "next time obuf
+        // will be up-to-date"). A padded old "L2        " never matches the
+        // new "L2" (ZR_strncmp stops at the new row's zr_zr, c:124-126), so
+        // the c:1683 delete-line test can only fire against rows drawn
+        // without cleareol: the second draw leaves OBUF as the bare rows.
         let devnull = unsafe { libc::open(b"/dev/null\0".as_ptr() as *const _, libc::O_WRONLY) };
         let old_shtty = crate::ported::init::SHTTY.load(Ordering::SeqCst);
         crate::ported::init::SHTTY.store(devnull, Ordering::SeqCst);
-        *ZLELINE.lock().unwrap() = "L0\nXX\nL2".chars().collect();
-        ZLECS.store(8, Ordering::SeqCst);
-        ZLELL.store(8, Ordering::SeqCst);
-        zrefresh();
+        for _ in 0..2 {
+            VCS.store(0, Ordering::SeqCst);
+            VLN.store(0, Ordering::SeqCst);
+            *ZLELINE.lock().unwrap() = "L0\nXX\nL2".chars().collect();
+            ZLECS.store(8, Ordering::SeqCst);
+            ZLELL.store(8, Ordering::SeqCst);
+            zrefresh();
+        }
         unsafe { libc::close(devnull) };
 
         // Frame 2: ["L0","L2","YY"] → capture. old line 2 == new line 1.
