@@ -1,0 +1,93 @@
+{
+ "schema": "compsys-fixture/2",
+ "id": "all_matches_end_hook_missing",
+ "title": "GUARD (fixed in 9add6ade84) — was: `completer _all_matches _complete` never added the \"all matches\" entry, because the `_all_matches_end` post-hook had no port",
+ "harness": "compsys_spec_fuzz",
+ "run": {
+  "buffer": "fzam fo",
+  "keys": [
+   "tab"
+  ],
+  "flags": [],
+  "spec": {
+   "cmd": "fzam",
+   "kind": "compset",
+   "seed": 5104928,
+   "case": -1,
+   "widget": "default",
+   "setup": [
+    "zstyle ':completion:*' completer _all_matches _complete"
+   ],
+   "completer": "#compdef fzam\n\ncompadd -- foobar foobaz fooqux fob\n"
+  }
+ },
+ "expect": "agrees",
+ "group": "completer-machinery",
+ "fingerprint": null,
+ "observed": {
+  "verdict": "PASS",
+  "detail": "0 row(s) differ",
+  "notes": "Completion/Base/Completer/_all_matches sh:19-20 appends `_all_matches_end` to `comppostfuncs`; _main_complete sh:401-405 calls it, and it runs `compadd \"$expl[@]\" -C` (sh:39-40) when nmatches > 1, so zsh lists `fob foobar foobaz fooqux` as an extra match."
+ },
+ "observed_when_diverging": {
+  "verdict": "FAIL",
+  "category": "grid-diff",
+  "detail": "1 row(s) differ",
+  "rows": [
+   {
+    "row": 3,
+    "zsh": "fob foobar foobaz fooqux",
+    "zshrs": "<absent>"
+   }
+  ],
+  "recorded_under": "main at a9add374ed (before 9add6ade84; the binary also carried other sessions' uncommitted edits), target/debug/zshrs vs the dev oracle zsh 5.9.999.3-test (~/.cache/zshrs/zsh-oracle-new), lane-5 round-2 grid cell g1_170 (command fzp, plus a compstate -x probe line). All 14 `_all_matches` cells of that grid that reach nmatches > 1 failed the same way (g1_169/170/177-180/191-193)."
+ },
+ "retired": {
+  "date": "2026-10-30",
+  "fix_commit": "9add6ade84",
+  "why": "router arm for `_all_matches_end`, so the name `_main_complete` sh:404 calls dispatches to the port."
+ },
+ "controls": [
+  {
+   "note": "one match: nmatches is 1, sh:33 adds nothing (both shells agreed before the fix)",
+   "buffer": "fzam fooq"
+  }
+ ],
+ "variants": [
+  {
+   "note": "opening single quote (grid g1_178)",
+   "buffer": "fzam 'fo"
+  },
+  {
+   "note": "opening double quote (grid g1_180)",
+   "buffer": "fzam \"fo"
+  }
+ ],
+ "origin": [
+  "lane-5 round-2 completer grid g1, 2026-10-30"
+ ],
+ "confirmed": {
+  "date": "2026-10-30",
+  "commit": "9add6ade84",
+  "harness_sha256_16": {
+   "scripts/compsys_spec_fuzz.py": "7c0a079a8ae27ee7",
+   "scripts/compsys_regressions.py": "619b844636a94cb7"
+  },
+  "zshrs_binary": {
+   "path": "target/debug/zshrs",
+   "size": 134121240,
+   "mtime": "2026-10-30 04:05:33",
+   "version": "zshrs 0.13.56",
+   "sha256_16": "922d58766bada764",
+   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)"
+  },
+  "zsh_binary": {
+   "path": "/opt/homebrew/bin/zsh",
+   "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)"
+  },
+  "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "zshrs": "target/debug/zshrs zshrs 0.13.56 (134121240 bytes, 2026-10-30 04:05:33)",
+  "note": "PASS on the fixed binary for the fixture cell, its control and variants"
+ },
+ "history": []
+}

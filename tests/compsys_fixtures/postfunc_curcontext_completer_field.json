@@ -1,0 +1,77 @@
+{
+ "schema": "compsys-fixture/2",
+ "id": "postfunc_curcontext_completer_field",
+ "title": "GUARD (fixed in 9add6ade84) — was: `comppostfuncs` hooks saw `curcontext=:complete::`; zsh empties the completer field first",
+ "harness": "compsys_spec_fuzz",
+ "run": {
+  "buffer": "fzpf fo",
+  "keys": [
+   "tab"
+  ],
+  "flags": [],
+  "spec": {
+   "cmd": "fzpf",
+   "kind": "compset",
+   "seed": 5100225,
+   "case": -1,
+   "widget": "default",
+   "setup": [],
+   "completer": "#compdef fzpf\n\ncompadd -- foobar foobaz fooqux fob\npf() { compadd -x \"PF ctx=$curcontext\" }\ncomppostfuncs=(pf)\n"
+  }
+ },
+ "expect": "agrees",
+ "group": "completer-machinery",
+ "fingerprint": null,
+ "observed": {
+  "verdict": "PASS",
+  "detail": "0 row(s) differ",
+  "notes": "Completion/Base/Core/_main_complete sh:225 `curcontext=\"${curcontext/:[^:]#:/::}\"` runs after the completer loop, so the hooks called at sh:401-405 see `:::`."
+ },
+ "observed_when_diverging": {
+  "verdict": "FAIL",
+  "category": "grid-diff",
+  "detail": "1 row(s) differ",
+  "rows": [
+   {
+    "row": null,
+    "zsh": "PF eg=on ctx=:::",
+    "zshrs": "PF eg=on ctx=:complete::"
+   }
+  ],
+  "recorded_under": "main at a9add374ed (before 9add6ade84; the binary also carried other sessions' uncommitted edits), target/debug/zshrs vs the dev oracle zsh 5.9.999.3-test, lane-5 round-2 scratch probe C5 (command fzp; the hook also printed $options[extendedglob]). Only the hook row was kept."
+ },
+ "retired": {
+  "date": "2026-10-30",
+  "fix_commit": "9add6ade84",
+  "why": "_main_complete.rs ports sh:225 (clear_completer_field) after the chain."
+ },
+ "controls": [],
+ "variants": [],
+ "origin": [
+  "lane-5 round-2 probe C5, 2026-10-30"
+ ],
+ "confirmed": {
+  "date": "2026-10-30",
+  "commit": "9add6ade84",
+  "harness_sha256_16": {
+   "scripts/compsys_spec_fuzz.py": "7c0a079a8ae27ee7",
+   "scripts/compsys_regressions.py": "619b844636a94cb7"
+  },
+  "zshrs_binary": {
+   "path": "target/debug/zshrs",
+   "size": 134121240,
+   "mtime": "2026-10-30 04:05:33",
+   "version": "zshrs 0.13.56",
+   "sha256_16": "922d58766bada764",
+   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)"
+  },
+  "zsh_binary": {
+   "path": "/opt/homebrew/bin/zsh",
+   "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)"
+  },
+  "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "zshrs": "target/debug/zshrs zshrs 0.13.56 (134121240 bytes, 2026-10-30 04:05:33)",
+  "note": "PASS on the fixed binary for the fixture cell"
+ },
+ "history": []
+}

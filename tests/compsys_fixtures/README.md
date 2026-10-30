@@ -19,9 +19,9 @@ the two `NON_FIXTURE_FILES` in `scripts/compsys_regressions.py`):
 
 | | |
 | --- | --- |
-| fixtures pinned | 42 |
+| fixtures pinned | 44 |
 | `diverges` | 13 |
-| `agrees` — retired as guards | 28 |
+| `agrees` — retired as guards | 30 |
 | `reference-crash` | 1 |
 
 Re-derive it with `scripts/compsys_regressions.py --list`, which boots no
@@ -73,6 +73,7 @@ off `retired.fix_commit`:
 | `6566f5a559` | `completer_style_missing_function` |
 | `87a079a0a1` | `compadd_X_count_includes_all_match` |
 | `e6561b26f5` | `compset_q_inner_quote_kept` |
+| `9add6ade84` | `all_matches_end_hook_missing`, `postfunc_curcontext_completer_field` |
 
 Eight `agrees` fixtures carry no `retired` block:
 
