@@ -1,0 +1,88 @@
+{
+ "schema": "compsys-fixture/2",
+ "id": "zle_line_tag_char_printable_width",
+ "title": "GUARD (fixed in e7bee11d9d) — was: a Unicode tag character (U+E0020-U+E007F) inserted on the line was drawn by zrefresh as a `<000e0067>` hex escape instead of a one-column printable glyph",
+ "harness": "compsys_spec_fuzz",
+ "run": {
+  "buffer": "fzc0125 --",
+  "keys": [
+   "tab"
+  ],
+  "flags": [
+   "--locale",
+   "en_US.UTF-8",
+   "--cols",
+   "31"
+  ],
+  "spec": {
+   "cmd": "fzc0125",
+   "kind": "describe",
+   "seed": 2100000,
+   "case": -1,
+   "widget": "std:menu-select",
+   "setup": [
+    "zmodload -i zsh/complist",
+    "zle -C menu-select .menu-select _main_complete",
+    "bindkey '^I' menu-select"
+   ],
+   "completer": "#compdef fzc0125\n\n_sfz_main() {\n  local -a _m _d\n  _m=(  )\n  _describe -1 'say \"hi\" now' _m\n}\n_sfz_main \"$@\"; _sfz_ret=$?\n_sfz_w0='🏴󠁧󠁢󠁳󠁣󠁴󠁿'\ncompadd -U -Q -J _sfzwd -X 'width chars/cols' -- \"emoji-flag=${#_sfz_w0}/${(m)#_sfz_w0}:$_sfz_w0\"\nreturn $_sfz_ret\n"
+  }
+ },
+ "expect": "agrees",
+ "group": "listing-render",
+ "fingerprint": null,
+ "observed": {
+  "verdict": "PASS",
+  "detail": "0 row(s) differ",
+  "notes": "Src/Zle/zle_refresh.c:1268-1272 draws a line character as a glyph only when `WC_ISPRINT(*t) && (width = WCWIDTH(*t)) > 0`; in a --enable-unicode9 build those are u9_iswprint / u9_wcwidth (Src/ztype.h:77, Src/zsh.h:3302), and wcwidth9 gives the tag characters one column, so zsh 5.9.2 paints the flag sequence as `🏴` plus six one-column cells and `${(m)#}` reports 8. Everything else falls to the `<%.08x>` escape at c:1358-1377."
+ },
+ "observed_when_diverging": {
+  "verdict": "FAIL",
+  "category": "grid-diff",
+  "detail": "2 row(s) differ",
+  "rows": [
+   {
+    "row": 1,
+    "zsh": "<absent>",
+    "zshrs": "<000e0067><000e0062><000e0073><"
+   },
+   {
+    "row": 2,
+    "zsh": "<absent>",
+    "zshrs": "000e0063><000e0074><000e007f>"
+   }
+  ],
+  "recorded_under": "main at a9add374ed plus peer-lane uncommitted edits, target/debug/zshrs zshrs 0.13.56, against /opt/homebrew/bin/zsh 5.9.2, keys=tab"
+ },
+ "retired": {
+  "date": "2026-10-30",
+  "fix_commit": "e7bee11d9d",
+  "why": "zrefresh's main line loop and its status-line loop measured each character with the `unicode-width` crate, which calls a tag character zero-width, so it took the non-printable `<hex>` arm. Both loops now use ztype_h::WC_ISPRINT and zsh_h::WCWIDTH (u9_wcwidth), as the single-line refresh path already did."
+ },
+ "controls": [
+  {
+   "note": "the same completer at the default TAB binding with a plain ASCII match agrees with or without the fix",
+   "spec": {
+    "completer": "#compdef fzc0125\n\ncompadd -U -Q -- plain-match\n"
+   }
+  }
+ ],
+ "variants": [],
+ "origin": [
+  "compsys_spec_fuzz --seed 2100000 --start 100 --kind values,describe --hostile --locale en_US.UTF-8,C.UTF-8 --cols auto --zsh ~/.cache/zshrs/zsh-oracle-new/bin/zsh, case0125 (shrunk); re-judged against zsh 5.9.2"
+ ],
+ "confirmed": {
+  "date": "2026-10-30",
+  "harness_sha256_16": {
+   "scripts/compsys_spec_fuzz.py": "7c0a079a8ae27ee7",
+   "scripts/compsys_regressions.py": "619b844636a94cb7"
+  },
+  "zsh_binary": {
+   "path": "/opt/homebrew/bin/zsh",
+   "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)"
+  },
+  "note": "PASS on the fixed binary for the fixture cell and its control; the dev oracle (~/.cache/zshrs/zsh-oracle-new, 5.9.999 built without unicode9) draws the tag characters as `<000e0067>` too, so this cell is a build-configuration split against that reference",
+  "commit": "e7bee11d9d"
+ },
+ "history": []
+}
