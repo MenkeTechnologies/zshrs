@@ -2583,6 +2583,28 @@ const DASH_ONLY_CORPUS: &[&str] = &[
 /// Scripts whose ksh93u+m reference output only matches from 1.0.10 on.
 const KSH_1_0_10_ONLY: &[&str] = &["echo $((-7/2)) $((-7%3)) $((7/-2)) $((7%-3))"];
 
+/// ksh93 math-function rows whose reference output is that of a 64-bit `Sfdouble_t`
+/// (ksh93's float type is `long double`; it is `double` on aarch64 macOS). Where the
+/// reference's `long double` is wider (x86_64 Linux: 80-bit), its digits, `signbit`
+/// mask, `tgamma` range and libm signed-zero results differ from these rows.
+const KSH_DOUBLE_FLOAT_ONLY: &[&str] = &[
+    "print $(( pow(2,10) )) $(( pow(2,0.5) )) $(( pow(2,-1) )) $(( pow(10,20) )) $(( pow(0,0) ))",
+    "print $(( atan2(1,1) )) $(( atan2(-0.0,-1) )) $(( atan2(1,0) ))",
+    "print $(( fdim(5,3) )) $(( fdim(3,5) )) $(( fmax(1,2) )) $(( fmin(1,2) )) $(( fmax(nan,1) )) $(( fmin(-0.0,0.0) ))",
+    "print $(( fma(2,3,4) )) $(( fma(0.1,10,-1) )); print $(( fma(1,2) )); print rc=$?",
+    "print $(( exp2(3) )) $(( exp2(0.5) )) $(( tgamma(5) )) $(( tgamma(0.5) )) $(( tgamma(172) )) $(( nexttoward(1,2) ))",
+    "print $(( signbit(-1.0) )) $(( signbit(0.0) )) $(( signbit(-0.0) )) $(( isfinite(1) )) $(( isfinite(inf) )) $(( isnormal(0) )) $(( iszero(-0.0) ))",
+];
+
+/// Whether the reference ksh93's float type is wider than an f64: 1e-17 is below
+/// f64's epsilon (2.2e-16) but above an 80-bit long double's (1.1e-19).
+fn ksh_float_wider_than_f64(ksh: &str) -> bool {
+    std::process::Command::new(ksh)
+        .args(["-c", "print $(( 1 + 1e-17 == 1 ))"])
+        .output()
+        .is_ok_and(|o| o.stdout == b"0\n")
+}
+
 const ZSH_BAD_OPTION_CORPUS: &[&str] = &[
     "type -t echo; echo rc=$?",
     "type -t nonexistent_zz; echo rc=$?",
@@ -4404,12 +4426,14 @@ fn corpus_for(case: &ParityCase, refbin: &str) -> Vec<&'static str> {
     // ksh93u+m releases before 1.0.10 (Ubuntu 24.04 ships 1.0.8) reject or format
     // these differently from the 1.0.10 line `--ksh` follows.
     let old_ksh = name == "ksh" && ksh_version(refbin).is_some_and(|v| v < (1, 0, 10));
+    let wide_ksh = name == "ksh" && ksh_float_wider_than_f64(refbin);
     let mut seen = std::collections::HashSet::new();
     parts
         .iter()
         .flat_map(|p| p.iter().copied())
         .chain(grid)
         .filter(|script| !(old_ksh && KSH_1_0_10_ONLY.contains(script)))
+        .filter(|script| !(wide_ksh && KSH_DOUBLE_FLOAT_ONLY.contains(script)))
         .filter(|script| seen.insert(*script))
         .collect()
 }
