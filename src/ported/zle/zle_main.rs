@@ -421,6 +421,15 @@ fn calc_timeout(do_keytmout: i64) -> ztmout {
 /// WARNING: param names don't match C — Rust=(do_keytmout) vs C=(do_keytmout, cptr, full)
 pub fn raw_getbyte(do_keytmout: i64) -> Option<u8> {
     use std::os::unix::io::AsRawFd;
+    // c:917 — `errflag || retflag || breaks || exit_pending`: the shell
+    // conditions that end a signal-interrupted read instead of retrying it.
+    // Both read loops re-test it after draining deferred signals.
+    let shell_condition_pending = || {
+        crate::ported::utils::errflag.load(Ordering::Relaxed) != 0
+            || crate::ported::builtin::RETFLAG.load(Ordering::Relaxed) != 0
+            || crate::ported::builtin::BREAKS.load(Ordering::Relaxed) != 0
+            || crate::ported::builtin::EXIT_PENDING.load(Ordering::Relaxed) != 0
+    };
 
     let mut timeout = calc_timeout(do_keytmout);
     let have_timeout = timeout.tp != ztmouttp::ZTM_NONE;
@@ -512,29 +521,34 @@ pub fn raw_getbyte(do_keytmout: i64) -> Option<u8> {
             crate::ported::signals_h::winch_unblock(); // c:588
             let selret =
                 unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, poll_timeout) };
+            let poll_errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
             crate::ported::signals_h::winch_block(); // c:590
 
+            // !!! RUST-ONLY !!! A signal `zhandler` deferred because another
+            // thread held `paramtab`/`JOBTAB` (p10k async, the history
+            // writer, the worker pool) is dispatched only here. It must run
+            // BEFORE the interrupt test below: a deferred SIGINT sets errflag
+            // now, and testing first sent the loop back into poll() with the
+            // ^C pending until the next keystroke.
+            if selret < 0 && poll_errno == libc::EINTR {
+                crate::signal_queue_guard::settle_deferred_signals(shtty);
+            }
             // c:632-634 — let a user interrupt through immediately.
             if selret < 0 && crate::ported::utils::errflag.load(Ordering::SeqCst) != 0 {
                 // c:630-631 then c:825 — C breaks out of the poll loop and
                 // `return selret`, a NEGATIVE value: getbyte's errno arm
                 // (EINTR here) turns it into EOF without exiting the shell.
-                RAW_GETBYTE_ERRNO.store(
-                    std::io::Error::last_os_error().raw_os_error().unwrap_or(0),
-                    Ordering::SeqCst,
-                );
+                RAW_GETBYTE_ERRNO.store(poll_errno, Ordering::SeqCst);
                 RAW_GETBYTE_R.store(-1, Ordering::SeqCst);
                 return None;
             }
             // c:638-643 — EINTR retries; any other poll error gives up.
             if selret < 0 {
-                let e = std::io::Error::last_os_error().raw_os_error();
-                if e == Some(libc::EINTR) {
-                    crate::signal_queue_guard::settle_deferred_signals(shtty);
+                if poll_errno == libc::EINTR {
                     continue;
                 }
                 // c:825 — `return selret`, negative: an error, not EOF.
-                RAW_GETBYTE_ERRNO.store(e.unwrap_or(0), Ordering::SeqCst);
+                RAW_GETBYTE_ERRNO.store(poll_errno, Ordering::SeqCst);
                 RAW_GETBYTE_R.store(-1, Ordering::SeqCst);
                 return None;
             }
@@ -679,14 +693,16 @@ pub fn raw_getbyte(do_keytmout: i64) -> Option<u8> {
                 // read after ^C and the editor stayed blocked until the next
                 // keystroke — the aborted line kept its text on screen and no
                 // fresh prompt appeared until a key was pressed.
-                && crate::ported::utils::errflag.load(Ordering::Relaxed) == 0
-                && crate::ported::builtin::RETFLAG.load(Ordering::Relaxed) == 0
-                && crate::ported::builtin::BREAKS.load(Ordering::Relaxed) == 0
-                && crate::ported::builtin::EXIT_PENDING.load(Ordering::Relaxed) == 0
+                && !shell_condition_pending()
             {
                 // c:914 — `icnt = 0;`: a real interruption resets the count.
                 eintr_retries = if n == 0 { eintr_retries + 1 } else { 0 };
                 crate::signal_queue_guard::settle_deferred_signals(shtty);
+                // A deferred SIGINT (see the poll loop) sets errflag only
+                // now: end the read as the interrupted -1/EINTR it was.
+                if shell_condition_pending() {
+                    break -1;
+                }
                 continue; // c:917 — retry the interrupted read
             }
             // c:929-936 — EIO means the shell lost the terminal's foreground
@@ -794,14 +810,16 @@ pub fn raw_getbyte(do_keytmout: i64) -> Option<u8> {
             // c:917 — the WHOLE errflag, as in the poll-path read above:
             // ERRFLAG_INT (a user interrupt, signals.c:457) has to end the
             // read too, otherwise ^C leaves the editor blocked.
-            && crate::ported::utils::errflag.load(Ordering::Relaxed) == 0
-            && crate::ported::builtin::RETFLAG.load(Ordering::Relaxed) == 0
-            && crate::ported::builtin::BREAKS.load(Ordering::Relaxed) == 0
-            && crate::ported::builtin::EXIT_PENDING.load(Ordering::Relaxed) == 0
+            && !shell_condition_pending()
         {
             // c:914 — `icnt = 0;`: a real interruption resets the count.
             eintr_retries = if n == 0 { eintr_retries + 1 } else { 0 };
             crate::signal_queue_guard::settle_deferred_signals(shtty);
+            // A deferred SIGINT (see the poll loop) sets errflag only now:
+            // end the read as the interrupted -1/EINTR it was.
+            if shell_condition_pending() {
+                break -1;
+            }
             continue; // c:917 — retry the interrupted read
         }
         // c:929-936 — `else if (errno == EIO && !die) { ret = opts[MONITOR];
