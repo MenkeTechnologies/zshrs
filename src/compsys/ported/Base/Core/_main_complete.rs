@@ -36,7 +36,7 @@
 //!   * sh:384-396 ZLS_COLORS save/restore
 
 use crate::compsys::ported::_setup::_setup;
-use crate::compsys::ported::shared::zstyle_t;
+use crate::compsys::ported::shared::{dispatch_action_command, zstyle_t};
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::{bin_zformat, lookupstyle};
 use crate::ported::params::{
@@ -882,6 +882,12 @@ pub fn _main_complete(args: &[String]) -> i32 {
     //   `-` as first arg + ≥3 args → run only argv[1] (call mode)
     //   else when args non-empty → use args verbatim
     //   else read `completer` style, default `(_complete _ignored)`
+    // sh:141-142 — `call=yes`: the command to run is `${argv[3,-1]}`.
+    let call: Option<&[String]> = if args.len() >= 3 && args[0] == "-" {
+        Some(&args[2..])
+    } else {
+        None
+    };
     let chain: Vec<String> = if !args.is_empty() {
         if args[0] == "-" {
             if args.len() < 3 {
@@ -934,15 +940,14 @@ pub fn _main_complete(args: &[String]) -> i32 {
         }
         let _ = setsparam("_completer_num", &completer_num.to_string());
 
-        // sh:165  split `spec` on `:` — left of `:` is the fn name,
-        //   right is the curcontext-field suffix.
-        let mut parts = completer_spec.splitn(2, ':');
-        let bare = parts.next().unwrap_or("").to_string();
-        let field_suffix = parts.next().map(|s| s.to_string()).unwrap_or_else(|| {
-            bare.strip_prefix('_')
-                .map(|s| s.replace('_', "-"))
-                .unwrap_or_default()
-        });
+        // sh:181-190 — `$tmp` (the command) and `$_completer` (the
+        // curcontext field) for this chain element.
+        let (bare, field_suffix) = if call.is_some() {
+            // sh:181-182 — call mode: `_completer="${tmp}"`, verbatim.
+            (completer_spec.clone(), completer_spec.clone())
+        } else {
+            completer_fields(completer_spec)
+        };
         let _ = setsparam("_completer", &field_suffix);
 
         // sh:175  curcontext patch: replace middle `:`-field
@@ -1008,6 +1013,17 @@ pub fn _main_complete(args: &[String]) -> i32 {
             // returns NULL for both and falls through to PATH). The port
             // folded `None` into a silent non-zero, so a typo in the
             // `completer` style produced no diagnostic whatsoever.
+            // sh:209-213 — call mode runs `"${(@)argv[3,-1]}"`, an ordinary
+            // command line (`_expand_alias` sh:62 hands it
+            // `_wanted aliases expl alias compadd …`), instead of `$tmp`.
+            if let Some(cmd) = call {
+                if dispatch_action_command(&cmd[0], &cmd[1..], 210) == 0 {
+                    ret = 0;
+                    break;
+                }
+                matcher_num += 1;
+                continue;
+            }
             // sh:214 — publish the calling line so the completer's frame
             // records `_main_complete:214`, matching zsh's `$functrace`. The
             // diagnostic below already cites this line; the frame has to agree.
@@ -1512,6 +1528,26 @@ fn lastcomp_get(key: &str) -> Option<String> {
         .and_then(|kv| kv.get(1).cloned())
 }
 
+/// sh:183-190 — split a `completer` style element into `$tmp` (the
+/// function to call) and `$_completer` (its curcontext field):
+///   `*:-*` → `${${tmp%:*}[2,-1]//_/-}${tmp#*:}`, tmp=`${tmp%:*}`
+///   `*:*`  → `${tmp#*:}`,                       tmp=`${tmp%:*}`
+///   else   → `${tmp[2,-1]//_/-}`
+fn completer_fields(spec: &str) -> (String, String) {
+    let strip_us = |t: &str| t.chars().skip(1).collect::<String>().replace('_', "-");
+    match (spec.rsplit_once(':'), spec.split_once(':')) {
+        (Some((func, _)), Some((_, after_first))) => {
+            let field = if spec.contains(":-") {
+                format!("{}{}", strip_us(func), after_first)
+            } else {
+                after_first.to_string()
+            };
+            (func.to_string(), field)
+        }
+        _ => (spec.to_string(), strip_us(spec)),
+    }
+}
+
 /// sh:175 — replace the middle `:`-field of `curcontext` with the
 /// completer's name. For `a:b:c:d` and `complete`, result is
 /// `a:complete:c:d`.
@@ -1895,6 +1931,16 @@ mod tests {
         let _ = _main_complete(&["_complete".to_string()]);
         let chain = getaparam("_completers").unwrap_or_default();
         assert_eq!(chain, vec!["_complete"]);
+    }
+
+    #[test]
+    fn completer_fields_follow_sh183_190() {
+        // `_complete` → field `complete`; `_foo_bar` → `foo-bar`.
+        assert_eq!(completer_fields("_complete"), ("_complete".into(), "complete".into()));
+        assert_eq!(completer_fields("_foo_bar"), ("_foo_bar".into(), "foo-bar".into()));
+        // `*:*` → `${tmp#*:}`; `*:-*` → `${${tmp%:*}[2,-1]//_/-}${tmp#*:}`.
+        assert_eq!(completer_fields("_complete:x"), ("_complete".into(), "x".into()));
+        assert_eq!(completer_fields("_complete:-x"), ("_complete".into(), "complete-x".into()));
     }
 
     #[test]

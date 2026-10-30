@@ -1,0 +1,45 @@
+{
+  "schema": "compsys-fixture/2",
+  "id": "expand_alias_main_complete_call_mode",
+  "title": "GUARD \u2014 was: `_expand_alias` (^Xa) prints `_main_complete:214: command not found: aliases` instead of expanding the alias",
+  "harness": "compsys_spec_fuzz",
+  "run": {
+    "buffer": "zzla",
+    "keys": [
+      "\u0018",
+      "a"
+    ],
+    "flags": [],
+    "spec": {
+      "cmd": "fzc0000",
+      "kind": "files",
+      "widget": "fn:_expand_alias",
+      "setup": [
+        "alias zzla='ls -l'"
+      ],
+      "completer": "#compdef fzc0000\n\n_files\n"
+    }
+  },
+  "expect": "agrees",
+  "group": "completer-machinery",
+  "fingerprint": null,
+  "fingerprint_when_diverging": null,
+  "why_this_fixture_exists": "Completion/Base/Completer/_expand_alias sh:62 runs `_main_complete - aliases _wanted aliases expl alias compadd \u2026`. _main_complete sh:137-143 (`$1 = -`) sets call=yes and sh:209-210 runs `\"${(@)argv[3,-1]}\"`, with `_completer=$2` verbatim (sh:181-182). The port ran `$2` as the completer function and the Rust _expand_alias also dropped the `_wanted` command word.",
+  "observed_when_diverging": {
+    "verdict": "FAIL",
+    "category": "grid-diff",
+    "zsh_grid": [
+      "$ ls -l"
+    ],
+    "zshrs_grid": [
+      "$ zzla_main_complete:214: command not found: aliases"
+    ],
+    "recorded_under": "2026-10-30, lane-9 pty stepper (zsh -f -i vs zshrs --zsh -f -i, identical init with compinit) on target/debug/zshrs built from the shared tree at 41bb929329, before the fix; zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+    "notes": "grids are from the stepper run, not this fixture's buffer: stepper buffer `ll` with `alias ll='ls -l'`, key ^Xa"
+  },
+  "controls": [],
+  "variants": [],
+  "origin": [
+    "lane-9 round-2 widget sweep (2026-10-30): every compinit-bound widget driven by hand with a pty stepper"
+  ]
+}

@@ -153,8 +153,10 @@ pub fn _expand_alias() -> i32 {
         } else {
             vec!["-S".to_string(), "".to_string()]
         };
+        // `$pre` = `_main_complete - aliases`; its call mode runs
+        // `${argv[3,-1]}`, so the `_wanted` command word goes in too.
         let mut argv: Vec<String> = if has_main_complete_pre {
-            vec!["-".to_string(), "aliases".to_string()]
+            vec!["-".to_string(), "aliases".to_string(), "_wanted".to_string()]
         } else {
             Vec::new()
         };
@@ -181,16 +183,13 @@ pub fn _expand_alias() -> i32 {
         }
     // sh:63 — `zstyle -t … complete`; see [`zstyle_t`].
     } else if has_main_complete_pre && zstyle_t(&ctx, "complete") == 0 {
-        // sh:56-57
-        // sh:64 `$pre _aliases -s "$sel" -S ''` — same COMMAND-WORD
-        // resolution. (`$pre` is non-empty on this branch, so upstream runs
-        // `_main_complete _aliases …`; the port calls `_aliases` directly,
-        // which is a separate, pre-existing divergence.)
-        dispatch_action_command(
-            "_aliases",
-            &["-s".to_string(), sel, "-S".to_string(), "".to_string()],
-            64,
-        )
+        // sh:64 `$pre _aliases -s "$sel" -S ''` — `$pre` is non-empty on
+        // this branch, so this is `_main_complete - aliases _aliases …`.
+        let argv: Vec<String> = ["-", "aliases", "_aliases", "-s", &sel, "-S", ""]
+            .iter()
+            .map(|a| a.to_string())
+            .collect();
+        dispatch_action_command("_main_complete", &argv, 64)
     } else {
         // sh:59
         1
