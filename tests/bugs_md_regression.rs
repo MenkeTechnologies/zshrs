@@ -3116,3 +3116,59 @@ fn historywords_has_histfile_words_newest_first() {
     }
     assert_eq!(stdout, "y,x,grep,world,hello,echo,foo,ls\n");
 }
+
+// ════════════════════════════════════════════════════════════════════
+// `zshexit` sees the exit status, not the EXIT trap body's: dotrapargs
+// ends a trap with no forced return by `lastval = olastval`
+// (Src/signals.c:1212), and the trap body is `execode`, not a script end,
+// so it owes no second `zshexit` (Src/builtin.c:6014-6016).
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn zshexit_sees_exit_status_after_exit_trap() {
+    let (ec, stdout, _stderr) =
+        run_zshrs(r#"zshexit() { print -r -- "Z $?" }; trap 'print T' EXIT; exit 3"#);
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!((ec, stdout.as_str()), (3, "T\nZ 3\n"));
+    let (ec, stdout, _stderr) =
+        run_zshrs(r#"zshexit() { print -r -- "Z $?" }; TRAPEXIT() { print T }; false"#);
+    assert_eq!((ec, stdout.as_str()), (1, "T\nZ 1\n"), "zshexit once, TRAPEXIT once");
+}
+
+// ════════════════════════════════════════════════════════════════════
+// An interactive login `-c` shell that runs off the end of its string
+// still reads `.zlogout`: the `-c` list runs `exiting`, so the EXIT trap
+// fires first (Src/exec.c:1704-1710), then `zexit` (Src/init.c:1572)
+// sources the logout files (Src/builtin.c:6000-6006) and calls zshexit.
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn login_interactive_cmdarg_reads_zlogout_without_exit() {
+    let Some(bin) = zshrs_bin() else { return };
+    let home = tempfile::tempdir().expect("home");
+    for f in [".zshenv", ".zprofile", ".zshrc", ".zlogin", ".zlogout"] {
+        std::fs::write(home.path().join(f), format!("print -r -- {f}\n")).expect("rc file");
+    }
+    let run = |script: &str| {
+        let out = Command::new(&bin)
+            .args(["-l", "-i", "-c", script])
+            .env_clear()
+            .env("HOME", home.path())
+            .env("ZDOTDIR", home.path())
+            .env("PATH", "/usr/bin:/bin")
+            .stdin(std::process::Stdio::null())
+            .output()
+            .expect("spawn zshrs");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    assert_eq!(
+        run(r#"trap 'print T' EXIT; zshexit() { print Z $? }; false"#),
+        ".zshenv\n.zprofile\n.zshrc\n.zlogin\nT\n.zlogout\nZ 1\n"
+    );
+    assert_eq!(
+        run(r#"trap 'print T' EXIT; zshexit() { print Z $? }; exit 2"#),
+        ".zshenv\n.zprofile\n.zshrc\n.zlogin\n.zlogout\nT\nZ 2\n"
+    );
+}

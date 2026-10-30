@@ -4492,7 +4492,37 @@ impl ShellExecutor {
             }
         }
         errflag.store(0, Ordering::Relaxed); // c:6012
-        let result = self.fire_script_exit_hooks(status);
+        // c:Src/exec.c:1704-1710 — the `-c` list runs `exiting`, so its end
+        // fires the EXIT trap first; then c:Src/init.c:1572 `zexit` sources
+        // the logout files of an interactive login shell (c:Src/builtin.c:
+        // 6000-6006) and calls the `zshexit` hooks (c:6016). The explicit-
+        // `exit` path does all of this in `builtin::zexit`; a drop-in's
+        // logout file is its own (emulation_startup::run_logout_scripts).
+        self.fire_script_exit_trap(status);
+        {
+            use crate::ported::zsh_h::{interact, islogin, isset, GLOBALRCS, RCS};
+            if isset(RCS)
+                && interact()
+                && islogin()
+                && !crate::extensions::emulation_startup::overrides_zsh_startup()
+            {
+                // Outside run_chunk no executor is current; `source` runs
+                // the file through the current one.
+                let _ctx = ExecutorContext::enter(self);
+                crate::ported::init::sourcehome(".zlogout"); // c:6001
+                if isset(RCS) && isset(GLOBALRCS) {
+                    // c:6003-6004
+                    let _ = crate::ported::init::source(
+                        &crate::extensions::global_rc::global_rc_path(
+                            crate::ported::config_h::GLOBAL_ZLOGOUT,
+                        ),
+                    );
+                }
+                drop(_ctx);
+                self.set_last_status(status); // c:6008 `lastval = exit_val`
+            }
+        }
+        let result = self.fire_zshexit_hooks(status);
         errflag.fetch_or(saved_errflag, Ordering::Relaxed);
         result
     }
@@ -4513,6 +4543,14 @@ impl ShellExecutor {
     /// `zshexit_functions`), for a script that already ran; `status` is the
     /// script's `$?` and is what the call returns.
     fn fire_script_exit_hooks(&mut self, status: i32) -> Result<i32, String> {
+        self.fire_script_exit_trap(status);
+        self.fire_zshexit_hooks(status)
+    }
+
+    /// The `EXIT` trap (string form or `TRAPEXIT`) a finished script owes:
+    /// c:Src/builtin.c:6014-6015 in `zexit`, or c:Src/exec.c:1704-1710 at the
+    /// end of an `exiting` `-c` list. Leaves `$?` at `status`.
+    fn fire_script_exit_trap(&mut self, status: i32) {
         // Fire EXIT trap if set. Two storage paths:
         //   (a) `trap 'cmd' EXIT` writes the body text into
         //       `traps_table` via bin_trap (Src/builtin.c) — fire
@@ -4555,7 +4593,10 @@ impl ShellExecutor {
             // c:Src/signals.c:1170 — `execode((Eprog)sigfn, 1, 0, "trap")`:
             // the EXIT body sees "trap" in zsh_eval_context (c:Src/exec.c:1251).
             let trap_ctx = crate::ported::exec::EvalContextFrame::push("trap");
-            let _ = self.execute_script_zsh_pipeline(&action);
+            // c:Src/signals.c:1170 `execode`, not a script: the body is no
+            // script end, so it owes no `zshexit` (which would see the
+            // body's own status, then fire a second time below).
+            let _ = self.execute_string_without_exit_hooks(&action);
             drop(trap_ctx);
             crate::ported::signals::intrap.fetch_sub(1, Ordering::SeqCst); // c:1236
             self.set_last_status(status);
@@ -4604,9 +4645,17 @@ impl ShellExecutor {
             // "TRAPEXIT"; calling it by name re-enters
             // execute_script_zsh_pipeline with a fresh VM context.
             crate::ported::signals::intrap.fetch_add(1, Ordering::SeqCst); // c:1123
-            let _ = self.execute_script_zsh_pipeline("TRAPEXIT");
+            let _ = self.execute_string_without_exit_hooks("TRAPEXIT");
             crate::ported::signals::intrap.fetch_sub(1, Ordering::SeqCst); // c:1236
+            // c:Src/signals.c:1212 — no forced return: `lastval = olastval`.
+            self.set_last_status(status);
         }
+    }
+
+    /// `callhookfunc("zshexit", NULL, 1, NULL)` (c:Src/builtin.c:6016): the
+    /// `zshexit` function and every `zshexit_functions` entry, each seeing
+    /// `$?` at `status`, which is what the call returns.
+    fn fire_zshexit_hooks(&mut self, status: i32) -> Result<i32, String> {
         // c:Src/init.c::zexit — `callhookfunc("zshexit", NULL, 1, NULL)`.
         // Fire the `zshexit` shfunc + walk `zshexit_functions` array.
         // Routed through execute_script_zsh_pipeline calls because
@@ -4634,7 +4683,7 @@ impl ShellExecutor {
                 .map(|t| t.contains_key("zshexit"))
                 .unwrap_or(false)
             {
-                let _ = self.execute_script_zsh_pipeline("zshexit");
+                let _ = self.execute_string_without_exit_hooks("zshexit");
             }
             let exit_arr = crate::ported::params::paramtab()
                 .read()
@@ -4648,7 +4697,7 @@ impl ShellExecutor {
                     .map(|t| t.contains_key(&fn_name))
                     .unwrap_or(false);
                 if exists {
-                    let _ = self.execute_script_zsh_pipeline(&fn_name);
+                    let _ = self.execute_string_without_exit_hooks(&fn_name);
                 }
             }
             ZSHEXIT_HOOK_DEPTH.with(|c| c.set(hook_depth));

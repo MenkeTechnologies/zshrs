@@ -16274,6 +16274,10 @@ pub fn zexit(val: i32, from_where: i32) {
     } else {
         let _ = crate::ported::signals::dotrap(crate::signals_h::SIGEXIT);
     }
+    // c:Src/signals.c:1212 — dotrapargs ends a trap with no forced return
+    // by `lastval = olastval`, so `zshexit` below sees the exit status, not
+    // the trap body's.
+    LASTVAL.store(val, Relaxed);
     // c:Src/init.c::zexit — `callhookfunc("zshexit", NULL, 1, NULL)`.
     // The hook fires both a `zshexit` function (if defined) AND
     // walks the `zshexit_functions` array. Distinct from SIGEXIT

@@ -550,16 +550,7 @@ fn gen_body(rng: &mut StdRng, tag: &str, count: usize) -> (String, String) {
 /// REPRODUCES does: the entry has to be deleted when the underlying
 /// behaviour is fixed, so this list cannot quietly rot into a list of
 /// things nobody remembers.
-const KNOWN_GAPS: &[(&str, &str, &str)] = &[(
-    "zsh",
-    "argv0-login, interactive",
-    "zsh runs ~/.zlogout when an interactive login shell terminates \
-     normally, not only via the `exit` builtin. zshrs's `-c` dispatch \
-     leaves through `std::process::exit` without going through `zexit`, \
-     and routing it there would double-fire the EXIT trap that path \
-     already handles. bash does NOT do this (`bash -l -c true` reads no \
-     ~/.bash_logout), so the bash drop-in is unaffected.",
-)];
+const KNOWN_GAPS: &[(&str, &str, &str)] = &[];
 
 fn known_gap(leg: &str, label: &str) -> Option<&'static str> {
     KNOWN_GAPS
