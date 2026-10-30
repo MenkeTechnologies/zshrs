@@ -4945,7 +4945,7 @@ pub struct entersubsh_ret {
 /// (b) `clearjobtab(monitor)` (c:1219) — Rust signature is
 ///     `clearjobtab(&mut JobTable, monitor)`; we get the global table
 ///     via a TABLE handle similar to other jobs.rs entries.
-/// (c) `attachtty(...)` (c:1119, 1144) — wired via libc::tcsetpgrp(2, gleader).
+/// (c) `attachtty(...)` (c:1119, 1144) — `utils::attachtty`.
 /// (d) `release_pgrp()` called for ESUB_REVERTPGRP when `getpid() ==
 ///     mypgrp` — direct C parity (jobs.rs:3406 provides the call).
 /// (e) `opts[USEZLE] = 0; zleactive = 0` — Rust opts table lookup
@@ -5060,7 +5060,7 @@ pub fn entersubsh(flags: i32, retp: Option<&mut entersubsh_ret>) {
                         }
                         unsafe { libc::setpgid(0, new_gl) };
                         if (flags & esub::ASYNC) == 0 {
-                            unsafe { libc::tcsetpgrp(2, new_gl) }; // c:1119 attachtty
+                            crate::ported::utils::attachtty(new_gl); // c:1119
                         }
                         new_gl
                     } else {
@@ -5094,7 +5094,7 @@ pub fn entersubsh(flags: i32, retp: Option<&mut entersubsh_ret>) {
                         }
                         unsafe { libc::setpgid(0, new_gl) }; // c:1142
                         if (flags & esub::ASYNC) == 0 {
-                            unsafe { libc::tcsetpgrp(2, new_gl) }; // c:1144 attachtty
+                            crate::ported::utils::attachtty(new_gl); // c:1144
                             if let Some(r) = retp {
                                 r.gleader = new_gl; // c:1146
                                 if lpj != thisjob {

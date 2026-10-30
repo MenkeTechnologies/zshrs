@@ -5483,8 +5483,7 @@ pub fn release_pgrp() {
         if origpgrp != 0 {
             // c:3287
             unsafe {
-                // attachtty(origpgrp);                                      // c:3288
-                libc::tcsetpgrp(0, origpgrp);
+                crate::ported::utils::attachtty(origpgrp); // c:3288
                 libc::setpgid(0, origpgrp); // c:3289
             }
         }

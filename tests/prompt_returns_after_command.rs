@@ -324,6 +324,43 @@ fn fresh_sessions_with_editor_engines_get_a_prompt_after_their_first_command() {
     assert!(failures.is_empty(), "prompt never returned:\n{}", failures.join("\n"));
 }
 
+/// A non-interactive shell with `monitor` set must not stop its own children.
+/// `entersubsh` used to call `tcsetpgrp(2, pgrp)` in every child it put in a new
+/// process group instead of `attachtty`, which acts only when `jobbing &&
+/// interact` (Src/utils.c:4781). On a terminal the child, now in a background
+/// group, took SIGTTOU and stopped before exec, and the shell waited on it for
+/// ever: the recorder hung on zpwr's banner (`clear`, `eza`) this way.
+#[test]
+fn monitor_in_a_non_interactive_shell_does_not_stop_children_on_a_tty() {
+    if !zshrs_bin().exists() {
+        eprintln!("skip: zshrs binary not built");
+        return;
+    }
+    let (mut master, mut slave): (libc::c_int, libc::c_int) = (0, 0);
+    let rc = unsafe {
+        libc::openpty(&mut master, &mut slave, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut())
+    };
+    assert_eq!(rc, 0, "openpty");
+    let slave = unsafe { OwnedFd::from_raw_fd(slave) };
+    let mut cmd = Command::new(zshrs_bin());
+    cmd.args(["-fc", "setopt monitor; /usr/bin/true; echo D$((6*7))"])
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .stdin(Stdio::from(slave.try_clone().unwrap()))
+        .stdout(Stdio::from(slave.try_clone().unwrap()))
+        .stderr(Stdio::from(slave));
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setsid();
+            libc::ioctl(0, libc::TIOCSCTTY as _, 0);
+            Ok(())
+        });
+    }
+    let child = cmd.spawn().expect("spawn zshrs");
+    let mut s = Session { master: Some(unsafe { std::fs::File::from_raw_fd(master) }), child, seen: Vec::new() };
+    assert!(s.pump(Duration::from_secs(20), |b| has(b, b"D42")), "`/usr/bin/true` never finished: …{:?}", s.tail());
+}
+
 /// A forked pipeline stage must be able to exit. `echo hi | cat` forks the `echo`
 /// stage without exec; it used to leave through `std::process::exit`, whose
 /// thread-local destructors wait on threads a fork does not copy. The stage never
