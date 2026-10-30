@@ -102,26 +102,23 @@ pub fn _all_matches() -> i32 {
 pub fn _all_matches_end() -> i32 {
     let ctx = getsparam("_all_matches_context").unwrap_or_default();
 
-    // sh:28-29
-    let mut not = lookupstyle(&ctx, "avoid-completer");
-    if not.is_empty() {
-        not = vec![
-            "_expand".to_string(),
-            "_old_list".to_string(),
-            "_correct".to_string(),
-            "_approximate".to_string(),
-        ];
-    }
+    // sh:33 `$not[(I)(|_)$_completer]`. With the style set, sh:30
+    // `zstyle -s` leaves `not` a SCALAR (values joined by a space), and a
+    // scalar `(I)` subscript matches the pattern against SUBSTRINGS, so the
+    // test is "contains `$_completer`". Unset, sh:31 makes it the ARRAY
+    // `( _expand _oldlist _correct _approximate )`, matched per element.
+    let completer = getsparam("_completer").unwrap_or_default();
+    let in_not = match crate::compsys::ported::shared::zstyle_s(&ctx, "avoid-completer") {
+        Some(joined) => joined.contains(completer.as_str()),
+        None => ["_expand", "_oldlist", "_correct", "_approximate"]
+            .iter()
+            .any(|n| *n == completer || n.strip_prefix('_') == Some(completer.as_str())),
+    };
 
     // sh:33
     let nmatches: i64 = crate::ported::params::getsparam("compstate[nmatches]")
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
-    let completer = getsparam("_completer").unwrap_or_default();
-    let completer_underscored = format!("_{}", completer);
-    let in_not = not
-        .iter()
-        .any(|n| n == &completer || n == &completer_underscored);
 
     if nmatches > 1 && !in_not {
         // sh:36

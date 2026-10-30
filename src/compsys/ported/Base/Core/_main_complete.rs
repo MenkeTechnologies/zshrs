@@ -1037,6 +1037,13 @@ pub fn _main_complete(args: &[String]) -> i32 {
         completer_num += 1;
     }
 
+    // sh:225 — `curcontext="${curcontext/:[^:]#:/::}"`: once the chain is
+    // done the completer field is emptied again, so the warnings format
+    // lookup (sh:355) and every `comppostfuncs` hook (sh:401-405, e.g.
+    // `_all_matches_end`) see `:::`-style context, not the last completer's.
+    curcontext = clear_completer_field(&curcontext);
+    let _ = setsparam("curcontext", &curcontext);
+
     // Flush the still-open match group at completer completion, before the
     // `$compstate[nmatches]` menu decision reads it. In C the file-scope
     // `matches` list is a pointer-alias of the open group's `lmatches`, so
@@ -1520,6 +1527,20 @@ fn patch_completer_field(curcontext: &str, completer: &str) -> String {
     parts.join(":")
 }
 
+/// sh:225 `${curcontext/:[^:]#:/::}` — replace the FIRST `:`-run-`:` span
+/// with `::`. A context with fewer than two colons has no match and is
+/// returned unchanged, exactly as the substitution leaves it.
+fn clear_completer_field(curcontext: &str) -> String {
+    let Some(open) = curcontext.find(':') else {
+        return curcontext.to_string();
+    };
+    let Some(len) = curcontext[open + 1..].find(':') else {
+        return curcontext.to_string();
+    };
+    let close = open + 1 + len;
+    format!("{}::{}", &curcontext[..open], &curcontext[close + 1..])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1913,6 +1934,17 @@ mod tests {
     fn patch_completer_field_overwrites_empty_completer_too() {
         // Completer can legitimately be empty — must not be coerced.
         assert_eq!(patch_completer_field("a:b:c:d", ""), "a::c:d");
+    }
+
+    #[test]
+    fn clear_completer_field_matches_sh225_substitution() {
+        // `${c/:[^:]#:/::}` as zsh evaluates it under extendedglob.
+        assert_eq!(clear_completer_field(":complete::"), ":::");
+        assert_eq!(clear_completer_field(":complete:fzp:"), "::fzp:");
+        assert_eq!(clear_completer_field("vared:x:y:z"), "vared::y:z");
+        assert_eq!(clear_completer_field(":::"), ":::");
+        assert_eq!(clear_completer_field("nocolon"), "nocolon");
+        assert_eq!(clear_completer_field("one:"), "one:");
     }
 
     #[test]

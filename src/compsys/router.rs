@@ -573,6 +573,10 @@ fn rust_compsys_lookup(name: &str) -> Option<fn(&[String]) -> i32> {
             Some(_absolute_command_paths::_typed_in_absolute_command_paths)
         }
         "_all_matches" => Some(|_: &[String]| _all_matches::_all_matches()),
+        // The post-hook `_all_matches` sh:19-20 pushes onto `comppostfuncs`.
+        // The shell file defines it next to `_all_matches` (sh:25), so the
+        // port needs its own arm or `_main_complete` sh:404 runs nothing.
+        "_all_matches_end" => Some(|_: &[String]| _all_matches::_all_matches_end()),
         "_assign" => Some(|_: &[String]| _assign::_assign()),
         "_autocd" => Some(|_: &[String]| _autocd::_autocd()),
         "_bash_completions" => Some(|_: &[String]| _bash_completions::_bash_completions()),
