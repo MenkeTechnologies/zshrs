@@ -255,6 +255,8 @@ mod noclobber_every_write_form {
     #[test]
     fn both_fd_form_in_a_pipeline_tees_into_the_pipe() {
         with_old("echo x &> f | cat; echo rc=$?; cat f");
-        with_old("{ echo out; echo err >&2 } &> f | cat; cat f");
+        // stderr opens f directly while stdout reaches it through the multios tee
+        // process, so the order of the two lines inside f is a race in zsh too.
+        with_old("{ echo out; echo err >&2 } &> f | cat; sort f");
     }
 }
