@@ -15310,7 +15310,7 @@ pub fn bin_shift(
 pub fn bin_getopts(
     _name: &str,
     argv: &[String], // c:5672
-    ops: &options,
+    _ops: &options,
     _func: i32,
 ) -> i32 {
     if argv.len() < 2 {
@@ -15412,8 +15412,10 @@ pub fn bin_getopts(
     }
 
     // c:5691-5693 — `quiet = *optstr == ':'; optstr += quiet; lenoptstr -= quiet;`
-    // c:5648 (54471) — `posix = isset(POSIXBUILTINS) || OPT_ISSET(ops, 'p');`
-    let posix = isset(POSIXBUILTINS) || OPT_ISSET(ops, b'p');
+    // zsh 5.9.2 c:5579/5600 — the OPTIND fix-ups test `isset(POSIXBUILTINS)`.
+    // Dev-tree 54471 (`posix = ... || OPT_ISSET(ops, 'p')`) is not ported:
+    // zshrs targets 5.9.2, which has no `getopts -p`.
+    let posix = isset(POSIXBUILTINS);
 
     let (quiet, optstr) = if optstr_full.starts_with(':') {
         // c:5691
@@ -15458,8 +15460,15 @@ pub fn bin_getopts(
     // c:5705-5712 — first option char checks: not `-`/`+` → done; `--` → done.
     if optcind == 0 {
         // c:5705
-        // c:5677 (54471) — `+` introduces options only without posix.
-        if lenstr < 2 || (!str_buf.starts_with('-') && (posix || !str_buf.starts_with('+'))) {
+        // zsh 5.9.2 c:5565 — `if(lenstr < 2 || (*str != '-' && *str != '+'))`:
+        // zsh takes a `+x` word as an option under every emulation.
+        // !!! EMULATION-ONLY (no C counterpart) !!! The real POSIX shells
+        // (XCU getopts) take only `-`: `set -- +a; getopts a o` ends with
+        // status 1 in dash, ksh93 and bash.
+        let plus_is_option = !crate::dash_mode::posix_faithful();
+        if lenstr < 2
+            || (!str_buf.starts_with('-') && !(plus_is_option && str_buf.starts_with('+')))
+        {
             ZOPTIND.store(zoptind, Relaxed);
             OPTCIND.store(optcind, Relaxed);
             // c:5707 — mirror to $OPTIND so callers see the post-loop
@@ -20725,7 +20734,7 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             2,
             -1,
             0,
-            Some("p"), // c:79 (54471)
+            None, // zsh 5.9.2 c:79 — no optstring
             None,
         ),
         BUILTIN(
