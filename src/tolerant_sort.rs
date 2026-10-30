@@ -37,15 +37,9 @@ use crate::ported::zle::compcore::matchcmp;
 /// same zsh binary gives a different answer on a different libc, so there is
 /// no single order to port to.
 ///
-/// One such site is measured: `makearray`'s CGF_NOSORT duplicate pass
-/// (`compcore.c:3299-3303`, ported at `compcore.rs` `makearray`) sorts a COPY
-/// of the match array only to mark the LATER member of each equal pair
-/// `CMF_DELETE`, and the surviving member keeps its slot in the DISPLAY array.
-/// When the same match set is `compadd`ed twice into one group (`_git`'s
-/// `__git_recent_commits` does, once per completer pass), the tie picks which
-/// copy dies, so the listing order is the tie order. `git show <TAB><TAB>`
-/// lists 20 commits in two ascending runs under zsh/Darwin and in plain
-/// insertion order here; the sets and the descriptions are identical.
+/// That is why the completion sorts (`makearray`, via [`qsort_matches`]) do not
+/// use this function: there a tie decides which duplicate is listed, so they
+/// call libc `qsort` itself and get the same tie order zsh gets on the host.
 pub fn qsort_tolerant<T: Clone, F>(v: &mut [T], mut cmp: F)
 where
     F: FnMut(&T, &T) -> Ordering,
@@ -150,11 +144,55 @@ impl MatchSortKey {
 /// `$compstate[nmatches]` four times, and each read re-sorts the group the
 /// way C's `permmatches` does) the per-comparison preparation was 61% of the
 /// completion.
+///
+/// This calls libc's `qsort(3)` itself, as C does, not [`qsort_tolerant`].
+/// `matchcmp` returns 0 for two matches with the same `str` (and no `disp`),
+/// and `makearray` lets that TIE decide what is listed: its CGF_NOSORT pass
+/// (c:3299-3320) marks the LATER member of each equal-string pair CMF_MULT and
+/// the earlier CMF_FMULT, on the live matches, and every `$compstate[nmatches]`
+/// read re-runs it through `permmatches`. When the group grows between two
+/// runs, a non-stable quicksort can order the pair differently the second
+/// time, so both members end up CMF_MULT and neither is listed. `_getconf`
+/// adds `PIPE_BUF` twice (`-S ''` and `-S ' '`), and `_setup` reads
+/// `nmatches` before the last `compadd`: Darwin's qsort orders the pair
+/// (63, 54) over the first 64 matches and (54, 63) over all 295, so zsh lists
+/// 293 possibilities and no `PIPE_BUF`, where a stable sort listed one.
+/// Calling the same entry point keeps the tie permutation identical to zsh's
+/// on every platform. `qsort` also tolerates `matchcmp` not being a strict
+/// weak order, which is what [`qsort_tolerant`] was standing in for.
 pub fn qsort_matches(ord: &mut [usize], src: &[Cmatch]) {
     let keys: Vec<MatchSortKey> = src.iter().map(MatchSortKey::new).collect();
-    qsort_tolerant(ord, |a: &usize, b: &usize| {
-        matchcmp(&src[*a], &keys[*a], &src[*b], &keys[*b])
-    });
+    // `qsort` passes the comparator only the two element pointers, so the
+    // match table it indexes into travels through a thread-local, saved and
+    // restored around the call.
+    type Ctx = (*const Cmatch, *const MatchSortKey);
+    thread_local! {
+        static CTX: std::cell::Cell<Ctx> =
+            const { std::cell::Cell::new((std::ptr::null(), std::ptr::null())) };
+    }
+    unsafe extern "C" fn matchcmp_thunk(a: *const libc::c_void, b: *const libc::c_void) -> libc::c_int {
+        let (ia, ib) = unsafe { (*(a as *const usize), *(b as *const usize)) };
+        let (s, k) = CTX.with(|c| c.get());
+        let (ma, mb, ka, kb) = unsafe { (&*s.add(ia), &*s.add(ib), &*k.add(ia), &*k.add(ib)) };
+        match matchcmp(ma, ka, mb, kb) {
+            Ordering::Less => -1,
+            Ordering::Equal => 0,
+            Ordering::Greater => 1,
+        }
+    }
+    if ord.len() < 2 {
+        return;
+    }
+    let saved = CTX.with(|c| c.replace((src.as_ptr(), keys.as_ptr())));
+    unsafe {
+        libc::qsort(
+            ord.as_mut_ptr() as *mut libc::c_void,
+            ord.len(),
+            std::mem::size_of::<usize>(),
+            Some(matchcmp_thunk),
+        );
+    }
+    CTX.with(|c| c.set(saved));
 }
 
 #[cfg(test)]

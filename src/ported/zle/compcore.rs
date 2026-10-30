@@ -6185,20 +6185,15 @@ pub fn makearray(src: &mut Vec<Cmatch>, flags: i32) -> (Vec<Cmatch>, i32, i32, i
                                                             // always found the FIRST equal element: a run of three identical
                                                             // matches marked one element CMF_DELETE twice instead of two
                                                             // elements once, so only one of the two dupes was ever dropped.
-                // !!! MEASURED DIVERGENCE (see `crate::tolerant_sort`): the
-                // pair walk below kills the LATER member of each equal pair in
-                // THIS sorted copy, and the survivor keeps its slot in `ord`,
-                // i.e. in the displayed order. `matchcmp` returns 0 for two
-                // copies of one match, so the C answer is the platform
-                // `qsort(3)`'s undefined tie order while `qsort_tolerant` is
-                // stable and always keeps the first-added copy. Measured on
-                // `git show <TAB><TAB>`, where `_git` compadds the same 20
-                // commits twice into `-J -default-`: zsh/Darwin lists them in
-                // two ascending runs, zshrs in insertion order. Same set, same
-                // descriptions. Not portably fixable — zsh's own order here is
-                // whatever its libc's quicksort left behind.
+                // The pair walk below kills the LATER member of each equal pair
+                // in THIS sorted copy (and marks the later of a same-`str` pair
+                // CMF_MULT), and the survivor keeps its slot in `ord`, i.e. in
+                // the displayed order. `matchcmp` returns 0 for those pairs, so
+                // which member is "later" is the platform `qsort(3)`'s tie
+                // order; `qsort_matches` calls libc `qsort` for exactly that
+                // reason (see its doc).
                 let mut sord: Vec<usize> = ord.clone();
-                // c:3301-3302 — qsort matchcmp; tolerant sort (non-total-order cmp).
+                // c:3301-3302 — qsort matchcmp (libc qsort, see qsort_matches).
                 crate::tolerant_sort::qsort_matches(&mut sord, src);
 
                 let mut del = false; // c:3303
@@ -8063,6 +8058,54 @@ mod tests {
         // already set and agrees with the first.
         let (arr2, n2, nl2, _) = makearray(&mut live, CGF_MATSORT);
         assert_eq!((arr2.len(), n2, nl2), (arr.len(), n, nl));
+    }
+
+    #[test]
+    fn makearray_nosort_tie_order_is_libc_qsorts() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        // c:3299-3320 — the CGF_NOSORT pass qsorts a COPY with `matchcmp`,
+        // which TIES on two matches that share `str` (no `disp`), and marks
+        // the later of the pair CMF_MULT / the earlier CMF_FMULT on the live
+        // matches. `$compstate[nmatches]` re-runs it (permmatches, c:3461)
+        // each time the group grew. Built as `compadd -S '' m;
+        // compadd -S ' ' m; : $compstate[nmatches]; compadd a b c d e f`:
+        // Darwin's qsort keeps the pair (0, 1) over two matches but orders it
+        // (1, 0) over eight, so BOTH end CMF_MULT and zsh lists neither `m`
+        // (`a  b  c  d  e  f`). A stable sort kept one `m` listed.
+        let mk = |s: &str, suf: &str| {
+            let mut m = Cmatch::default();
+            m.str = Some(s.into());
+            m.suf = Some(suf.into());
+            m
+        };
+        let mut live = vec![mk("m", ""), mk("m", " ")];
+        makearray(&mut live, CGF_NOSORT);
+        live.extend("abcdef".chars().map(|c| mk(&c.to_string(), "")));
+        let (_arr, n, nl, _) = makearray(&mut live, CGF_NOSORT);
+        assert_eq!(n, 8, "different -S suffixes: not matcheq, nothing deleted");
+
+        // The tie order the platform qsort(3) gives, which is what C sees.
+        fn libc_first_of_pair(words: &[&str]) -> usize {
+            unsafe extern "C" fn cmp(a: *const libc::c_void, b: *const libc::c_void) -> libc::c_int {
+                let (a, b) = unsafe { (&**(a as *const *const String), &**(b as *const *const String)) };
+                a.cmp(b) as libc::c_int
+            }
+            let owned: Vec<String> = words.iter().map(|w| w.to_string()).collect();
+            let mut ptrs: Vec<*const String> = owned.iter().map(|o| o as *const String).collect();
+            unsafe {
+                libc::qsort(ptrs.as_mut_ptr() as *mut libc::c_void, ptrs.len(), 8, Some(cmp));
+            }
+            let p = ptrs.iter().find(|p| unsafe { &***p } == "m").unwrap();
+            owned.iter().position(|o| std::ptr::eq(o, *p)).unwrap()
+        }
+        let flipped = libc_first_of_pair(&["m", "m"])
+            != libc_first_of_pair(&["m", "m", "a", "b", "c", "d", "e", "f"]);
+        #[cfg(target_os = "macos")]
+        assert!(flipped, "measured against zsh on Darwin");
+        let both_mult = live[..2].iter().all(|m| m.flags & CMF_MULT != 0);
+        assert_eq!(both_mult, flipped, "tie order must be libc qsort's");
+        assert_eq!(nl, if flipped { 2 } else { 1 });
     }
 
     #[test]
