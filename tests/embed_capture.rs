@@ -146,8 +146,11 @@ fn a_foreign_threads_fd1_write_lands_inside_the_capture() {
     });
 
     let mut sh = ShellExecutor::new();
+    // The signal file is created through fd 3: `: > open` would point fd 1 at
+    // it while `:` runs, and a writer that sees it appear could land FOREIGN
+    // there before the redirect is undone.
     let script = format!(
-        ": > {open}; for i in {{1..500}}; do [[ -e {gate} ]] && break; sleep 0.01; done; echo scripted",
+        ": 3> {open}; for i in {{1..500}}; do [[ -e {gate} ]] && break; sleep 0.01; done; echo scripted",
         open = open.display(),
         gate = gate.display(),
     );
