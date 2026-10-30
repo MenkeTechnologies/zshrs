@@ -13637,6 +13637,39 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
         }
         for (i, (op_byte, target)) in entries.iter().enumerate() {
+            // c:Src/exec.c:3944-3945 — `closemn(mfds, fn->fd2, fn->type)`: a `>&N`
+            // naming the fd whose stream is already split (ct >= 2) first closes
+            // that multio, starting its tee (c:2349-2362), so the fd becomes the
+            // tee's pipe and `mn->ct = 1; mn->fds[0] = fd` (c:2358-2359). The dup
+            // that follows then copies the PIPE: `print x >&1 >&1 >&1 | wc -l` is
+            // 8, every further `>&1` doubling the copies.
+            if *op_byte == r::DUP_WRITE
+                && target_fds.len() >= 2
+                && target.trim_start_matches('&').parse::<i32>() == Ok(fd)
+            {
+                let Ok((tee_r, tee_w)) = os_pipe::pipe() else {
+                    for f in &target_fds {
+                        unsafe { libc::close(*f) };
+                    }
+                    return Value::Status(1);
+                };
+                let tee_r = unsafe {
+                    <os_pipe::PipeReader as std::os::unix::io::FromRawFd>::from_raw_fd(
+                        crate::extensions::fds::movefd(tee_r.into_raw_fd()),
+                    )
+                };
+                let tee = multios_tee_thread(tee_r, std::mem::take(&mut target_fds));
+                // The tee sees EOF once the last copy of `tee_w` — held by the
+                // members below and the fd — closes; the scope-end join waits.
+                with_executor(|exec| {
+                    if let Some(top) = exec.multios_scope_stack.last_mut() {
+                        top.push((-1, tee));
+                    }
+                });
+                let w = crate::ported::utils::movefd(tee_w.into_raw_fd());
+                unsafe { libc::dup2(w, fd) };
+                target_fds.push(w); // c:2359 `mn->fds[0] = fd`
+            }
             let open_result: std::io::Result<i32> = match *op_byte {
                 r::DUP_WRITE | r::DUP_READ => {
                     // Numeric `>&N` — dup the LIVE fd N (after any
@@ -13778,41 +13811,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // to every target fd. Each write inside the thread uses
         // libc::write directly on the raw fd (no Rust File ownership
         // so the splitter can close after EOF without racing main).
-        let target_fds_for_thread = target_fds.clone();
-        let handle = crate::signal_thread::spawn(move || {
-            let mut r = read_end;
-            let mut buf = [0u8; 8192];
-            loop {
-                match std::io::Read::read(&mut r, &mut buf) {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        for &tfd in &target_fds_for_thread {
-                            let mut off = 0;
-                            while off < n {
-                                let w = unsafe {
-                                    libc::write(
-                                        tfd,
-                                        buf[off..n].as_ptr() as *const libc::c_void,
-                                        n - off,
-                                    )
-                                };
-                                if w <= 0 {
-                                    break;
-                                }
-                                off += w as usize;
-                            }
-                        }
-                    }
-                    Err(_) => break,
-                }
-            }
-            // Close every target so file contents flush.
-            for tfd in target_fds_for_thread {
-                unsafe {
-                    libc::close(tfd);
-                }
-            }
-        });
+        let handle = multios_tee_thread(read_end, target_fds);
 
         // Dup the pipe write-end onto the target fd; close the
         // original write_end so EOF arrives when host_redirect_scope_end
@@ -21072,6 +21071,49 @@ pub const MULTIOS_OP_HEREDOC_BODY: u8 = 10;
 /// c:Src/exec.c:4673-4679 getherestr — `gettempfile`, `write_loop`, `close`,
 /// reopen read-only, `unlink`: a read descriptor on the body, as
 /// BUILTIN_EXEC_HERESTR_FD builds for a single here-string.
+/// The tee process `closemn` forks for an output multio (c:Src/exec.c:
+/// 2369-2381), as a thread: copy the pipe to every member fd until EOF, then
+/// close the members so files flush and a downstream tee sees EOF.
+fn multios_tee_thread(
+    read_end: os_pipe::PipeReader,
+    target_fds: Vec<i32>,
+) -> std::thread::JoinHandle<()> {
+    crate::signal_thread::spawn(move || {
+        let mut r = read_end;
+        let mut buf = [0u8; 8192];
+        loop {
+            match std::io::Read::read(&mut r, &mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    for &tfd in &target_fds {
+                        let mut off = 0;
+                        while off < n {
+                            let w = unsafe {
+                                libc::write(
+                                    tfd,
+                                    buf[off..n].as_ptr() as *const libc::c_void,
+                                    n - off,
+                                )
+                            };
+                            if w <= 0 {
+                                break;
+                            }
+                            off += w as usize;
+                        }
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        // Close every target so file contents flush.
+        for tfd in target_fds {
+            unsafe {
+                libc::close(tfd);
+            }
+        }
+    })
+}
+
 fn multios_body_fd(body: &str, append_newline: bool) -> std::io::Result<i32> {
     let text = if append_newline { format!("{}\n", body) } else { body.to_string() };
     let mut tmpl: Vec<u8> = b"/tmp/zshrs_hs_XXXXXX\0".to_vec();

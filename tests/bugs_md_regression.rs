@@ -3241,6 +3241,25 @@ fn traperr_function_fires_on_a_failed_command() {
 }
 
 // ════════════════════════════════════════════════════════════════════
+// multios: a `>&1` naming an already split stdout first closes that
+// multio (`closemn`, Src/exec.c:3944-3945), so the dup copies the tee's
+// pipe and every further `>&1` doubles the output.
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn multios_repeated_dup_of_split_stdout_doubles() {
+    let (_ec, stdout, _stderr) = run_zshrs(
+        r#"setopt multios; count() { local n=0 l; while read -r l; do (( n++ )); done; print $n }
+{ echo d >&1 } | count; { echo d >&1 >&1 } | count; { echo d >&1 >&1 >&1 } | count
+echo d >&1 | count; echo d >&1 >&1 | count; echo d >&1 >&1 >&1 | count"#,
+    );
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(stdout, "1\n2\n4\n2\n4\n8\n");
+}
+
+// ════════════════════════════════════════════════════════════════════
 // The `unexpand` drop-in follows GNU `unexpand()` (src/unexpand.c): with
 // `-t`/`-a` a single blank that only happens to reach a tab stop stays a
 // blank, so `one two three` is left alone at any tab width.
