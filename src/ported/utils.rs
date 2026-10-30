@@ -8085,7 +8085,7 @@ pub fn mb_niceformat(
     // `LC_ALL=C which ヌ` printing the UTF-8 name raw where zsh prints
     // `$'\M-c\M-\C-C\M-\C-L'` (E02xtrace.ztst; 0xe3 is MB_INVALID in
     // the ASCII C locale).
-    let mb_single_byte = unsafe {
+    let mb_not_utf8 = unsafe {
             // c:5583 — `mbrtowc(&wc, &inchar, 1, mbsp)` is LOCALE-driven: with
             // MB_CUR_MAX == 1 it consumes one byte and returns that byte as
             // the wide character, so `\303\255` is TWO characters under
@@ -8106,8 +8106,19 @@ pub fn mb_niceformat(
                 !(cs.eq_ignore_ascii_case("UTF-8") || cs.eq_ignore_ascii_case("utf8"))
             }
         };
+    // c:5393 — a non-UTF-8 codeset is either SINGLE-byte (`MB_CUR_MAX == 1`:
+    // C, ISO-8859-*) or a MULTIBYTE one (`zh_CN.GB2312`, `ja_JP.eucJP`). The
+    // single-byte walk below feeds `mbrtowc` one byte at a time, which under
+    // a multibyte codeset splits every two-byte character: zsh printed the
+    // GB2312 pair `\xc4\xe3` raw where this printed `\xc4\M-c`. The
+    // multibyte arm makes C's own call instead — the whole tail, with the
+    // shift state carried between calls.
+    let mb_multi = mb_not_utf8 && (unsafe { mb_cur_max_raw() } as usize) > 1;
+    let mb_single_byte = mb_not_utf8 && !mb_multi;
 
-    // c:5391 — `memset(&mbs, 0, sizeof mbs);` (Rust: stateless UTF-8)
+    // c:5391 — `memset(&mbs, 0, sizeof mbs);`. Only the multibyte arm reads
+    // it; the UTF-8 and single-byte arms are stateless.
+    let mut mbs: MbStateBuf = MBSTATE_ZERO;
     while umlen > 0 {
         // c:5392
         // c:5393 — `cnt = eol ? MB_INVALID : mbrtowc(&c, ptr, umlen, &mbs);`
@@ -8115,10 +8126,58 @@ pub fn mb_niceformat(
         // honoring `eol` (force the invalid arm when set).
         let cnt: usize;
         let decoded_c: Option<char>;
+        // The wide character the multibyte arm decoded, and the `fmt`/width C
+        // produces for one that has no Rust `char` (a surrogate code such as
+        // eucJP `\xd8\xa1` = 0xD8A1).
+        let mut mb_wc: Option<u32> = None;
+        let mut mb_fmt: Option<(String, usize)> = None;
         if eol {
             // c:5396 — MB_INVALID arm via `eol = 1`.
             decoded_c = None;
             cnt = 1;
+        } else if mb_multi {
+            // c:5393 — `cnt = mbrtowc(&c, ptr, umlen, &mbs);`. Outside UTF-8,
+            // macOS hands back the LOCALE's code (`\xc4\xe3` -> 0xC4E3), and
+            // zsh looks that value up in its Unicode 9 tables regardless
+            // (WC_ISPRINT = u9_iswprint, Src/ztype.h:77).
+            let mut wc: libc::wchar_t = 0;
+            let r = unsafe {
+                mbrtowc(
+                    &mut wc,
+                    ums[ptr..].as_ptr() as *const libc::c_char,
+                    umlen,
+                    &mut mbs as *mut MbStateBuf as *mut libc::c_void,
+                )
+            };
+            if r == MB_INCOMPLETE {
+                // c:5394-5395 — `eol = 1;` then the MB_INVALID arm.
+                eol = true;
+                decoded_c = None;
+                cnt = 1;
+            } else if r == MB_INVALID {
+                decoded_c = None;
+                cnt = 1;
+            } else {
+                // c:5406-5409 — `case 0:` consumes the NUL's one byte.
+                cnt = if r == 0 { 1 } else { r };
+                let wcu = wc as u32;
+                mb_wc = Some(wcu);
+                decoded_c = char::from_u32(wcu);
+                if decoded_c.is_none() {
+                    // c:616-663 — no `char`, so not printable to the u9
+                    // tables (surrogates are in `wcwidth9_nonprint`, codes
+                    // past 0x10FFFF are unassigned): `wcrtomb` only runs
+                    // under PRINTEIGHTBIT (c:643, width 1 from c:687-689),
+                    // otherwise the `\u`/`\U` escape of c:656-663.
+                    mb_fmt = Some(if isset(PRINTEIGHTBIT) {
+                        (String::new(), 1)
+                    } else if wcu >= 0x10000 {
+                        (format!("\\U{:08x}", wcu), 10)
+                    } else {
+                        (format!("\\u{:04x}", wcu), 6)
+                    });
+                }
+            }
         } else if mb_single_byte {
             // c:5393 — single-byte locale: `mbrtowc` returns 1 and sets
             // `c` to the byte value itself, except that the ASCII C locale
@@ -8186,6 +8245,11 @@ pub fn mb_niceformat(
 
         // c:5396-5403 / c:5404-5424 switch dispatch on cnt/decoded_c.
         let cnt_used: usize;
+        if let Some((f, w)) = mb_fmt.take() {
+            fmt = f;
+            newl = w;
+            cnt_used = cnt;
+        } else {
         match decoded_c {
             None => {
                 // c:5397 — `case MB_INVALID:` (or fall-through from
@@ -8194,7 +8258,7 @@ pub fn mb_niceformat(
                 fmt = nicechar_sel(ums[ptr] as char, (flags & NICEFLAG_QUOTE) != 0);
                 newl = fmt.len(); // c:5401 newl = strlen(fmt)
                 cnt_used = 1; // c:5402 cnt = 1
-                              // c:5403 — `memset(&mbs, 0, sizeof mbs);` (Rust: stateless)
+                mbs = MBSTATE_ZERO; // c:5403 — `memset(&mbs, 0, sizeof mbs);`
             }
             Some(c) if c == '\0' => {
                 // c:5406 — `case 0:` — '\0' decodes to 0; consume 1 byte
@@ -8239,6 +8303,45 @@ pub fn mb_niceformat(
                 }
             }
         }
+        }
+
+        // c:643-698 — in a multibyte locale the character `wcs_nicechar_sel`
+        // passes through is `wcrtomb`'s bytes IN THAT LOCALE (GB2312
+        // 0xC4E3 -> `\xc4\xe3`), not the UTF-8 of the Rust `char` holding the
+        // code. A `wcrtomb` failure takes c:644-663's escape instead.
+        let mut mb_bytes: Option<Vec<u8>> = None;
+        if let Some(wcu) = mb_wc {
+            let passthrough = wcu >= 0x80
+                && match decoded_c {
+                    Some(ch) => fmt == ch.to_string(),
+                    None => fmt.is_empty(),
+                };
+            if passthrough {
+                let mut mbstr = [0u8; 16];
+                let mut st: MbStateBuf = MBSTATE_ZERO;
+                let r = unsafe {
+                    wcrtomb(
+                        mbstr.as_mut_ptr() as *mut libc::c_char,
+                        wcu as libc::wchar_t,
+                        &mut st as *mut MbStateBuf as *mut libc::c_void,
+                    )
+                };
+                if r == MB_INVALID {
+                    if wcu >= 0x10000 {
+                        fmt = format!("\\U{:08x}", wcu);
+                        newl = 10;
+                    } else if wcu >= 0x100 {
+                        fmt = format!("\\u{:04x}", wcu);
+                        newl = 6;
+                    } else {
+                        fmt = nicechar_sel(char::from(wcu as u8), (flags & NICEFLAG_QUOTE) != 0);
+                        newl = ztrlen(&fmt) as usize;
+                    }
+                } else {
+                    mb_bytes = Some(mbstr[..r].to_vec());
+                }
+            }
+        }
 
         umlen -= cnt_used; // c:5427 umlen -= cnt
         ptr += cnt_used; // c:5428 ptr += cnt
@@ -8252,7 +8355,9 @@ pub fn mb_niceformat(
             // in U+0080..U+00FF whose UTF-8 form is two bytes, so it has to be
             // narrowed back on the way out. Escapes (`\M-^@`) are ASCII and
             // pass through either way.
-            if mb_single_byte {
+            if let Some(ref b) = mb_bytes {
+                let _ = w.write_all(b);
+            } else if mb_single_byte {
                 let mut out: Vec<u8> = Vec::with_capacity(fmt.len());
                 let mut b4 = [0u8; 4];
                 for ch in fmt.chars() {
@@ -8271,7 +8376,18 @@ pub fn mb_niceformat(
             // c:5433 if (outstr)
             // c:5434-5446 — append fmt to outstr, growing on demand. Rust
             // String auto-grows; the realloc loop collapses to push_str.
-            if mb_single_byte {
+            if let Some(ref b) = mb_bytes {
+                // c:690-697 — `wcrtomb`'s bytes, stored metafied in the same
+                // char-level form as the single-byte arm below.
+                for &byte in b {
+                    if byte >= 0x80 {
+                        buf.push(char::from(Meta));
+                        buf.push(char::from(byte ^ 32));
+                    } else {
+                        buf.push(char::from(byte));
+                    }
+                }
+            } else if mb_single_byte {
                 // c:690-697 — the single byte `wcrtomb` produced is stored
                 // metafied; in zshrs's char-level form that is U+0083 followed
                 // by `byte ^ 32` for every byte >= 0x80 (see the note above).
@@ -8368,7 +8484,7 @@ pub fn is_mb_niceformat(s: &str) -> i32 {
     // "no reformat needed" for `ヌ` (E3 83 8C) under LC_ALL=C, so `which`
     // and `${(q+)…}` printed it bare where zsh sees the non-printable 0x83
     // and quotes the whole name. Same inlined CODESET probe as there.
-    let mb_single_byte = unsafe {
+    let mb_not_utf8 = unsafe {
         let _ = *MB_LOCALE_READY;
         let cs_ptr = libc::nl_langinfo(libc::CODESET);
         if cs_ptr.is_null() {
@@ -8378,6 +8494,65 @@ pub fn is_mb_niceformat(s: &str) -> i32 {
             !(cs.eq_ignore_ascii_case("UTF-8") || cs.eq_ignore_ascii_case("utf8"))
         }
     };
+    // Same split as `mb_niceformat`: a MULTIBYTE non-UTF-8 codeset
+    // (`ja_JP.eucJP`, `zh_CN.GB2312`) needs C's own whole-tail `mbrtowc`
+    // call. Fed one byte at a time, the eucJP half-width kana `\x8e\xb1`
+    // read as the C1 control 0x8E, so `${(q+)…}` wrapped it in `$'…'`
+    // where zsh prints it bare.
+    let mb_multi = mb_not_utf8 && (unsafe { mb_cur_max_raw() } as usize) > 1;
+    let mb_single_byte = mb_not_utf8 && !mb_multi;
+    if mb_multi {
+        // c:5485 — `memset(&mbs, 0, sizeof mbs);`
+        let mut mbs: MbStateBuf = MBSTATE_ZERO;
+        let mut eol = false;
+        while ret == 0 && ptr < umlen {
+            // c:5487 — `cnt = eol ? MB_INVALID : mbrtowc(&c, ptr, umlen, &mbs);`
+            let mut wc: libc::wchar_t = 0;
+            let mut cnt = if eol {
+                MB_INVALID
+            } else {
+                unsafe {
+                    mbrtowc(
+                        &mut wc,
+                        ums[ptr..].as_ptr() as *const libc::c_char,
+                        umlen - ptr,
+                        &mut mbs as *mut MbStateBuf as *mut libc::c_void,
+                    )
+                }
+            };
+            if cnt == MB_INCOMPLETE || cnt == MB_INVALID {
+                // c:5490-5502 — `eol = 1` on MB_INCOMPLETE, then the
+                // MB_INVALID arm: `is_nicechar(*ptr)`.
+                if cnt == MB_INCOMPLETE {
+                    eol = true;
+                }
+                if is_nicechar(char::from(ums[ptr])) {
+                    ret = 1;
+                    break;
+                }
+                cnt = 1;
+                mbs = MBSTATE_ZERO;
+            } else {
+                // c:5503-5511 — `case 0:` consumes one byte, then
+                // `is_wcs_nicechar(c)`. A code with no Rust `char`
+                // (surrogate, > 0x10FFFF) is non-printable and >= 0x100, so
+                // c:718-722 answers 1 unless PRINTEIGHTBIT.
+                if cnt == 0 {
+                    cnt = 1;
+                }
+                let nice = match char::from_u32(wc as u32) {
+                    Some(ch) => is_wcs_nicechar(ch),
+                    None => !isset(PRINTEIGHTBIT),
+                };
+                if nice {
+                    ret = 1;
+                    break;
+                }
+            }
+            ptr += cnt; // c:5514-5515
+        }
+        ptr = umlen;
+    }
     if mb_single_byte {
         // c:5486-5516 — one byte per `mbrtowc`; `case 0` (NUL) falls through
         // to the default arm, so every converted byte reaches

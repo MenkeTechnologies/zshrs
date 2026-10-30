@@ -232,6 +232,22 @@ mod multibyte_width_is_locale_driven {
             );
         }
     }
+
+    /// `mb_niceformat` / `is_mb_niceformat` (`Src/utils.c:5368`, `:5474`)
+    /// decode with ONE `mbrtowc(&c, ptr, umlen, &mbs)` over the whole tail.
+    /// Under eucJP `\x8e\xb1` is a single half-width katakana (SS2 + byte),
+    /// printable, so `(q+)` leaves it bare and `(V)` prints its two bytes.
+    /// Decoding byte by byte read 0x8E as a C1 control: zshrs quoted it as
+    /// `$'…'` and `(V)` printed `\M-^N`. A trailing lone SS2 is still the
+    /// MB_INCOMPLETE arm (`\M-\C-N` under `(q+)`).
+    #[test]
+    fn eucjp_two_byte_characters_are_not_split_by_nice_formatting() {
+        assert_parity_in(
+            "ja_JP.eucJP",
+            "x=$'\\x8e\\xb1\\xa4\\xa2'; y=$'\\xa4\\xa2\\x8e'; \
+             print -rn -- \"${(q+)x}|${(V)x}|${(q+)${:-a$x}}|${(q+)y}|${(V)y}\"",
+        );
+    }
 }
 
 /// `unset LC_ALL` calls `lc_allsetfn(pm, NULL)` through `stdunsetfn`
