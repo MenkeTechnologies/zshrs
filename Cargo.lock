@@ -4015,11 +4015,11 @@ checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
 
 [[package]]
 name = "znative"
-version = "0.13.56"
+version = "0.13.57"
 
 [[package]]
 name = "zshrs"
-version = "0.13.56"
+version = "0.13.57"
 dependencies = [
  "base64",
  "bincode",
@@ -4079,7 +4079,7 @@ dependencies = [
 
 [[package]]
 name = "zshrs-daemon"
-version = "0.13.56"
+version = "0.13.57"
 dependencies = [
  "axum",
  "base64",
@@ -4119,7 +4119,7 @@ dependencies = [
 
 [[package]]
 name = "zshrs-runtime"
-version = "0.13.56"
+version = "0.13.57"
 dependencies = [
  "zshrs",
 ]
