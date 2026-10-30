@@ -1394,12 +1394,14 @@ impl ZshCompiler {
         // (WC_SUBLIST_COPROC on each sublist code), so `true && coproc cmd`
         // starts a coproc as the second element.
         let mut pipe_coprocs: Vec<bool> = vec![sublist.flags.coproc];
+        let mut pipe_coproc_names: Vec<Option<&str>> = vec![sublist.flags.coproc_name.as_deref()];
         let mut next_link = sublist.next.as_ref();
         while let Some((op, next_sublist)) = next_link {
             ops.push(*op);
             pipes.push(&next_sublist.pipe);
             pipe_nots.push(next_sublist.flags.not);
             pipe_coprocs.push(next_sublist.flags.coproc);
+            pipe_coproc_names.push(next_sublist.flags.coproc_name.as_deref());
             next_link = next_sublist.next.as_ref();
         }
 
@@ -1407,7 +1409,7 @@ impl ZshCompiler {
         // body's stdin/stdout become two fds in $COPROC. Dispatched via
         // BUILTIN_RUN_COPROC; the body compiles to its own sub-chunk.
         if sublist.flags.coproc {
-            self.compile_coproc_pipe(pipes[0]);
+            self.compile_coproc_pipe(pipes[0], pipe_coproc_names[0]);
             // `!` on a coproc is unusual — apply after dispatch.
             if sublist.flags.not {
                 self.emit_negate_status();
@@ -1420,7 +1422,7 @@ impl ZshCompiler {
                     SublistOp::Or => self.builder.emit(Op::JumpIfTrue(0), 0),
                 };
                 if pipe_coprocs[i + 1] {
-                    self.compile_coproc_pipe(pipes[i + 1]);
+                    self.compile_coproc_pipe(pipes[i + 1], pipe_coproc_names[i + 1]);
                 } else if let (true, Some(disown)) = (i + 1 == ops.len(), async_tail) {
                     // c:Src/exec.c:1545 — the final element takes the list's
                     // Z_ASYNC.
@@ -1560,7 +1562,7 @@ impl ZshCompiler {
                 // c:Src/exec.c:1764-1765 — a coproc element runs Z_ASYNC and
                 // its execpline returns `lastval = 0` (c:1818) with no job
                 // wait, so there is no per-element sublist finish.
-                self.compile_coproc_pipe(pipes[i + 1]);
+                self.compile_coproc_pipe(pipes[i + 1], pipe_coproc_names[i + 1]);
             } else {
                 self.compile_execpline(pipes[i + 1], pipe_nots[i + 1]);
                 // c:Src/exec.c:1502-1504 (WC_SUBLIST_AND) and c:1536
@@ -1717,9 +1719,9 @@ impl ZshCompiler {
         self.builder.emit(Op::SetStatus, 0);
     }
 
-    fn compile_coproc_pipe(&mut self, pipe: &ZshPipe) {
+    fn compile_coproc_pipe(&mut self, pipe: &ZshPipe, name: Option<&str>) {
         // Compile the pipeline as a body sub-chunk, then push
-        // [name="", job_text, sub_idx] and call BUILTIN_RUN_COPROC.
+        // [name ("" = COPROC), job_text, sub_idx] and call BUILTIN_RUN_COPROC.
         // c:Src/parse.c:864-876 par_sublist2 — `COPROC pline`: the
         // coproc flag covers the ENTIRE pipeline, so `coproc a | b`
         // wires the whole pipe (compile_pipe), not just the first
@@ -1737,7 +1739,7 @@ impl ZshCompiler {
         let chunk = sub.builder.build();
         let sub_idx = self.builder.add_sub_chunk(chunk);
 
-        let name_const = self.builder.add_constant(Value::str(""));
+        let name_const = self.builder.add_constant(Value::str(name.unwrap_or("")));
         self.builder.emit(Op::LoadConst(name_const), 0);
         // c:Src/exec.c::execpline — the coproc takes the same Z_ASYNC
         // job-table path as `cmd &` (how = Z_ASYNC at c:1709, spawnjob

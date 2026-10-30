@@ -65,12 +65,16 @@ pub enum SublistOp {
     Or, // ||
 }
 /// `SublistFlags` — see fields for layout.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SublistFlags {
     /// Coproc
     pub coproc: bool,
     /// Negated with !
     pub not: bool,
+    /// bash `coproc NAME compound_command`: the array that receives the
+    /// coprocess's fds (pid in `NAME_PID`). `None` is the default `COPROC`.
+    #[serde(default)]
+    pub coproc_name: Option<String>,
 }
 
 /// A pipeline is commands connected by |

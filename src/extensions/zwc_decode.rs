@@ -336,7 +336,7 @@ impl<'a> Walker<'a> {
         ZshSublist {
             pipe,
             next,
-            flags: SublistFlags { coproc, not },
+            flags: SublistFlags { coproc, not, ..Default::default() },
         }
     }
 

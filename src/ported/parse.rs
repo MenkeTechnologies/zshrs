@@ -1262,8 +1262,9 @@ fn par_sublist() -> Option<ZshSublist> {
                 + &super::lex::LEX_INPUT
                     .with_borrow(|s| s.get(super::lex::LEX_POS.get()..).unwrap_or("").to_string());
             if crate::dash_mode::bash_coproc_names_compound(&rest) {
-                // The AST has no slot for the name yet, so the coprocess still
-                // runs as COPROC; the word is consumed so the compound parses.
+                // The word names the coprocess's fd array; it is consumed so
+                // the compound parses.
+                flags.coproc_name = tokstr();
                 set_incmdpos(true);
                 zshlex();
             }

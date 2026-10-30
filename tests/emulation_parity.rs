@@ -1877,6 +1877,8 @@ const BASH_ONLY_CORPUS: &[&str] = &[
     "shopt -s lastpipe; echo a | read x; echo \"[$x]\"; shopt -u lastpipe; echo b | read y; echo \"[$y]\"",
     // `coproc`: COPROC=(read-fd write-fd) and COPROC_PID are script-visible.
     "coproc cat; echo hi >&${COPROC[1]}; read -t 5 -u ${COPROC[0]} x; echo \"got $x\"; [ -n \"$COPROC_PID\" ] && echo pid; kill $COPROC_PID 2>/dev/null",
+    // `coproc NAME compound`: the fds land in NAME, the pid in NAME_PID.
+    "coproc NAME { echo hi; read x; echo \"got $x\"; }; echo \"fds=${#NAME[@]}\"; read -r l <&\"${NAME[0]}\"; echo \"$l\"; echo yo >&\"${NAME[1]}\"; read -r l <&\"${NAME[0]}\"; echo \"$l\"; [ -n \"$NAME_PID\" ] && echo pid; wait",
     // `$'...'`: `\\cX` is a control char; an unknown escape and a digitless
     // `\\x` / `\\u` keep their backslash.
     "printf '%s|' $'\\z' $'\\x' $'\\u' $'\\q'; printf '%s' $'\\cA\\c?' | od -An -c",
