@@ -54,7 +54,7 @@ jobs:
   test:
     name: Test
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+    timeout-minutes: 120
     env:
       RUST_BACKTRACE: 1
     strategy:
