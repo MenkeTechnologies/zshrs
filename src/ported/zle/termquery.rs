@@ -318,11 +318,14 @@ pub fn probe_terminal(
             illgotten += 1;
         } else {
             // c:245-253 — the C buffer doubles when full; the Vec grows.
-            // c:254 — `ch = getbyte(timeout, 0, 1)` reads SHTTY. With no terminal
-            // (SHTTY == -1) that read fails and the probe ends at `ch == EOF`;
-            // the port's getbyte falls back to fd 0 there, which would swallow
-            // the rest of a script piped into `zshrs -i`.
-            let got = if crate::ported::init::SHTTY.load(Ordering::Relaxed) == -1 {
+            // c:254 — `ch = getbyte(timeout, 0, 1)` takes an unget-buffer byte
+            // first (zle_main.c getbyte: `if (kungetct)`), else reads SHTTY.
+            // With no terminal (SHTTY == -1) that read fails and the probe ends
+            // at `ch == EOF`; the port's getbyte falls back to fd 0 there,
+            // which would swallow the rest of a script piped into `zshrs -i`.
+            let no_terminal = crate::ported::init::SHTTY.load(Ordering::Relaxed) == -1
+                && crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().is_empty();
+            let got = if no_terminal {
                 None
             } else {
                 getbyte(timeout)
