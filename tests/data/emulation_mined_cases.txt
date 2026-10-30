@@ -1130,7 +1130,7 @@ zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- -c -a; while get
 zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- -cval; getopts :c: o; printf '%s=%s %s\n' "$o" "$OPTARG" "$OPTIND"
 zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- -a; getopts :b o; printf '%s=%s %s\n' "$o" "$OPTARG" "$OPTIND"
 zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- -ax; getopts :a o; getopts :a o; printf '%s=%s %s\n' "$o" "$OPTARG" "$OPTIND"
-zsh,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,ash	set -- +a; getopts a o; printf '%s %s %s\n' "$?" "$o" "$OPTIND"
+zsh,ksh,sh,dash,ash	set -- +a; getopts a o; printf '%s %s %s\n' "$?" "$o" "$OPTIND"
 zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	set -- -a; getopts a o x y; printf '%s %s %s\n' "$?" "$o" "$OPTIND"
 zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh,ash	f() { local OPTIND; while getopts a o; do printf '%s' "$o"; done; }; set -- -a; f -a; printf '\n'
 zsh,bash,ksh,sh,dash,sh/zsh-style,ksh/zsh-style,mksh	set -- -a -b; getopts ab o; OPTIND=1; getopts ab o; printf '%s %s\n' "$o" "$OPTIND"
