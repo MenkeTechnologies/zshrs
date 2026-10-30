@@ -3172,3 +3172,38 @@ fn login_interactive_cmdarg_reads_zlogout_without_exit() {
         ".zshenv\n.zprofile\n.zshrc\n.zlogin\n.zlogout\nT\nZ 2\n"
     );
 }
+
+// ════════════════════════════════════════════════════════════════════
+// `zsh --emulate sh|ksh` takes the Bourne startup branch of
+// run_init_scripts (Src/init.c:1449-1471): `.profile` for a login shell,
+// never `.zshenv`. And setupvals seeds `PS4='+ '` under that emulation
+// (Src/init.c:1192), so an xtrace line is not a literal `+%N:%i> `.
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn emulate_sh_reads_bourne_startup_files_and_terse_ps4() {
+    let Some(bin) = zshrs_bin() else { return };
+    let home = tempfile::tempdir().expect("home");
+    std::fs::write(home.path().join(".zshenv"), "echo zshenv-read\n").expect(".zshenv");
+    std::fs::write(home.path().join(".profile"), "echo profile-read\n").expect(".profile");
+    let run = |args: &[&str]| {
+        let out = Command::new(&bin)
+            .args(args)
+            .env_clear()
+            .env("HOME", home.path())
+            .env("PATH", "/usr/bin:/bin")
+            .output()
+            .expect("spawn zshrs");
+        (
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    for mode in ["sh", "ksh"] {
+        let (out, err) = run(&["--emulate", mode, "-c", "echo body; set -x; a=1"]);
+        assert_eq!(out, "body\n", "--emulate {mode} must not read ~/.zshenv");
+        assert_eq!(err, "+ a=1 \n", "--emulate {mode} PS4 default");
+        let (out, _) = run(&["--emulate", mode, "-l", "-c", "echo body"]);
+        assert_eq!(out, "profile-read\nbody\n", "--emulate {mode} login reads ~/.profile");
+    }
+}

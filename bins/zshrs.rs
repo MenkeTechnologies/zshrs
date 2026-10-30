@@ -3592,6 +3592,41 @@ fn source_startup_files(
     is_interactive: bool,
     no_rcs: bool,
 ) {
+    // c:Src/init.c:1449-1471 — `if (EMULATION(EMULATE_KSH|EMULATE_SH))`: a
+    // zsh started as `zsh --emulate sh|ksh` reads the Bourne files —
+    // `/etc/profile` and `$HOME/.profile` for a login shell, `$ENV` for an
+    // interactive one — and none of its own, `/etc/zshenv` included.
+    let emul = zsh::ported::options::emulation.load(std::sync::atomic::Ordering::SeqCst);
+    if emul & (zsh::ported::zsh_h::EMULATE_KSH | zsh::ported::zsh_h::EMULATE_SH) as i32 != 0 {
+        let mut source_path = |path: &Path| {
+            if let Ok(contents) = std::fs::read_to_string(path) {
+                source_from_memory(executor, path, &contents);
+            }
+        };
+        if is_login {
+            source_path(Path::new("/etc/profile")); // c:1451
+        }
+        if !zsh::ported::options::opt_state_get("privileged").unwrap_or(false) {
+            // c:1452
+            if is_login {
+                // c:1454 — sourcehome(".profile"): `$HOME` under emulation (c:1684)
+                if let Some(home) = zsh::ported::params::getsparam("HOME") {
+                    source_path(&Path::new(&home).join(".profile"));
+                }
+            }
+            if is_interactive {
+                // c:1456-1468 — `$ENV`, expanded (parsestr + singsub) before use.
+                if let Some(env) = zsh::ported::params::getsparam("ENV") {
+                    let env = zsh::ported::subst::singsub(&env);
+                    source_path(Path::new(&env));
+                }
+            }
+        } else {
+            source_path(Path::new("/etc/suid_profile")); // c:1470
+        }
+        return;
+    }
+
     let zdotdir = get_zdotdir();
 
     // Build the ordered list of candidate startup files.

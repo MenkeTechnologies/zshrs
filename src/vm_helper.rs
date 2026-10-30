@@ -3092,6 +3092,15 @@ impl ShellExecutor {
                 (true, "PS2") => "> ",
                 (true, "PS4") => "+ ",
                 (false, "PS4") if posix_real => "+ ",
+                // c:Src/init.c:1192 — `prompt4 = ztrdup(EMULATION(EMULATE_KSH|EMULATE_SH)
+                // ? "+ " : "+%N:%i> ")`: `zsh --emulate sh|ksh` gets the terse prefix.
+                (false, "PS4")
+                    if crate::ported::zsh_h::EMULATION(
+                        crate::ported::zsh_h::EMULATE_KSH | crate::ported::zsh_h::EMULATE_SH,
+                    ) =>
+                {
+                    "+ "
+                }
                 _ => default,
             };
             let cur = crate::ported::params::getsparam(name);
