@@ -510,3 +510,187 @@ pub fn subscript_bound_classify(t: &str, arr: &[String]) -> SubscriptBound {
     // and already evaluated as math.
     SubscriptBound::Math(t.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ported::zsh_h::{Bnull, Comma, Inbrack, Outbrack};
+
+    #[test]
+    fn unescape_plain_text_is_identity() {
+        assert_eq!(subscript_unescape("key", false, false), ("key".into(), false));
+        assert_eq!(subscript_unescape("", true, true), (String::new(), false));
+    }
+
+    #[test]
+    fn unescape_drops_backslash_before_brackets() {
+        // `A[\[k\]]` keys on `[k]`.
+        assert_eq!(subscript_unescape("\\[k\\]", false, false).0, "[k]");
+        assert_eq!(subscript_unescape("\\(\\)\\{\\}", false, false).0, "(){}");
+    }
+
+    #[test]
+    fn unescape_keeps_backslash_before_ordinary_chars() {
+        // c:Src/lex.c:1508-1511 — `A[a\ b]` / `A[a\*b]` keep their backslash.
+        assert_eq!(subscript_unescape("a\\ b", false, true).0, "a\\ b");
+        assert_eq!(subscript_unescape("a\\*b", false, true).0, "a\\*b");
+    }
+
+    #[test]
+    fn unescape_double_quote_only_inside_dquotes() {
+        assert_eq!(subscript_unescape("\\\"", false, false).0, "\\\"");
+        assert_eq!(subscript_unescape("\\\"", true, false).0, "\"");
+    }
+
+    #[test]
+    fn unescape_dollar_backslash_backtick_depend_on_resolve_dollar() {
+        assert_eq!(subscript_unescape("\\$x", false, true), ("$x".into(), false));
+        assert_eq!(subscript_unescape("\\$x", false, false), ("\\$x".into(), false));
+        assert_eq!(subscript_unescape("\\`", false, true).0, "`");
+        // `\\\[` is an escaped backslash followed by an escaped bracket.
+        assert_eq!(subscript_unescape("\\\\\\[", false, true).0, "\\[");
+    }
+
+    #[test]
+    fn unescape_reports_live_expansion_only_when_unescaped() {
+        assert!(subscript_unescape("$x", false, false).1);
+        assert!(subscript_unescape("`cmd`", false, false).1);
+        assert!(subscript_unescape(&format!("{}x", Stringg), false, false).1);
+        assert!(!subscript_unescape("\\$x", false, false).1);
+        assert!(subscript_unescape("\\$x$y", false, true).1);
+    }
+
+    #[test]
+    fn unescape_backslash_newline_and_trailing_backslash() {
+        assert_eq!(subscript_unescape("a\\\nb", false, false).0, "ab");
+        assert_eq!(subscript_unescape("ab\\", false, false).0, "ab\\");
+    }
+
+    #[test]
+    fn escape_markers_encodes_marked_set_as_bnull() {
+        assert_eq!(subscript_escape_markers("\\[k\\]", false), format!("{b}[k{b}]", b = Bnull));
+        assert_eq!(subscript_escape_markers("\\$x", false), format!("{}$x", Bnull));
+        assert_eq!(subscript_escape_markers("\\\\", false), format!("{}\\", Bnull));
+        assert_eq!(subscript_escape_markers("\\\"", true), format!("{}\"", Bnull));
+    }
+
+    #[test]
+    fn escape_markers_leaves_other_text_alone() {
+        assert_eq!(subscript_escape_markers("a\\ b", false), "a\\ b");
+        assert_eq!(subscript_escape_markers("\\\"", false), "\\\"");
+        assert_eq!(subscript_escape_markers("$x[1]", false), "$x[1]");
+        assert_eq!(subscript_escape_markers("a\\\nb", false), "ab");
+        assert_eq!(subscript_escape_markers("a\\", false), "a\\");
+    }
+
+    #[test]
+    fn arg_split_on_top_level_comma() {
+        assert_eq!(subscript_arg_split("1,2", false), Some(("1".into(), "2".into())));
+        assert_eq!(subscript_arg_split("-1,", false), Some(("-1".into(), String::new())));
+        assert_eq!(subscript_arg_split("12", false), None);
+    }
+
+    #[test]
+    fn arg_split_never_splits_a_hash_key() {
+        assert_eq!(subscript_arg_split("a,b", true), None);
+    }
+
+    #[test]
+    fn arg_split_ignores_nested_commas() {
+        assert_eq!(subscript_arg_split("a[1,2],3", false), Some(("a[1,2]".into(), "3".into())));
+        assert_eq!(subscript_arg_split("(f(1,2)),3", false), Some(("(f(1,2))".into(), "3".into())));
+        assert_eq!(subscript_arg_split("(1,2)", false), None);
+        let tok = format!("{}1,2{}", Inbrack, Outbrack);
+        assert_eq!(subscript_arg_split(&tok, false), None);
+    }
+
+    #[test]
+    fn arg_split_escaped_bracket_does_not_open_nesting() {
+        // Without the skip, `\[` would raise the depth and hide the comma.
+        assert_eq!(subscript_arg_split("\\[,x", false), Some(("\\[".into(), "x".into())));
+        let marked = format!("{}[,x", Bnull);
+        assert_eq!(subscript_arg_split(&marked, false), Some((format!("{}[", Bnull), "x".into())));
+    }
+
+    #[test]
+    fn arg_split_honours_comma_token() {
+        let s = format!("1{}2", Comma);
+        assert_eq!(subscript_arg_split(&s, false), Some(("1".into(), "2".into())));
+    }
+
+    #[test]
+    fn range_bounds_prefers_matching_record() {
+        let rec = Some(("1,2".to_string(), None));
+        assert_eq!(subscript_range_bounds("1,2", &rec), None);
+        let rec = Some(("x".to_string(), Some(("a".into(), "b".into()))));
+        assert_eq!(subscript_range_bounds("x", &rec), Some(("a".into(), "b".into())));
+    }
+
+    #[test]
+    fn range_bounds_ignores_stale_record() {
+        let rec = Some(("other".to_string(), None));
+        assert_eq!(subscript_range_bounds("1,2", &rec), Some(("1".into(), "2".into())));
+        assert_eq!(subscript_range_bounds("1,(2,3)", &None), Some(("1".into(), "(2,3)".into())));
+        assert_eq!(subscript_range_bounds("(1,2)", &None), None);
+        let s = format!("3{}4", Comma);
+        assert_eq!(subscript_range_bounds(&s, &None), Some(("3".into(), "4".into())));
+    }
+
+    #[test]
+    fn requote_leaves_plain_and_flag_group_keys_borrowed() {
+        assert!(matches!(subscript_requote_for_assign("abc"), std::borrow::Cow::Borrowed("abc")));
+        assert!(matches!(subscript_requote_for_assign("(r)a]"), std::borrow::Cow::Borrowed("(r)a]")));
+        assert!(matches!(subscript_requote_for_assign("  (r)x"), std::borrow::Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn requote_round_trips_through_unescape() {
+        // The rebuilt `name[key]` text must re-parse to the same key.
+        for key in ["]", "\\", "a[b]c", "$x", "`c`", "{}", "\"q\"", "x)", "a\\]b"] {
+            let quoted = subscript_requote_for_assign(key);
+            let (back, live) = subscript_unescape(&quoted, true, true);
+            assert_eq!(back, key, "requoted as {quoted:?}");
+            assert!(!live, "{key:?} must not become a live expansion");
+        }
+    }
+
+    #[test]
+    fn bound_classify_plain_math() {
+        let arr: Vec<String> = vec![];
+        assert!(matches!(subscript_bound_classify(" 4 ", &arr), SubscriptBound::Math(t) if t == "4"));
+        assert!(matches!(subscript_bound_classify("2+1", &arr), SubscriptBound::Math(t) if t == "2+1"));
+    }
+
+    #[test]
+    fn bound_classify_strips_non_search_flag_groups() {
+        let arr: Vec<String> = vec![];
+        assert!(matches!(subscript_bound_classify("(s.X.)3", &arr), SubscriptBound::Math(t) if t == "3"));
+        assert!(matches!(subscript_bound_classify("(w)3", &arr), SubscriptBound::Math(t) if t == "3"));
+        // An empty group parses and is stripped (`${a[1,()2]}` is `x y`).
+        assert!(matches!(subscript_bound_classify("()2", &arr), SubscriptBound::Math(t) if t == "2"));
+    }
+
+    #[test]
+    fn bound_classify_unknown_group_is_reread_as_math() {
+        // c:1477-1483 flagerr rewinds before the `(`.
+        let arr: Vec<String> = vec![];
+        assert!(matches!(subscript_bound_classify("(zz)1", &arr), SubscriptBound::Math(t) if t == "(zz)1"));
+        assert!(matches!(subscript_bound_classify("(x)", &arr), SubscriptBound::Math(t) if t == "(x)"));
+    }
+
+    #[test]
+    fn bound_classify_search_returns_index_and_wantvals() {
+        let arr: Vec<String> = ["a", "b", "c", "b"].iter().map(|s| s.to_string()).collect();
+        let got = |t: &str| match subscript_bound_classify(t, &arr) {
+            SubscriptBound::Search(n, w) => Some((n, w)),
+            SubscriptBound::Math(_) => None,
+        };
+        assert_eq!(got("(r)b"), Some((2, true)));
+        assert_eq!(got("(R)b"), Some((4, true)));
+        assert_eq!(got("(i)b"), Some((2, false)));
+        assert_eq!(got("(I)b"), Some((4, false)));
+        // Forward miss is len+1, reverse miss is 0.
+        assert_eq!(got("(r)zz"), Some((5, true)));
+        assert_eq!(got("(R)zz"), Some((0, true)));
+    }
+}

@@ -57,3 +57,73 @@ pub fn units_range_cut(units: &[String], start: i64, end: i64) -> String {
         None => String::new(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{str_range_cut, units_range_cut};
+
+    fn cut(s: &str, start: i64, end: i64) -> String {
+        let cs: Vec<char> = s.chars().collect();
+        str_range_cut(&cs, start, end)
+    }
+
+    #[test]
+    fn positive_bounds_are_half_open() {
+        // `${s[2,3]}` reaches the cut as start=1, end=3.
+        assert_eq!(cut("hello", 1, 3), "el");
+        assert_eq!(cut("hello", 0, 5), "hello");
+        assert_eq!(cut("hello", 0, 1), "h");
+    }
+
+    #[test]
+    fn negative_start_clamps_to_zero_not_empty() {
+        // `${s[-10,2]}` is the first two characters (c:2511-2515).
+        assert_eq!(cut("hello", -10, 2), "he");
+        assert_eq!(cut("hello", -2, 5), "lo");
+    }
+
+    #[test]
+    fn negative_end_is_inclusive_of_the_counted_char() {
+        // c:2516-2522: -1 is the whole tail, -2 drops the last char.
+        assert_eq!(cut("hello", 0, -1), "hello");
+        assert_eq!(cut("hello", 0, -2), "hell");
+        assert_eq!(cut("hello", -3, -1), "llo");
+    }
+
+    #[test]
+    fn negative_end_past_the_front_yields_empty() {
+        assert_eq!(cut("hello", 0, -10), "");
+    }
+
+    #[test]
+    fn empty_and_out_of_range_cuts() {
+        assert_eq!(cut("hello", 3, 3), "");
+        assert_eq!(cut("hello", 4, 2), "");
+        assert_eq!(cut("hello", 6, 9), "");
+        assert_eq!(cut("hello", 5, 9), "");
+        assert_eq!(cut("", 0, -1), "");
+    }
+
+    #[test]
+    fn end_past_length_clamps() {
+        assert_eq!(cut("hello", 2, 100), "llo");
+    }
+
+    #[test]
+    fn counts_chars_not_bytes() {
+        assert_eq!(cut("aéb", 1, 2), "é");
+    }
+
+    #[test]
+    fn units_cut_keeps_multichar_units_whole() {
+        // One unit per MB_METACHARLEN step; a unit may be several chars.
+        let units: Vec<String> = ["x", "\u{e9}\u{301}", "<", "a", "b"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(units_range_cut(&units, 1, 3), "\u{e9}\u{301}<");
+        assert_eq!(units_range_cut(&units, 0, -1), "x\u{e9}\u{301}<ab");
+        assert_eq!(units_range_cut(&units, -2, -1), "ab");
+        assert_eq!(units_range_cut(&units, 9, 10), "");
+    }
+}

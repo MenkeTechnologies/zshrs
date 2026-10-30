@@ -822,3 +822,119 @@ pub fn publish_patflags(flags: i32) {
         Ordering::Relaxed,
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ported::zsh_h::Bnull;
+
+    #[test]
+    fn data_backslash_before_non_metachar_is_doubled() {
+        // `p='a\ b'; [[ 'a\ b' == ${~p} ]]` matches: the backslash is data.
+        assert_eq!(escape_data_backslashes("a\\ b"), "a\\\\ b");
+        // `$` has no zshtokenize switch label, so `\$` stays data.
+        assert_eq!(escape_data_backslashes("a\\$b"), "a\\\\$b");
+        assert_eq!(escape_data_backslashes("a\\{"), "a\\\\{");
+    }
+
+    #[test]
+    fn data_backslash_before_metachar_is_left_as_a_quote() {
+        for m in ['<', '(', '|', ')', '>', '^', '#', '~', '[', ']', '*', '?', '=', '-', '!'] {
+            let s = format!("a\\{m}b");
+            assert_eq!(escape_data_backslashes(&s), s, "metachar {m:?}");
+        }
+    }
+
+    #[test]
+    fn data_backslash_pair_is_consumed_whole() {
+        // `\\` is an escaped backslash; the char after it is not re-examined.
+        assert_eq!(escape_data_backslashes("\\\\x"), "\\\\x");
+        assert_eq!(escape_data_backslashes("\\\\\\x"), "\\\\\\\\x");
+    }
+
+    #[test]
+    fn data_trailing_backslash_is_doubled() {
+        assert_eq!(escape_data_backslashes("ab\\"), "ab\\\\");
+        assert_eq!(escape_data_backslashes("plain"), "plain");
+    }
+
+    #[test]
+    fn tokenized_data_doubles_every_backslash() {
+        assert_eq!(escape_tokenized_data_backslashes("\\("), "\\\\(");
+        assert_eq!(escape_tokenized_data_backslashes("a\\b\\"), "a\\\\b\\\\");
+        assert_eq!(escape_tokenized_data_backslashes("none"), "none");
+    }
+
+    #[test]
+    fn shglob_literalises_parens_and_bars() {
+        assert_eq!(escape_shglob_parens("(a|b)", false), "\\(a\\|b\\)");
+        assert_eq!(escape_shglob_parens("+([[:space:]])", false), "+\\([[:space:]]\\)");
+        assert_eq!(escape_shglob_parens("abc*", false), "abc*");
+    }
+
+    #[test]
+    fn shglob_leaves_class_members_and_existing_escapes() {
+        assert_eq!(escape_shglob_parens("[(|)]x", false), "[(|)]x");
+        assert_eq!(escape_shglob_parens("\\(a\\)", false), "\\(a\\)");
+        let quoted = format!("{b}){b}|", b = Bnull);
+        assert_eq!(escape_shglob_parens(&quoted, false), quoted);
+    }
+
+    #[test]
+    fn shglob_dropin_keeps_ksh_groups_only() {
+        assert_eq!(escape_shglob_parens("@(a|b)", true), "@(a|b)");
+        assert_eq!(escape_shglob_parens("x(a|b)", true), "x\\(a\\|b\\)");
+        assert_eq!(escape_shglob_parens("a|b", true), "a\\|b");
+        // A bare group nested in a ksh group stays literal; the outer `|` is live.
+        assert_eq!(escape_shglob_parens("+(a|(b))", true), "+(a|\\(b\\))");
+        // An escaped `@` does not open a ksh group.
+        assert_eq!(escape_shglob_parens("\\@(a)", true), "\\@\\(a\\)");
+    }
+
+    #[test]
+    fn shglob_unmatched_close_is_literal() {
+        assert_eq!(escape_shglob_parens("a)", true), "a\\)");
+        assert_eq!(escape_shglob_parens("@(a))", true), "@(a)\\)");
+    }
+
+    #[test]
+    fn quoted_splice_escapes_metas_in_range_only() {
+        assert_eq!(escape_quoted_splice("a*b?c", 1, 4), ("a\\*b\\?c".into(), 2));
+        assert_eq!(escape_quoted_splice("*a*", 1, 2), ("*a*".into(), 0));
+        assert_eq!(escape_quoted_splice("[x]\\", 0, 4), ("\\[x\\]\\\\".into(), 3));
+    }
+
+    #[test]
+    fn spliced_backslashes_escape_only_backslash() {
+        assert_eq!(escape_spliced_backslashes("\\*", 0, 2), ("\\\\*".into(), 1));
+        assert_eq!(escape_spliced_backslashes("a\\b\\", 0, 2), ("a\\\\b\\".into(), 1));
+    }
+
+    #[test]
+    fn nocasematch_folds_literal_letters() {
+        assert_eq!(nocasematch_fold("a"), "[aA]");
+        assert_eq!(nocasematch_fold("A1"), "[Aa]1");
+        assert_eq!(nocasematch_fold("*.TXT"), "*.[Tt][Xx][Tt]");
+    }
+
+    #[test]
+    fn nocasematch_folds_class_members_and_ranges() {
+        assert_eq!(nocasematch_fold("[a-c]"), "[a-cA-C]");
+        assert_eq!(nocasematch_fold("[!x]"), "[!xX]");
+        // A first `]` is a member, not the close.
+        assert_eq!(nocasematch_fold("[]a]"), "[]aA]");
+    }
+
+    #[test]
+    fn nocasematch_keeps_named_classes_case_sensitive() {
+        assert_eq!(nocasematch_fold("[[:upper:]]*"), "[[:upper:]]*");
+    }
+
+    #[test]
+    fn nocasematch_escapes_and_unclosed_class() {
+        assert_eq!(nocasematch_fold("\\a"), "[aA]");
+        assert_eq!(nocasematch_fold("\\*"), "\\*");
+        assert_eq!(nocasematch_fold("x\\"), "[xX]\\");
+        assert_eq!(nocasematch_fold("[a"), "[[aA]");
+    }
+}
