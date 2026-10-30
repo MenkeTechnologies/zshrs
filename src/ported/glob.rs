@@ -1816,7 +1816,7 @@ pub fn zglob(list: &mut Vec<String>, np: usize, nountok: i32) {
                 // spelling rather than raw token bytes.
                 crate::ported::utils::zerr(&format!(
                     "no matches found: {}",
-                    crate::ported::lex::untokenize(&ostr)
+                    crate::ported::utils::nicedupstring(&ostr)
                 ));
                 // c:1878 — `zfree(matchbuf, 0);` (Rust drop handles it)
                 // c:1879 — `restore_globstate(saved);` (handled by guard)

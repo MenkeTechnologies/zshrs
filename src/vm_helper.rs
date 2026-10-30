@@ -9608,7 +9608,7 @@ impl ShellExecutor {
             // reads `no matches found: /tmp/nope_.txt`.
             zerr(&format!(
                 "no matches found: {}",
-                crate::ported::lex::untokenize(pattern)
+                crate::ported::utils::nicedupstring(pattern)
             )); // c:1877
             self.current_command_glob_failed.set(true);
             // c:Src/glob.c:1876-1880 — zerr sets ERRFLAG_ERROR and

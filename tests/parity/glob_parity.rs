@@ -675,3 +675,42 @@ mod bad_pattern_in_an_external_costs_only_that_command {
         }
     }
 }
+
+/// `zerr("no matches found: %s", ostr)` (c:Src/glob.c:1879): zerrmsg's `%s`
+/// renders the word through `nicezputs` (c:Src/utils.c:316), so bytes that
+/// do not decode in a UTF-8 locale print as `\M-X`. zshrs wrote the metafied
+/// word raw, so `\xc4\xe3` came out as the Meta byte pair re-encoded as
+/// U+0083 U+00E4 — the `_alternative` `((beta:… four:"\xc4\xe3\xba\xc3 gb"))`
+/// action error from compsys_spec_fuzz seed 342000 case0026.
+mod nomatch_error_nice_formats_the_word {
+    use super::*;
+
+    fn stderr_of(bin: &Path, args: &[&str], script: &str) -> Vec<u8> {
+        Command::new(bin)
+            .args(args)
+            .arg(script)
+            .env("LC_ALL", "C.UTF-8")
+            .env_remove("ZSHRS_CACHE")
+            .output()
+            .expect("spawn")
+            .stderr
+    }
+
+    #[test]
+    fn undecodable_bytes_print_as_meta_escapes() {
+        if !zsh_available() {
+            return;
+        }
+        // `eval` pins the `(eval):1:` prefix, which is the same in both
+        // shells (the bare `-c` prefix is argv[0]: `zsh` vs `zshrs`).
+        let script = r#"x=$'\xc4\xe3\xba\xc3'; eval "echo zz${x}gb*"; eval "echo 'a:((e:\"${x}\"))'*""#;
+        let z = stderr_of(Path::new(zsh_path()), &["-fc"], script);
+        let r = stderr_of(&zshrs_bin(), &["--zsh", "-f", "-c"], script);
+        assert_eq!(
+            String::from_utf8_lossy(&r),
+            String::from_utf8_lossy(&z),
+            "no-matches error text diverges"
+        );
+        assert!(z.windows(4).any(|w| w == br"\M-D"), "reference lost \\M-D: {:?}", String::from_utf8_lossy(&z));
+    }
+}

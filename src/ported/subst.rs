@@ -1691,7 +1691,7 @@ pub fn globlist(list: &mut LinkList, flags: i32) {
                 }
                 if isset(crate::ported::zsh_h::NOMATCH) {
                     // c:1876-1880 — hard error; drop the unmatched word.
-                    crate::ported::utils::zerr(&format!("no matches found: {}", data)); // c:1877
+                    crate::ported::utils::zerr(&format!("no matches found: {}", crate::ported::utils::nicedupstring(&data))); // c:1877 — `%s` is nicezputs (c:Src/utils.c:316)
                     crate::ported::utils::errflag.fetch_or(
                         crate::ported::zsh_h::ERRFLAG_ERROR,
                         std::sync::atomic::Ordering::Relaxed,
