@@ -6516,7 +6516,24 @@ pub fn setarrvalue(v: &mut value, val: Vec<String>) {
     }
 
     // c:2933+ — PM_ARRAY slice path.
-    let arr = pm.u_arr.get_or_insert_with(Vec::new);
+    // c:2938 — `char **const old = v->pm->gsu.a->getfn(v->pm);`. The old
+    // value comes from the parameter's getter, not `pm->u.arr`: a
+    // variable-bound special such as the completion `$words`
+    // (`compvararray_gsu`, Src/Zle/complete.c:1258,1332) keeps its value in the
+    // C global the getter reads, so splicing `u_arr` left `words[1]=()`
+    // a no-op on the real word list. The zsh/parameter specials keep their
+    // gsu in PARTAB_ARRAY rather than on the node (`dirstack`: dirs_gsu,
+    // Src/Modules/parameter.c:2229), so `dirstack[1]=()` resolves there.
+    let partab = crate::ported::modules::parameter::PARTAB_ARRAY
+        .iter()
+        .find(|e| e.name == pm.node.nam)
+        .and_then(|e| e.setfn.map(|setfn| (e.getfn, setfn)));
+    let mut owned: Vec<String> = match (partab, pm.gsu_a.as_ref()) {
+        (Some((getfn, _)), _) => getfn(std::ptr::null_mut()),
+        (None, Some(g)) => (g.getfn)(pm),
+        (None, None) => pm.u_arr.take().unwrap_or_default(),
+    };
+    let arr = &mut owned;
     let len = arr.len() as i64;
     // c:2944-2949 — negative start: add pre_assignment_length; clamp to 0.
     // !!! WARNING: RUST-ONLY INDEX CONVENTION — C's getindex has already made a
@@ -6580,6 +6597,13 @@ pub fn setarrvalue(v: &mut value, val: Vec<String>) {
     if (pm.node.flags as u32 & PM_UNIQUE) != 0 {
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         arr.retain(|s| seen.insert(s.clone())); // c:2967
+    }
+    // c:2997 — `v->pm->gsu.a->setfn(v->pm, new);` stores through the
+    // setter, so a variable-bound array writes its C global (arrvarsetfn).
+    match (partab, pm.gsu_a.as_ref().map(|g| g.setfn)) {
+        (Some((_, setfn)), _) => setfn(std::ptr::null_mut(), owned),
+        (None, Some(setfn)) => setfn(pm, owned),
+        (None, None) => pm.u_arr = Some(owned),
     }
     // c:Src/params.c:2922 — a SUBSCRIPT-RANGE assignment (`path[i,j]=(…)`,
     // `path[N]=(…)`, `path[i,j]=()`) reaches here (the whole-replace form
@@ -9448,7 +9472,29 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                 // c:2966-2967 — capture PM_UNIQUE before the mutable
                 // borrow so the post-splice dedup below can fire.
                 let uniq = (pm.node.flags as u32 & PM_UNIQUE) != 0;
-                let arr = pm.u_arr.get_or_insert_with(Vec::new);
+                // c:Src/params.c:2829-2836 — assignstrvalue's PM_ARRAY arm
+                // hands the element to setarrvalue, which reads the old
+                // value with `gsu.a->getfn` (c:2938) and stores with
+                // `gsu.a->setfn` (c:2997). An array whose value is not held
+                // in `u_arr` — a variable-bound special (`$words`,
+                // compvararray_gsu, Src/Zle/complete.c:1332) or a
+                // zsh/parameter special (`dirstack`, dirs_gsu,
+                // Src/Modules/parameter.c:2229) — is edited on a copy from
+                // its getter and written back through its setter.
+                let partab = crate::ported::modules::parameter::PARTAB_ARRAY
+                    .iter()
+                    .find(|e| e.name == pm.node.nam)
+                    .and_then(|e| e.setfn.map(|setfn| (e.getfn, setfn)));
+                let var_bound = pm.u_data != 0 && pm.gsu_a.is_some();
+                let mut external: Option<Vec<String>> = match partab {
+                    Some((getfn, _)) => Some(getfn(std::ptr::null_mut())),
+                    None if var_bound => pm.gsu_a.as_ref().map(|g| (g.getfn)(pm)),
+                    None => None,
+                };
+                let arr = match external.as_mut() {
+                    Some(v) => v,
+                    None => pm.u_arr.get_or_insert_with(Vec::new),
+                };
                 let len = arr.len() as i64;
                 // c:Src/params.c:2134 — same KSHZEROSUBSCRIPT rule as the
                 // scalar splice above: `[0]` accesses the FIRST element, so it
@@ -9492,6 +9538,16 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                     let mut seen: std::collections::HashSet<String> =
                         std::collections::HashSet::new();
                     arr.retain(|s| seen.insert(s.clone())); // c:2967
+                }
+                // c:2997 — `v->pm->gsu.a->setfn(v->pm, new);`
+                match (external, partab) {
+                    (Some(v), Some((_, setfn))) => setfn(std::ptr::null_mut(), v),
+                    (Some(v), None) => {
+                        if let Some(setfn) = pm.gsu_a.as_ref().map(|g| g.setfn) {
+                            setfn(pm, v);
+                        }
+                    }
+                    (None, _) => {}
                 }
                 pm.u_str = None;
             }
@@ -10250,7 +10306,7 @@ static REALPARAMTAB_INNER: OnceLock<RwLock<hashtable_nodes<Param>>> = OnceLock::
 pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
     // bash: assigning a list to a `declare -i` variable makes it an integer array,
     // and a `-i` / `-l` / `-u` array applies its attribute to every element.
-    let val = crate::dash_mode::bash_array_attr_store(name, val);
+    let mut val = crate::dash_mode::bash_array_attr_store(name, val);
     // c:3357
     // c:3366-3370 — `if (!isident(s)) { zerr; return NULL }`.
     if !isident(name) {
@@ -10317,6 +10373,14 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
                     if let Some(pm) = tab.get_mut(name) {
                         pm.node.flags &= !(PM_UNSET as i32); // c:1144
                     }
+                }
+                // c:3531-3534 — `dirstack+=(x)` augments: the splice
+                // starts at `arrlen(v->pm->gsu.a->getfn(v->pm))`, so the
+                // existing elements are kept ahead of the new ones.
+                if (flags & ASSPM_AUGMENT) != 0 {
+                    let mut old = (entry.getfn)(std::ptr::null_mut());
+                    old.extend(val);
+                    val = old;
                 }
                 setfn(std::ptr::null_mut(), val.clone()); // c:2922 gsu.a->setfn
                 let mut pm = param::default();
@@ -11009,10 +11073,17 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
             // the general read-modify-write path below.
             drop(tab);
         }
+        // c:3534 — `arrlen(v->pm->gsu.a->getfn(v->pm))`: the existing
+        // elements come from the getter, so a variable-bound special
+        // (`$words`, compvararray_gsu) appends to its live value, not to
+        // the never-written `u_arr` shadow.
         let prior_arr = {
             let tab = paramtab().read().unwrap();
             tab.get(name)
-                .and_then(|pm| pm.u_arr.clone())
+                .map(|pm| match pm.gsu_a.as_ref() {
+                    Some(g) => (g.getfn)(pm),
+                    None => pm.u_arr.clone().unwrap_or_default(),
+                })
                 .unwrap_or_default()
         };
         let appended: Vec<String> = prior_arr.into_iter().chain(val.into_iter()).collect();

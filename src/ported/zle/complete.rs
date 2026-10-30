@@ -4819,6 +4819,39 @@ mod tests {
         crate::ported::params::unsetparam("DBG");
     }
 
+    /// Subscripted writes to `$words` go through `compvararray_gsu`
+    /// (c:1258,1332): setarrvalue reads the old value with `gsu.a->getfn` and
+        /// append from the getter (c:3534); `words[N]=x` reaches setarrvalue via assignstrvalue (c:2829-2836). Each line is what zsh prints for the
+    /// same body inside a completion function for `probe a b c<TAB>`.
+    #[test]
+    fn subscripted_words_writes_reach_compwords() {
+        let _g = crate::test_util::global_state_lock();
+        *lock_vec(&COMPWORDS).lock().unwrap() = vec!["probe".into(), "a".into(), "b".into(), "c".into()];
+        COMPCURRENT.store(4, Ordering::Relaxed);
+        let mut exec = crate::vm_helper::ShellExecutor::new();
+        let _ctx = crate::fusevm_bridge::ExecutorContext::enter(&mut exec);
+        let _scope = crate::test_util::comp_scope();
+        exec.execute_script(
+            "local -a w r; w=(\"${words[@]}\")
+             words[1]=(); r+=(\"${(j:,:)words}\")
+             words=(\"${w[@]}\"); words[2,3]=(); r+=(\"${(j:,:)words}\")
+             words=(\"${w[@]}\"); words[2]=(X Y); r+=(\"${(j:,:)words}\")
+             words=(\"${w[@]}\"); words[-1]=(); r+=(\"${(j:,:)words}\")
+             words=(\"${w[@]}\"); words+=(Z); r+=(\"${(j:,:)words}\")
+             words=(\"${w[@]}\"); words[2]=X; r+=(\"${(j:,:)words}\")
+             words=(\"${w[@]}\"); words[-1]=Y; r+=(\"${(j:,:)words}\")
+             words=(\"${w[@]}\"); shift words; r+=(\"${(j:,:)words}\")
+             typeset -g OUT=\"${(j:|:)r}\"",
+        )
+        .unwrap();
+        assert_eq!(
+            crate::ported::params::getsparam("OUT").as_deref(),
+            Some("a,b,c|probe,c|probe,X,Y,b,c|probe,a,b|probe,a,b,c,Z|probe,X,b,c|probe,a,b,Y|a,b,c")
+        );
+        assert_eq!(*lock_vec(&COMPWORDS).lock().unwrap(), vec!["a", "b", "c"]);
+        crate::ported::params::unsetparam("OUT");
+    }
+
     /// `$compstate[KEY]` reads and writes go through the element Param of the
     /// `compkparams` row (c:1271-1300): `insert` is the `compinsert` global,
     /// `list` fronts `comp_list` through `complist_gsu`, `nmatches` is a

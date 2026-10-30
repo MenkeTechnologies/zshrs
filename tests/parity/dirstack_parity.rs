@@ -134,6 +134,18 @@ mod dirstack_array {
     fn dirstack_first_element_is_previous_pwd() {
         assert_parity(r#"cd /tmp; pushd / >/dev/null; echo $dirstack[1]"#);
     }
+
+    /// Subscripted and `+=` writes to `$dirstack` go through dirs_gsu
+    /// (Src/Modules/parameter.c:2229): setarrvalue reads the old value with
+    /// `gsu.a->getfn` and stores with `gsu.a->setfn` (Src/params.c:2938,
+    /// 2997), so `dirs` sees every edit. The port spliced a `u_arr` copy
+    /// nothing reads, leaving the stack unchanged.
+    #[test]
+    fn dirstack_subscript_and_append_writes_reach_the_stack() {
+        assert_parity(
+            r#"cd /tmp; pushd -q /usr; pushd -q /; dirstack[1]=(); print $dirstack; dirstack+=(/a); print $dirstack; dirstack[1]=/b; dirstack[-1]=/q; print $dirstack; dirstack[2,3]=(/c /d); dirs"#,
+        );
+    }
 }
 
 mod nav_tilde {
