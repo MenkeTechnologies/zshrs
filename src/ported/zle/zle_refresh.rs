@@ -2020,7 +2020,15 @@ pub fn zrefresh() {
                 // extra columns of a wide (CJK) glyph with WEOF placeholders.
                 // For the common ASCII case (width 1, COMBININGCHARS off) this
                 // reduces to a single emit_cell — identical to the old emit.
-                let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+                // c:1268-1272 — `WC_ISPRINT(*t) && (width = WCWIDTH(*t)) > 0`:
+                // the unicode9 tables (ztype.h:77, zsh.h:3302), not the
+                // `unicode-width` crate, which calls a tag character (U+E0020-
+                // U+E007F) zero-width where wcwidth9 gives it one column.
+                let cw = if crate::ported::ztype_h::WC_ISPRINT(ch) {
+                    crate::ported::zsh_h::WCWIDTH(ch).max(0) as usize
+                } else {
+                    0
+                };
                 if cw == 0 {
                     // c:1358-1395 — a zero-width / non-printable orphan (combining
                     // marks following a base are absorbed above via
@@ -2230,7 +2238,12 @@ pub fn zrefresh() {
                     continue;
                 }
                 let u = status_chars[su];
-                let width = unicode_width::UnicodeWidthChar::width(u).unwrap_or(0);
+                // c:1438-1439 — `WC_ISPRINT(*u) && (width = WCWIDTH(*u)) > 0`.
+                let width = if crate::ported::ztype_h::WC_ISPRINT(u) {
+                    crate::ported::zsh_h::WCWIDTH(u).max(0) as usize
+                } else {
+                    0
+                };
                 let is_ctrl = (u as u32) < 0x20 || u as u32 == 0x7f;
                 if width > 0 && !is_ctrl {
                     // c:1442-1446 — combining scan (COMBININGCHARS) via the
