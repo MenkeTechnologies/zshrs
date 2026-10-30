@@ -1,0 +1,91 @@
+{
+ "schema": "compsys-fixture/2",
+ "id": "describe_cut_multibyte_codeset",
+ "title": "GUARD (fixed in b43aa1f72a) — was: under zh_CN.GB2312 / ja_JP.eucJP a _describe description wider than the screen was cut one BYTE at a time, so the listing stopped after the first two-byte character where zsh copies whole characters up to the width",
+ "harness": "compsys_spec_fuzz",
+ "run": {
+  "buffer": "fzc0022 ",
+  "keys": [
+   "tab"
+  ],
+  "flags": [
+   "--locale",
+   "zh_CN.GB2312",
+   "--cols",
+   "20"
+  ],
+  "spec": {
+   "cmd": "fzc0022",
+   "kind": "describe",
+   "seed": 310000,
+   "case": -1,
+   "widget": "std:list-choices",
+   "setup": [
+    "bindkey '^I' list-choices"
+   ],
+   "completer": "#compdef fzc0022\n\n_sfz_main() {\n  local -a _m; _m=( $'aa:\\xc4\\xe3\\xba\\xc3\\xca\\xc0\\xbd\\xe7\\xc4\\xe3\\xba\\xc3\\xca\\xc0\\xbd\\xe7\\xc4\\xe3\\xba\\xc3\\xca\\xc0\\xbd\\xe7' 'bb:x' )\n  _describe -t t d _m\n}\n_sfz_main \"$@\"\n"
+  }
+ },
+ "expect": "agrees",
+ "group": "listing-render",
+ "fingerprint": null,
+ "observed": {
+  "verdict": "PASS",
+  "detail": "0 row(s) differ",
+  "notes": "Src/Zle/computil.c:695-715 copies a too-wide description one MB_METACHARLEN unit at a time, charging each its ZMB_nicewidth. MB_METACHARLEN is the locale's mbrtowc, so in GB2312 (MB_CUR_MAX 2) a unit is a two-byte character."
+ },
+ "observed_when_diverging": {
+  "verdict": "FAIL",
+  "category": "grid-diff",
+  "detail": "1 row(s) differ",
+  "rows": [
+   {
+    "row": 1,
+    "zsh": "aa  -- ÄãºÃÊÀ½ç",
+    "zshrs": "aa  -- Äã"
+   }
+  ],
+  "recorded_under": "main at 12f728f349, target/debug/zshrs zshrs 0.13.56, against /opt/homebrew/bin/zsh 5.9.2 (grid text is the GB2312 bytes as the UTF-8 pyte screen decodes them)"
+ },
+ "retired": {
+  "date": "2026-10-30",
+  "fix_commit": "b43aa1f72a",
+  "why": "cd_get's copy_desc gated its byte-at-a-time walk on CODESET != UTF-8, which only fits MB_CUR_MAX == 1. It now also requires MB_CUR_MAX == 1, so multibyte codesets take mb_metacharlenconv's whole-character unit."
+ },
+ "controls": [
+  {
+   "note": "a description that fits the width is copied whole by c:697-698 and agrees with or without the fix",
+   "spec": {
+    "completer": "#compdef fzc0022\n\n_sfz_main() {\n  local -a _m; _m=( $'aa:\\xc4\\xe3' 'bb:x' )\n  _describe -t t d _m\n}\n_sfz_main \"$@\"\n"
+   }
+  }
+ ],
+ "variants": [
+  {
+   "note": "same cut under ja_JP.eucJP",
+   "flags": [
+    "--locale",
+    "ja_JP.eucJP",
+    "--cols",
+    "20"
+   ],
+   "fingerprint": null
+  }
+ ],
+ "origin": [
+  "hand-built from round-2 lead (computil.rs copy_desc), seed range 310000; confirmed against zsh 5.9.2"
+ ],
+ "confirmed": {
+  "date": "2026-10-30",
+  "harness_sha256_16": {
+   "scripts/compsys_spec_fuzz.py": "7c0a079a8ae27ee7",
+   "scripts/compsys_regressions.py": "619b844636a94cb7"
+  },
+  "zsh_binary": {
+   "path": "/opt/homebrew/bin/zsh",
+   "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)"
+  },
+  "note": "pre-fix FAIL measured on 12f728f349 for GB2312 only, through a --replay file carrying the same completer with the description as raw GB2312 bytes instead of $'\\x..' escapes; the eucJP variant was measured PASS after the fix only. Fixture cell, control and variant PASS after the fix.",
+  "commit": "b43aa1f72a"
+ }
+}

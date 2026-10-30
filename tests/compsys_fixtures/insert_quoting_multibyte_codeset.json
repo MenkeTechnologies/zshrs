@@ -1,0 +1,82 @@
+{
+ "schema": "compsys-fixture/2",
+ "id": "insert_quoting_multibyte_codeset",
+ "title": "GUARD (fixed in 12f728f349) — was: under ja_JP.eucJP inserting the match a日b本c (UTF-8 bytes) quoted the bytes 0x97/0x9c as $'\\227'/$'\\234', because quotestring decoded the non-UTF-8 multibyte codeset one byte at a time",
+ "harness": "compsys_spec_fuzz",
+ "run": {
+  "buffer": "fzc0022 x",
+  "keys": [
+   "tab",
+   "space",
+   "tab"
+  ],
+  "flags": [
+   "--locale",
+   "ja_JP.eucJP",
+   "--cols",
+   "80"
+  ],
+  "spec": {
+   "cmd": "fzc0022",
+   "kind": "compadd",
+   "seed": 310000,
+   "case": 22,
+   "widget": "std:list-choices",
+   "setup": [
+    "bindkey '^I' list-choices"
+   ],
+   "completer": "#compdef fzc0022\n\n_sfz_main() {\n  compadd  - a日b本c\n}\n_sfz_main \"$@\"\n"
+  }
+ },
+ "expect": "agrees",
+ "group": "line-token-rewrite",
+ "fingerprint": null,
+ "observed": {
+  "verdict": "PASS",
+  "detail": "0 row(s) differ",
+  "notes": "quotestring QT_BACKSLASH (Src/utils.c:6422) takes MB_METACHARLENCONV units; Darwin eucJP mbrtowc reads e6 97 and a5 62 as two-byte characters that u9_iswprint calls printable, so zsh inserts the bytes bare."
+ },
+ "observed_when_diverging": {
+  "verdict": "FAIL",
+  "category": "grid-diff",
+  "detail": "8 row(s) differ",
+  "rows": [
+   {
+    "row": 1,
+    "zsh": "aæ",
+    "zshrs": "aæ$'\\227'¥bæ$'\\234'¬c"
+   }
+  ],
+  "recorded_under": "main at ac692d7774, target/debug/zshrs zshrs 0.13.56, against /opt/homebrew/bin/zsh 5.9.2 (spec-fuzz seed 310000 case0022, shrunk)"
+ },
+ "retired": {
+  "date": "2026-10-30",
+  "fix_commit": "12f728f349",
+  "why": "quotestring treated every non-UTF-8 codeset as single-byte; a multibyte codeset now yields whole MetaChar::Mb units for QT_BACKSLASH and bytes for the other styles."
+ },
+ "controls": [
+  {
+   "note": "the same completer with an ASCII match agrees with or without the fix",
+   "spec": {
+    "completer": "#compdef fzc0022\n\ncompadd -- abc\n"
+   }
+  }
+ ],
+ "variants": [],
+ "origin": [
+  "compsys_spec_fuzz --hostile --locale ja_JP.eucJP --jobs 2 --seed 310000 --cases 40, case0022 (shrunk)"
+ ],
+ "confirmed": {
+  "date": "2026-10-30",
+  "harness_sha256_16": {
+   "scripts/compsys_spec_fuzz.py": "7c0a079a8ae27ee7",
+   "scripts/compsys_regressions.py": "619b844636a94cb7"
+  },
+  "zsh_binary": {
+   "path": "/opt/homebrew/bin/zsh",
+   "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)"
+  },
+  "note": "FAIL on ac692d7774 (pre-fix) via --replay of the shrunk case, PASS on 12f728f349",
+  "commit": "12f728f349"
+ }
+}
