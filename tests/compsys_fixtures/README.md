@@ -13,15 +13,15 @@ gate fails if the two shells stop matching again.
 
 ## Where the set stands
 
-The fixture set as of 2026-10-28, v0.13.56, read off the `expect` field of each
+The fixture set as of 2026-10-30, v0.13.56, read off the `expect` field of each
 fixture file (every `*.json` here except `groups.json` and `last_gate.json`,
 the two `NON_FIXTURE_FILES` in `scripts/compsys_regressions.py`):
 
 | | |
 | --- | --- |
-| fixtures pinned | 41 |
+| fixtures pinned | 42 |
 | `diverges` | 13 |
-| `agrees` — retired as guards | 27 |
+| `agrees` — retired as guards | 28 |
 | `reference-crash` | 1 |
 
 Re-derive it with `scripts/compsys_regressions.py --list`, which boots no
@@ -74,7 +74,7 @@ off `retired.fix_commit`:
 | `87a079a0a1` | `compadd_X_count_includes_all_match` |
 | `e6561b26f5` | `compset_q_inner_quote_kept` |
 
-Seven `agrees` fixtures carry no `retired` block:
+Eight `agrees` fixtures carry no `retired` block:
 
 * `multiline_backslash_continuation_cd`, `multiline_dquote_parameter_list`,
   `multiline_squote_corrections` — the fix commit, `96382cfb71`, is named
@@ -94,6 +94,9 @@ Seven `agrees` fixtures carry no `retired` block:
   with the `cv_parse_word` fix (the commit that adds the fixture); `_values`
   ignores the `compvalues -v` status, so no generated case reaches it. Its
   `guard_verified` records the pre-fix build it fails on.
+* `arguments_scalar_action_builtin_runs` — added as an `agrees` cell
+  with the `dispatch_action_command` builtin arm (the commit that adds the
+  fixture); its `observed_when_diverging` records the pre-fix measurement.
 
 ## Running it
 

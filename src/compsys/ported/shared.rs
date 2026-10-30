@@ -1423,8 +1423,9 @@ pub fn eval_comp(comp: &str, line: u64) -> i32 {
 /// all, which is the "one-sided silence" shape that reads as a hang.
 ///
 /// The three arms mirror what `execcmd` does with a command word: a shell
-/// function (or port) runs; a name that IS a builtin or IS on `$PATH` is real
-/// but has no execution route from here, so it keeps the pre-existing
+/// function (or port) runs; a builtin runs in-process through
+/// `dispatch_builtin_raw`, as `execbuiltin` does in C; a name on `$PATH` is
+/// real but has no execution route from here, so it keeps the pre-existing
 /// "action did not succeed" answer rather than having one invented for it;
 /// and only a name that resolves to nothing reaches
 /// `Src/exec.c:903`'s diagnostic.
@@ -1546,9 +1547,17 @@ pub fn dispatch_action_command(cmd: &str, argv: &[String], line: u64) -> i32 {
     // Neither a shell function nor a registered port. zsh looks for a builtin
     // and then for an executable on `$PATH`; only when both miss does it
     // report the command as not found.
-    if crate::ported::builtin::createbuiltintable().contains_key(cmd)
-        || crate::ported::exec::findcmd(cmd, 0, 0).is_some()
-    {
+    //
+    // c:Src/exec.c:3050-3068 + c:4231 — a builtin runs in the current shell
+    // through `execbuiltin`, so it RUNS here too, diagnostics included. A
+    // spec whose action text fails sh:463's `eval` leaves `action` a scalar
+    // and sh:465 runs its first character: `'*:pat*:rest:(r1 r2)'` makes
+    // `$action[1]` the `r` builtin (`fc -e -`), and zsh prints
+    // `_arguments:r:465: bad option: -J` where this used to print nothing.
+    if crate::ported::builtin::createbuiltintable().contains_key(cmd) {
+        return crate::fusevm_bridge::dispatch_builtin_raw(cmd, argv.to_vec());
+    }
+    if crate::ported::exec::findcmd(cmd, 0, 0).is_some() {
         return 1;
     }
 

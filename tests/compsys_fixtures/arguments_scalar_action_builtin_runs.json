@@ -1,0 +1,55 @@
+{
+ "schema": "compsys-fixture/2",
+ "id": "arguments_scalar_action_builtin_runs",
+ "title": "an `_arguments` action whose text fails sh:463's eval runs its first character as a command; when that is a builtin (`r`) zsh runs it and reports `bad option: -J`, zshrs ran nothing",
+ "harness": "compsys_spec_fuzz",
+ "run": {
+  "buffer": "fzc0000 x y ",
+  "keys": [
+   "tab"
+  ],
+  "flags": [],
+  "spec": {
+   "cmd": "fzc0000",
+   "kind": "arguments",
+   "widget": "default",
+   "seed": 1199999,
+   "case": 0,
+   "setup": [],
+   "completer": "#compdef fzc0000\n_arguments -s '*:pat*:rest:(r1 r2)'\n"
+  }
+ },
+ "expect": "agrees",
+ "group": "completer-machinery",
+ "fingerprint": null,
+ "observed": {
+  "verdict": "PASS(err)",
+  "detail": "both shells report: _arguments:r:465: bad option: -J",
+  "measured": "2026-10-30, target/debug/zshrs with the dispatch_action_command builtin arm (zshrs 0.13.56) vs zsh 5.9.999.3-test (~/.cache/zshrs/zsh-oracle-new), scripts/compsys_spec_fuzz.py --spec",
+  "notes": "The message `pat*` ends at the first colon, so the action is `rest:(r1 r2)`. sh:463 `eval \"action=( $action )\"` fails (`unknown file attribute: 1`), `action` stays a scalar, and sh:465 runs `\"$action[1]\"` = `r`, the `fc -e -` builtin, with `$expl` (`-J ...`). Src/exec.c runs a builtin in the current shell through execbuiltin; dispatch_action_command returned 1 for every builtin without running it."
+ },
+ "observed_when_diverging": {
+  "verdict": "FAIL",
+  "category": "one-sided-error",
+  "detail": "2 row(s) differ",
+  "rows": [
+   {
+    "row": 2,
+    "zsh": "_arguments:r:465: bad option: -J",
+    "zshrs": "@SFZ@ fzc9999 x y"
+   }
+  ],
+  "only_zsh_diagnostics": [
+   "_arguments:r:465: bad option: -J"
+  ],
+  "only_zshrs_diagnostics": [],
+  "recorded_under": "target/debug/zshrs at a9add374ed before the fix (zshrs 0.13.56) vs zsh 5.9.999.3-test"
+ },
+ "why_this_fixture_exists": "Found by the round-2 lane-1 `_arguments` probe `*:pat*:rest:(r1 r2)`. Any builtin reached as an action command word (sh:455 / sh:465, `_all_labels` sh:35 / sh:39) was silently treated as a failed action.",
+ "controls": [],
+ "variants": [],
+ "origin": [
+  "compsys_spec_fuzz.py --spec '*:pat*:rest:(r1 r2)' --spec-buffer 'fzc9999 x y ' --keys tab"
+ ],
+ "history": []
+}
