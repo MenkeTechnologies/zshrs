@@ -138,13 +138,13 @@ mod dup_fd {
     /// `>&1` duplicates stdout.
     #[test]
     fn dup_stderr_to_stdout() {
-        assert_parity_in(Path::new("/tmp"), "echo err 1>&2 2>&1");
+        assert_parity_in(tdir().path(), "echo err 1>&2 2>&1");
     }
 
     /// `2>&1` redirect stderr to stdout.
     #[test]
     fn redirect_stderr_to_stdout() {
-        assert_parity_in(Path::new("/tmp"), "{ echo out; echo err >&2; } 2>&1 | cat");
+        assert_parity_in(tdir().path(), "{ echo out; echo err >&2; } 2>&1 | cat");
     }
 
     /// `&>` shortcut: both stdout+stderr.
@@ -187,7 +187,7 @@ mod close_fd {
     #[test]
     fn close_stdout_then_print_errors() {
         assert_parity_in(
-            Path::new("/tmp"),
+            tdir().path(),
             "{ exec 1>&-; echo hello; } 2>/dev/null; echo done",
         );
     }
@@ -292,7 +292,7 @@ mod swap_stdout_stderr {
     #[test]
     fn swap_stdout_and_stderr() {
         assert_parity_in(
-            Path::new("/tmp"),
+            tdir().path(),
             "{ echo a; echo b >&2; } 3>&1 1>&2 2>&3 3>&- | cat",
         );
     }
@@ -305,7 +305,7 @@ mod here_doc_to_fd {
     #[test]
     fn heredoc_to_arbitrary_fd() {
         assert_parity_in(
-            Path::new("/tmp"),
+            tdir().path(),
             r#"cat 0<<EOF
 content
 EOF
@@ -328,13 +328,13 @@ EOF
     /// reclaims that very number.
     #[test]
     fn exec_herestring_to_fd_persists() {
-        assert_parity_in(Path::new("/tmp"), "exec 3<<< hello\ncat <&3\n");
+        assert_parity_in(tdir().path(), "exec 3<<< hello\ncat <&3\n");
     }
 
     /// Same persistence contract for the here-DOCUMENT spelling.
     #[test]
     fn exec_heredoc_to_fd_persists() {
-        assert_parity_in(Path::new("/tmp"), "exec 3<<EOF\nhello\nEOF\ncat <&3\n");
+        assert_parity_in(tdir().path(), "exec 3<<EOF\nhello\nEOF\ncat <&3\n");
     }
 
     /// A shell builtin reading the persisted fd, not just an external
@@ -342,7 +342,7 @@ EOF
     #[test]
     fn exec_heredoc_to_fd_readable_by_read_u() {
         assert_parity_in(
-            Path::new("/tmp"),
+            tdir().path(),
             "exec 3<<EOF\nhello\nEOF\nread -u3 line\nr=$?\nprint -r -- \"rc=$r [$line]\"\n",
         );
     }
@@ -355,14 +355,14 @@ EOF
     /// died with "file number expected".
     #[test]
     fn exec_named_fd_herestring() {
-        assert_parity_in(Path::new("/tmp"), "exec {f}<<< hello\ncat <&$f\n");
+        assert_parity_in(tdir().path(), "exec {f}<<< hello\ncat <&$f\n");
     }
 
     /// `exec {v}<<EOF` already allocated the fd; the body it carried was
     /// the lossy part.
     #[test]
     fn exec_named_fd_heredoc() {
-        assert_parity_in(Path::new("/tmp"), "exec {f}<<EOF\nhello\nEOF\ncat <&$f\n");
+        assert_parity_in(tdir().path(), "exec {f}<<EOF\nhello\nEOF\ncat <&$f\n");
     }
 
     /// c:Src/exec.c:4671-4672 — `getherestr` appends the newline only
@@ -373,13 +373,13 @@ EOF
     /// collapsing "hello\n\n\n" to "hello\n".
     #[test]
     fn exec_heredoc_to_fd_keeps_trailing_blank_lines() {
-        assert_parity_in(Path::new("/tmp"), "exec 3<<EOF\nhello\n\n\nEOF\ncat <&3\n");
+        assert_parity_in(tdir().path(), "exec 3<<EOF\nhello\n\n\nEOF\ncat <&3\n");
     }
 
     #[test]
     fn exec_named_fd_heredoc_keeps_trailing_blank_lines() {
         assert_parity_in(
-            Path::new("/tmp"),
+            tdir().path(),
             "exec {f}<<EOF\nhello\n\n\nEOF\ncat <&$f\n",
         );
     }
@@ -388,13 +388,13 @@ EOF
     /// arms and has the same contract.
     #[test]
     fn exec_quoted_heredoc_to_fd_keeps_trailing_blank_lines() {
-        assert_parity_in(Path::new("/tmp"), "exec 3<<'EOF'\nhello\n\n\nEOF\ncat <&3\n");
+        assert_parity_in(tdir().path(), "exec 3<<'EOF'\nhello\n\n\nEOF\ncat <&3\n");
     }
 
     #[test]
     fn exec_quoted_named_fd_heredoc_keeps_trailing_blank_lines() {
         assert_parity_in(
-            Path::new("/tmp"),
+            tdir().path(),
             "exec {f}<<'EOF'\nhello\n\n\nEOF\ncat <&$f\n",
         );
     }
@@ -406,7 +406,7 @@ EOF
     #[test]
     fn exec_herestring_to_fd_still_appends_newline() {
         assert_parity_in(
-            Path::new("/tmp"),
+            tdir().path(),
             "exec 3<<< hello\ncat <&3 | od -An -c | tr -s ' '\n",
         );
     }
@@ -416,7 +416,7 @@ EOF
     /// left fd N closed and made `cat <&3` fail).
     #[test]
     fn exec_empty_heredoc_to_fd_still_opens_it() {
-        assert_parity_in(Path::new("/tmp"), "exec 3<<EOF\nEOF\ncat <&3\nprint rc=$?\n");
+        assert_parity_in(tdir().path(), "exec 3<<EOF\nEOF\ncat <&3\nprint rc=$?\n");
     }
 
     /// The mirror image of the persistence contract: WITHOUT a bare
@@ -428,7 +428,7 @@ EOF
     #[test]
     fn non_exec_heredoc_fd_does_not_leak() {
         assert_parity_in(
-            Path::new("/tmp"),
+            tdir().path(),
             "print -r -- start 3<<EOF\nhi\nEOF\ncat <&3\nprint rc=$?\n",
         );
     }
@@ -436,7 +436,7 @@ EOF
     #[test]
     fn non_exec_herestring_fd_does_not_leak() {
         assert_parity_in(
-            Path::new("/tmp"),
+            tdir().path(),
             "print -r -- start 3<<< hi\ncat <&3\nprint rc=$?\n",
         );
     }
