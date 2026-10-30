@@ -12945,6 +12945,13 @@ pub fn bin_whence(
             any_found = true;
             continue;
         }
+        // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash's describe_command
+        // calls a command already in its hash table "a tracked alias for"
+        // (`cmdp = cmdlookup(command, 0)` before find_command hashes it): the
+        // second `type ls` of a script, or one after `ls` ran.
+        let dash_tracked = crate::dash_mode::dash_faithful()
+            && !arg.contains('/')
+            && cmdnamtab_lock().read().map(|t| t.get(arg).is_some()).unwrap_or(false);
         if let Some(cnam) = findcmd(
             arg,
             1,                                                    // c:4181 docmd
@@ -12960,7 +12967,7 @@ pub fn bin_whence(
                     // !!! KORN GATE (no C counterpart) !!! ksh93 and mksh word a
                     // command found on $PATH as "NAME is a tracked alias for /path";
                     // a name given with a slash keeps "NAME is /path".
-                    if crate::dash_mode::korn_mode() && !arg.contains('/') {
+                    if (crate::dash_mode::korn_mode() && !arg.contains('/')) || dash_tracked {
                         print!("{} is a tracked alias for ", arg);
                     } else {
                         print!("{} is ", arg); // c:4189
