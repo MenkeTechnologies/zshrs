@@ -3637,35 +3637,90 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
         let ypp: &[String] = g.ylist.as_deref().unwrap_or(&[]);
         if listdat.onlyexpl == 0 && !ypp.is_empty() {
             // c:2032
+            let cleareod = || {
+                if crate::ported::init::tclen.lock().unwrap()
+                    [crate::ported::zsh_h::TCCLEAREOD as usize]
+                    != 0
+                {
+                    tcout(crate::ported::zsh_h::TCCLEAREOD);
+                }
+            };
             if pnl != 0 {
-                // c:2033
+                // c:2033-2040
                 let _ = write_loop(out_fd, b"\n");
                 pnl = 0;
                 ml += 1;
-                if cl >= 0 && cl <= 1 {
-                    cl = -1;
+                if cl >= 0 {
+                    cl -= 1;
+                    if cl <= 1 {
+                        cl = -1;
+                        cleareod();
+                    }
                 }
             }
+            // c:2042 / c:2057 — `zputs(p, shout)`.
+            let put = |p: &str| {
+                let mut buf: Vec<u8> = Vec::new();
+                let _ = zputs(p, &mut buf);
+                let _ = write_loop(out_fd, &buf);
+            };
+            let zterm_columns = crate::ported::utils::adjustcolumns() as i32;
             if (g.flags & CGF_LINES) != 0 {
-                // c:2044
-                let mut so = std::io::stdout();
-                let last_idx = ypp.len().saturating_sub(1);
+                // c:2041-2050
                 for (i, p) in ypp.iter().enumerate() {
-                    let _ = zputs(p, &mut so);
-                    if i != last_idx {
-                        // c:2050
-                        // C wraps via " \b" or "\n"; we emit \n for safety.
-                        let _ = write_loop(out_fd, b"\n");
+                    put(p);
+                    if i + 1 < ypp.len() {
+                        if (MB_METASTRWIDTH(p) as i32) % zterm_columns != 0 {
+                            let _ = write_loop(out_fd, b"\n");
+                        } else {
+                            let _ = write_loop(out_fd, b" \x08");
+                        }
                     }
                 }
             } else {
-                // c:2058
-                // Column layout — emit each entry.
-                let mut so = std::io::stdout();
-                for entry in ypp {
-                    let _ = zputs(entry, &mut so);
-                    let _ = write_loop(out_fd, b"\n");
-                    ml += 1;
+                // c:2051-2076 — the grid calclist sized: `g->cols` columns,
+                // `g->lins` rows, column widths `g->widths` (or `g->width`).
+                let mut n = g.lcount;
+                let nc = g.lins.max(0) as usize;
+                let mut nl = g.lins;
+                let rows = (g.flags & CGF_ROWS) != 0;
+                let mut pp = 0usize;
+                while n != 0 && nl > 0 {
+                    nl -= 1;
+                    let mut i = g.cols;
+                    let mut mc = 0usize;
+                    let mut pq = pp;
+                    while n != 0 && i > 0 {
+                        i -= 1;
+                        if pq as i32 >= g.lcount || pq >= ypp.len() {
+                            break; // c:2063-2064
+                        }
+                        put(&ypp[pq]);
+                        if i != 0 {
+                            // c:2066-2070
+                            let w = g.widths.get(mc).copied().unwrap_or(g.width);
+                            let a = w - MB_METASTRWIDTH(&ypp[pq]) as i32;
+                            for _ in 0..a.max(0) {
+                                let _ = write_loop(out_fd, b" ");
+                            }
+                        }
+                        pq += if rows { 1 } else { nc };
+                        mc += 1;
+                        n -= 1;
+                    }
+                    if n != 0 {
+                        // c:2075-2083
+                        let _ = write_loop(out_fd, b"\n");
+                        ml += 1;
+                        if cl >= 0 {
+                            cl -= 1;
+                            if cl <= 1 {
+                                cl = -1;
+                                cleareod();
+                            }
+                        }
+                    }
+                    pp += if rows { g.cols.max(0) as usize } else { 1 };
                 }
             }
         } else if listdat.onlyexpl == 0 && (g.lcount != 0 || (showall != 0 && g.mcount != 0)) {

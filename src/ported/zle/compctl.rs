@@ -3034,6 +3034,19 @@ pub(crate) fn makecomplistglobal(os: &str, incmd: bool, _lst: i32, flags: i32) -
 
     const CFN_FIRST: i32 = 1;
     const CFN_DEFAULT: i32 = 2;
+    // `keypm = NULL;` (c:2413/2422/2443/2449/2453).
+    let clear_keypm = || {
+        if let Ok(mut k) = crate::ported::zle::zle_tricky::KEYPM.lock() {
+            *k = None;
+        }
+    };
+    // `cc = &cc_dummy;` — publish the dummy so makecomplistflags' `cc ==
+    // &cc_dummy` test (c:3865) can recognise it by identity.
+    let set_cc_dummy = |d: Compctl| -> Arc<Compctl> {
+        let a = Arc::new(d);
+        *CC_DUMMY.lock().unwrap() = Some(a.clone());
+        a
+    };
 
     // Seed CMDSTR (the command whose argument is being completed) from the
     // parsed command line. C sets `cmdstr` in get_comp_string; the Rust
@@ -3061,14 +3074,24 @@ pub(crate) fn makecomplistglobal(os: &str, incmd: bool, _lst: i32, flags: i32) -
         if (flags & CFN_DEFAULT) == 0 {
             // c:2411
             cc = CC_DEFAULT.lock().unwrap().clone(); // c:2412
+            clear_keypm(); // c:2413
         }
     } else if in_math {
         // c:2415
         if (flags & CFN_DEFAULT) == 0 {
             let mut dummy_inner = Compctl::default();
-            dummy_inner.mask = CC_PARAMS; // c:2424
+            let insubscr = crate::ported::zle::zle_tricky::INSUBSCR.load(Ordering::Relaxed);
+            if insubscr >= 2 {
+                // c:2417-2420 — inside an assoc subscript: complete keys.
+                dummy_inner.mask = 0;
+                dummy_inner.suffix = Some(if insubscr == 2 { "]" } else { "" }.to_string());
+            } else {
+                // c:2421-2424 — other math: parameter names.
+                clear_keypm();
+                dummy_inner.mask = CC_PARAMS;
+            }
             dummy_inner.refc = 10000; // c:2427
-            cc = Some(Arc::new(dummy_inner));
+            cc = Some(set_cc_dummy(dummy_inner)); // c:2426
         }
     } else if in_cond {
         // c:2429
@@ -3097,10 +3120,18 @@ pub(crate) fn makecomplistglobal(os: &str, incmd: bool, _lst: i32, flags: i32) -
             let mut dummy_inner = Compctl::default();
             dummy_inner.mask = mask;
             dummy_inner.refc = 10000;
-            cc = Some(Arc::new(dummy_inner));
+            cc = Some(set_cc_dummy(dummy_inner)); // c:2441
+            clear_keypm(); // c:2443
+        }
+    } else if crate::ported::zle::zle_tricky::LINREDIR.load(Ordering::Relaxed) != 0 {
+        // c:2445-2450 — in redirections use the default completion.
+        if (flags & CFN_DEFAULT) == 0 {
+            cc = CC_DEFAULT.lock().unwrap().clone(); // c:2448
+            clear_keypm(); // c:2449
         }
     } else {
-        // c:2453 — default: per-command lookup via makecomplistcmd.
+        // c:2451-2455 — otherwise get the matches for the command.
+        clear_keypm(); // c:2453
         return makecomplistcmd(os, incmd, flags);
     }
 
@@ -5354,25 +5385,6 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, incmd: bool, c
     // ===================== end preamble =====================
 
     let s: &str = &s;
-    // CC_NAMED — c:3664 `dumphashtable(nameddirtab, addwhat)`. maketildelist
-    // now emits bare names (the `~` comes from ipre), so set ipre = "~" here
-    // too, matching the tilde arm above.
-    if (cc.mask & CC_NAMED) != 0 {
-        ADDWHAT.with(|c| c.set(-1));
-        let oi = crate::ported::zle::compcore::ipre
-            .get_or_init(|| std::sync::Mutex::new(String::new()))
-            .lock()
-            .map(|g| g.clone())
-            .unwrap_or_default();
-        if let Ok(mut g) = crate::ported::zle::compcore::ipre.get().unwrap().lock() {
-            *g = format!("~{}", oi);
-        }
-        maketildelist();
-        if let Ok(mut g) = crate::ported::zle::compcore::ipre.get().unwrap().lock() {
-            *g = oi;
-        }
-    }
-
     // c:3648-3661 — command completion: add alias names, reserved words,
     // shell functions, builtins and external command names (cmdnamtab).
     // Gated on no leading `~`/`=` (ic), no path prefix and no path suffix.
@@ -5505,6 +5517,20 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, incmd: bool, c
         CC_QUOTEFLAG as i32
     };
     ADDWHAT.with(|c| c.set(oaw));
+
+    // c:3671-3673 — CC_NAMED: `dumphashtable(nameddirtab, addwhat)`. The
+    // bare names of whatever the table holds now (no filltable, no `~`).
+    if (cc.mask & CC_NAMED) != 0 {
+        let names: Vec<(String, AddmatchNode)> = crate::ported::hashnameddir::nameddirtab()
+            .lock()
+            .map(|t| {
+                t.iter()
+                    .map(|(n, nd)| (n.clone(), AddmatchNode::Hash(nd.node.clone())))
+                    .collect()
+            })
+            .unwrap_or_default();
+        dumphashtable(names, oaw);
+    }
 
     // c:3673 — CC_OPTIONS: add setopt option names.
     if (cc.mask & CC_OPTIONS) != 0 {
@@ -5657,42 +5683,6 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, incmd: bool, c
                 || (!stopped && (cc.mask & CC_RUNNING) != 0)
             {
                 addmatch(&text, None); // c:3758
-            }
-        }
-    }
-
-    // c:3870-3906 — cc.ylist (compctl -y) → explanation source.
-    // If ylist starts with `$` or `(`, read from a parameter; else
-    // treat as a shfunc that receives the current match list and
-    // populates `$reply` with per-match explanation strings.
-    if let Some(ylist) = cc.ylist.as_ref() {
-        let is_var_ref = ylist.starts_with('$') || ylist.starts_with('(');
-        if !is_var_ref {
-            if let Some(mut shfunc) = crate::ported::utils::getshfunc(ylist) {
-                // c:3886-3895 — `addlinknode(args, cc->ylist);` then
-                // for each match append the prefix+str+suffix string.
-                // Match list isn't threaded here yet so we pass just
-                // the ylist function name; full match-list plumbing
-                // is a follow-up tied to the Cmatch port.
-                let largs: Vec<String> = vec![ylist.clone()];
-                // c:3898-3900 — same SFC_COMPLETE / incompctlfunc=1
-                // bracketing as cc.func above.
-                let in_compfunc = INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed);
-                if in_compfunc != 1 {
-                    INCOMPCTLFUNC.with(|c| c.set(true));
-                }
-                let osc = crate::ported::builtin::SFCONTEXT.swap(
-                    crate::ported::zsh_h::SFC_COMPLETE,
-                    std::sync::atomic::Ordering::Relaxed,
-                );
-                // c:3901 — `doshfunc(shfunc, args, 1);`.
-                let name_for_body = ylist.clone();
-                let body_runner = move || -> i32 {
-                    crate::ported::exec::run_function_body(&name_for_body, &[]).unwrap_or(0)
-                };
-                let _ = crate::ported::exec::doshfunc(&mut shfunc, largs, true, body_runner);
-                crate::ported::builtin::SFCONTEXT.store(osc, std::sync::atomic::Ordering::Relaxed);
-                INCOMPCTLFUNC.with(|c| c.set(false));
             }
         }
     }
@@ -5943,6 +5933,111 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, incmd: bool, c
             })
             .unwrap_or_default();
         dumphashtable(names, (cc.mask & (CC_ALREG | CC_ALGLOB)) as i32 | dis_ex);
+    }
+
+    // c:3865-3873 — `if (keypm && cc == &cc_dummy)`: add the keys of the
+    // associative array whose subscript is being completed.
+    let is_dummy = CC_DUMMY.lock().unwrap().as_ref().is_some_and(|d| Arc::ptr_eq(d, cc));
+    if is_dummy {
+        let keypm = crate::ported::zle::zle_tricky::KEYPM.lock().unwrap().take(); // c:3871
+        if let Some(name) = keypm {
+            // c:3867-3870 — scanhashtable(t, 0, 0, PM_UNSET, addhnmatch, 0).
+            for key in crate::ported::zle::compcore::get_data_arr(&name, true).unwrap_or_default() {
+                addmatch(&key, None);
+            }
+        }
+    }
+
+    // c:3874-3943 — `compctl -y` (user display list) and `-X`/`-Y`
+    // (explanation): both close the group the matches went into.
+    let explain_str = || -> Option<String> {
+        // c:3915-3920 / c:3936-3940 — `-Y` expands the explanation.
+        cc.explain.as_ref().map(|tt| {
+            if (cc.mask & CC_EXPANDEXPL) != 0 {
+                if let Ok(p) = crate::ported::lex::parsestr(tt) {
+                    return crate::ported::lex::untokenize(&crate::ported::subst::singsub(&p));
+                }
+            }
+            tt.clone()
+        })
+    };
+    let set_curexpl_str = |s: String| {
+        // c:3921 / c:3941 — `curexpl->str = tt;`
+        let cell = crate::ported::zle::compcore::curexpl.get_or_init(|| Mutex::new(None));
+        if let Ok(mut g) = cell.lock() {
+            if let Some(e) = g.as_mut() {
+                e.str = Some(s);
+            }
+        }
+    };
+    if errflag.load(Ordering::Relaxed) == 0 && cc.ylist.is_some() {
+        // c:3874 — generate the user-defined display list: if anything
+        // fails, the normal completion list is used.
+        let ylist = cc.ylist.clone().unwrap_or_default();
+        let mut uv: Option<String> = None;
+        if ylist.starts_with('$') || ylist.starts_with('(') {
+            // c:3880-3882 — from variable.
+            uv = Some(ylist[usize::from(ylist.starts_with('$'))..].to_string());
+        } else if let Some(mut shfunc) = crate::ported::utils::getshfunc(&ylist) {
+            // c:3883-3896 — from function: pass the completions as args.
+            let mut body_args: Vec<String> = Vec::new();
+            let marc = crate::comp_match_handles::matches_arc();
+            if let Ok(ms) = marc.lock() {
+                for m in ms.iter() {
+                    let s = m.str.clone().unwrap_or_default();
+                    match &m.ppre {
+                        Some(pp) => body_args.push(format!(
+                            "{}{}{}",
+                            pp,
+                            s,
+                            m.psuf.as_deref().unwrap_or("")
+                        )),
+                        None => body_args.push(s),
+                    }
+                }
+            }
+            let mut largs = vec![ylist.clone()];
+            largs.extend(body_args.iter().cloned());
+            // c:3898-3900 — `if (incompfunc != 1) incompctlfunc = 1;
+            //                sfcontext = SFC_COMPLETE;`
+            if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
+                INCOMPCTLFUNC.with(|c| c.set(true));
+            }
+            let osc = crate::ported::builtin::SFCONTEXT
+                .swap(crate::ported::zsh_h::SFC_COMPLETE, Ordering::Relaxed);
+            let name_for_body = ylist.clone();
+            let body_runner = move || -> i32 {
+                crate::ported::exec::run_function_body(&name_for_body, &body_args).unwrap_or(0)
+            };
+            let _ = crate::ported::exec::doshfunc(&mut shfunc, largs, true, body_runner); // c:3901
+            crate::ported::builtin::SFCONTEXT.store(osc, Ordering::Relaxed); // c:3902
+            INCOMPCTLFUNC.with(|c| c.set(false)); // c:3903
+            uv = Some("reply".to_string()); // c:3904
+        }
+        // c:3906-3907 — `if (uv) yaptr = get_user_var(uv);`
+        let yaptr = uv.and_then(|u| crate::ported::zle::compcore::get_user_var(Some(&u)));
+        if let Some(tt) = explain_str() {
+            set_curexpl_str(tt);
+            if let Some(gname) = cc.gname.as_deref() {
+                // c:3922-3925
+                endcmgroup(yaptr);
+                begcmgroup(Some(gname), gflags);
+                crate::ported::zle::compcore::addexpl(false);
+            } else {
+                // c:3926-3929
+                crate::ported::zle::compcore::addexpl(false);
+                endcmgroup(yaptr);
+                begcmgroup(Some("default"), 0);
+            }
+        } else {
+            // c:3931-3933
+            endcmgroup(yaptr);
+            begcmgroup(Some("default"), 0);
+        }
+    } else if let Some(tt) = explain_str() {
+        // c:3935-3943
+        set_curexpl_str(tt);
+        crate::ported::zle::compcore::addexpl(false);
     }
 
     // c:3930-3992 — `compctl -l`: handle sub-completion.
@@ -7021,6 +7116,132 @@ mod tests {
         let m = MATCH_LIST.with(|r| r.borrow().clone());
         assert_eq!(m.len(), 1);
         assert_eq!(m[0], "hardcoded");
+    }
+
+    /// c:3671-3673 — `compctl -n` dumps nameddirtab as BARE names
+    /// (`foo zz<Tab>` → `foo zzd`), no `~` and no passwd filltable.
+    #[test]
+    fn makecomplistflags_cc_named_adds_bare_nameddir_names() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::utils::inittyptab();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        MATCH_LIST.with(|r| r.borrow_mut().clear());
+        crate::ported::hashnameddir::addnameddirnode(
+            "zzlaneg",
+            crate::ported::zsh_h::nameddir {
+                node: Default::default(),
+                dir: "/tmp".into(),
+                diff: 0,
+            },
+        );
+        let mut before: Vec<String> = crate::ported::hashnameddir::nameddirtab()
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(n, _)| n.clone())
+            .collect();
+        before.sort();
+        let cc = Arc::new(Compctl {
+            mask: CC_NAMED,
+            ..Default::default()
+        });
+        makecomplistflags(&cc, String::new(), false, 0);
+        let mut m = MATCH_LIST.with(|r| r.borrow().clone());
+        m.sort();
+        // Exactly the table as it stood: no passwd filltable (c:3673).
+        assert_eq!(m, before);
+        assert!(m.iter().any(|s| s == "zzlaneg"), "named dir missing: {m:?}");
+        assert!(m.iter().all(|s| !s.starts_with('~')), "`~` leaked into names: {m:?}");
+    }
+
+    /// c:3865-3873 — with `keypm` set and `cc == &cc_dummy`, the keys of
+    /// the assoc whose subscript is completed are added, and keypm clears.
+    #[test]
+    fn makecomplistflags_keypm_adds_assoc_keys_for_cc_dummy_only() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::utils::inittyptab();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        crate::ported::params::sethparam(
+            "zzlanegh",
+            vec!["key1".into(), "v".into(), "key2".into(), "w".into()],
+        );
+        let keypm = || crate::ported::zle::zle_tricky::KEYPM.lock().unwrap().clone();
+        let set_keypm = || {
+            *crate::ported::zle::zle_tricky::KEYPM.lock().unwrap() = Some("zzlanegh".into());
+        };
+        // A compctl that is not cc_dummy never reads keypm.
+        MATCH_LIST.with(|r| r.borrow_mut().clear());
+        set_keypm();
+        let other = Arc::new(Compctl::default());
+        *CC_DUMMY.lock().unwrap() = None;
+        makecomplistflags(&other, String::new(), false, 0);
+        assert!(MATCH_LIST.with(|r| r.borrow().is_empty()));
+        assert_eq!(keypm().as_deref(), Some("zzlanegh"));
+        // cc_dummy: keys added, keypm consumed.
+        let dummy = Arc::new(Compctl::default());
+        *CC_DUMMY.lock().unwrap() = Some(dummy.clone());
+        makecomplistflags(&dummy, String::new(), false, 0);
+        let mut m = MATCH_LIST.with(|r| r.borrow().clone());
+        m.sort();
+        assert_eq!(m, vec!["key1".to_string(), "key2".to_string()]);
+        assert_eq!(keypm(), None);
+        *CC_DUMMY.lock().unwrap() = None;
+    }
+
+    /// c:3935-3943 — `compctl -X` without `-y` registers the explanation
+    /// (addexpl) with the count of the matches the flags produced.
+    #[test]
+    fn makecomplistflags_explain_registers_expl_with_count() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::utils::inittyptab();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        crate::comp_match_handles::expls_arc().lock().unwrap().clear();
+        let cc = Arc::new(Compctl {
+            str: Some("hardcoded".to_string()),
+            explain: Some("zzlaneg explanation".to_string()),
+            ..Default::default()
+        });
+        makecomplistflags(&cc, String::new(), false, 0);
+        let ex = crate::comp_match_handles::expls_arc().lock().unwrap().clone();
+        let e = ex
+            .iter()
+            .find(|e| e.str.as_deref() == Some("zzlaneg explanation"))
+            .unwrap_or_else(|| panic!("explanation not registered: {ex:?}"));
+        assert_eq!(e.count, 1);
+    }
+
+    /// c:3874-3933 — `compctl -y '(L1 L2)'` closes the current group with
+    /// that display list (`endcmgroup(yaptr)`), which printlist then shows
+    /// in place of the matches.
+    #[test]
+    fn makecomplistflags_ylist_sets_group_display_list() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::utils::inittyptab();
+        let _g = zle_test_setup();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        if let Ok(mut a) = crate::ported::zle::compcore::amatches
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+        {
+            a.clear();
+        }
+        crate::ported::zle::compcore::begcmgroup(Some("zzlaneg"), 0);
+        let cc = Arc::new(Compctl {
+            str: Some("hardcoded".to_string()),
+            ylist: Some("(L1 L2)".to_string()),
+            ..Default::default()
+        });
+        makecomplistflags(&cc, String::new(), false, 0);
+        let groups = crate::ported::zle::compcore::amatches.get().unwrap().lock().unwrap().clone();
+        // c:3089-3091 — `-y` opens a fresh unnamed group for its matches;
+        // that is the group the display list closes.
+        let named = groups.iter().find(|g| g.name.as_deref() == Some("zzlaneg"));
+        assert_eq!(named.expect("group").ylist, None);
+        let anon = groups.iter().rev().find(|g| g.name.is_none()).expect("unnamed group");
+        assert_eq!(anon.ylist, Some(vec!["L1".to_string(), "L2".to_string()]));
     }
 
     #[test]

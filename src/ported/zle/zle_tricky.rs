@@ -1989,16 +1989,20 @@ pub fn get_comp_string() -> Option<String> {
     // subscript an assoc KEY context (insubscr 2) instead of a math index
     // (insubscr 1). Local closure — the build gate only admits module-level
     // `fn`s that exist in the C source.
+    // The lookup also records `keypm` (c:410): the node, hashed or not.
     let param_is_hashed = |name: &str| -> bool {
-        !name.is_empty()
-            && crate::ported::params::paramtab()
-                .read()
-                .ok()
-                .and_then(|t| {
-                    t.get(name)
-                        .map(|p| (p.node.flags & crate::ported::zsh_h::PM_HASHED as i32) != 0)
-                })
-                .unwrap_or(false)
+        let hashed = if name.is_empty() {
+            None
+        } else {
+            crate::ported::params::paramtab().read().ok().and_then(|t| {
+                t.get(name)
+                    .map(|p| (p.node.flags & crate::ported::zsh_h::PM_HASHED as i32) != 0)
+            })
+        };
+        if let Ok(mut k) = KEYPM.lock() {
+            *k = hashed.map(|_| name.to_string());
+        }
+        hashed.unwrap_or(false)
     };
 
     's_restart: loop {
@@ -5654,6 +5658,12 @@ pub static ORIGLL: AtomicI32 = AtomicI32::new(0); // c:75
 /// Port of `mod_export int insubscr` from `Src/Zle/zle_tricky.c:405`.
 /// != 0 if we are inside `${name[...]}` or `${(P)name[...]}`.
 pub static INSUBSCR: AtomicI32 = AtomicI32::new(0); // c:405
+
+/// Port of `mod_export Param keypm` from `Src/Zle/zle_tricky.c:410`.
+/// The parameter whose subscript is being completed, by name: set from
+/// `realparamtab->getnode(varname)` (c:1515/1616/1698), read by compctl's
+/// assoc-key completion (compctl.c:3865).
+pub static KEYPM: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None); // c:410
 
 /// Port of `mod_export char *varname` from `Src/Zle/zle_tricky.c:389`.
 /// Name of the parameter whose value / subscript is being completed —
