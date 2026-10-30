@@ -402,3 +402,35 @@ fn forked_pipeline_stages_exit_and_release_the_pipe() {
     }
     assert!(failures.is_empty(), "a pipeline stage never exited:\n{}", failures.join("\n"));
 }
+
+/// zleread paints the prompt (Src/Zle/zle_main.c:1353 `zrefresh()`) BEFORE
+/// `start_edit()` (c:1362) writes `$zle_bracketed_paste[1]`, and PROMPT_CR's
+/// `\r` (c:1321-1322) precedes that paint. zsh 5.9.2 sends
+/// `\r\e[0m…\e[J<prompt>\e[K\e[?2004h`; zshrs used to send `\e[?2004h`
+/// first and drop the `\r`.
+#[test]
+fn prompt_is_painted_before_bracketed_paste_is_enabled() {
+    if !zshrs_bin().exists() {
+        eprintln!("skip: zshrs binary not built");
+        return;
+    }
+    let h = home("bpaste", 0);
+    let _ = std::fs::remove_dir_all(&h);
+    let mut s = Session::start(&h, false);
+    let enable = b"\x1b[?2004h";
+    let seen_both = s.pump(Duration::from_secs(30), |b| match find(b, PROMPT.as_bytes()) {
+        Some(i) => has(&b[i..], enable),
+        None => false,
+    });
+    assert!(seen_both, "no prompt + bracketed paste: {:?}", s.tail());
+    let p = find(&s.seen, PROMPT.as_bytes()).unwrap();
+    let e = find(&s.seen, enable).unwrap();
+    assert!(p < e, "\\e[?2004h written before the prompt: {:?}", s.tail());
+    assert!(
+        s.seen[..p].contains(&b'\r'),
+        "PROMPT_CR `\\r` missing before the first prompt: {:?}",
+        s.tail()
+    );
+    drop(s);
+    let _ = std::fs::remove_dir_all(&h);
+}

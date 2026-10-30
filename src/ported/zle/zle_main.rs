@@ -1665,6 +1665,12 @@ pub fn zleread(
     // Set up terminal
     zsetterm()?;
 
+    // c:1321-1322 — `if (isset(PROMPTCR)) putc('\r', shout);`
+    if crate::ported::zsh_h::isset(crate::ported::zsh_h::PROMPTCR) {
+        let fd = SHTTY.load(Ordering::Relaxed);
+        let _ = write_loop(if fd >= 0 { fd } else { 1 }, b"\r");
+    }
+
     // c:1323-1324 — `if (tmout) alarm(tmout);`. This is the ONLY place
     // `$TMOUT` starts the clock: SIGALRM then reaches zhandler
     // (Src/signals.c:474-491), which runs TRAPALRM via handletrap — whose
@@ -1712,10 +1718,20 @@ pub fn zleread(
     PREFIXFLAG.store(0, SeqCst); // c:1346
     REGION_ACTIVE.store(0, SeqCst); // c:1347
 
+    // c:1353 — `zrefresh()`: the prompt and line are painted BEFORE the
+    // zle-line-init hook and before start_edit(), so `\e[?2004h` follows
+    // the painted prompt instead of preceding it.
+    zrefresh();
+
     // c:1356 — `zlecallhook(init, NULL)` — runs user's zle-line-init widget
     // before the editing loop (e.g. for bindkey installation / zle -A wiring).
     if crate::ported::zle::zle_thingy::rthingy_nocreate(init) {
         let _ = execzlefunc(init, &[init.to_string()], 1, 0);
+    }
+
+    // c:1358-1359 — `if (zleline && *zleline) redrawhook();`
+    if ZLELL.load(SeqCst) > 0 {
+        redrawhook();
     }
 
     // c:1366 — `zrefresh()` paints the initial frame BEFORE the loop, so
