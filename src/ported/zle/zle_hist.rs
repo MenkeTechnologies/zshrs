@@ -221,7 +221,9 @@ pub fn zlinefind(haystack: &str, pos: usize, needle: &str, dir: i32, sens: i32) 
 /// Direct port of `int uphistory(UNUSED(char **args))` from
 /// `Src/Zle/zle_hist.c:233`. Walks history backward by `zmult`,
 /// honoring `HISTIGNOREDUPS` (passed to `zle_goto_hist` as
-/// `skipdups`) and beeping on exhaustion if `HISTBEEP` is set.
+/// `skipdups`). It beeps (returns 1 with `HISTBEEP`) only when
+/// `HISTIGNOREDUPS` skipping runs off the ring; stepping past either
+/// end of history is a silent no-op (`zle_goto_hist` c:811-812).
 /// Port of `uphistory()` from `Src/Zle/zle_hist.c:233`.
 pub fn uphistory() -> i32 {
     // c:233
@@ -630,7 +632,9 @@ pub fn acceptlineanddownhistory() -> i32 {
 /// Direct port of `int downhistory(UNUSED(char **args))` from
 /// `Src/Zle/zle_hist.c:434`. Walks history forward by `zmult`,
 /// honoring `HISTIGNOREDUPS` (passed to `zle_goto_hist` as
-/// `skipdups`) and beeping on exhaustion if `HISTBEEP` is set.
+/// `skipdups`). It beeps (returns 1 with `HISTBEEP`) only when
+/// `HISTIGNOREDUPS` skipping runs off the ring; stepping past either
+/// end of history is a silent no-op (`zle_goto_hist` c:811-812).
 /// Port of `downhistory()` from `Src/Zle/zle_hist.c:434`.
 pub fn downhistory() -> i32 {
     // c:434
@@ -1172,13 +1176,17 @@ pub fn setlocalhistory() -> i32 {
 
 /// Move the history cursor by `n` (negative = older / "up", positive = newer / "down").
 /// If `skipdups`, keep stepping while the visited entry equals the current line.
-/// Returns true if the line changed, false if exhausted (caller may beep).
+/// Returns false only when `skipdups` walks off the end of the ring
+/// (c:824-825); a move past either end of history returns true without
+/// touching the line (c:811-812 `return 1`), so `uphistory` /
+/// `downhistory` never beep at the ends of history.
 /// Port of `zle_goto_hist(int ev, int n, int skipdups)` from Src/Zle/zle_hist.c:806.
 /// WARNING: param names don't match C — Rust=(n, skipdups) vs C=(ev, n, skipdups)
 pub fn zle_goto_hist(n: i32, skipdups: bool) -> bool {
     let len = history().lock().unwrap().entries.len() as i32;
     if len == 0 {
-        return false;
+        // c:811-812 — no entry to move to: `return 1`, the line is unchanged.
+        return true;
     }
     let cur: i32 = if (history().lock().unwrap().cursor as i32) > len {
         len
@@ -1187,7 +1195,8 @@ pub fn zle_goto_hist(n: i32, skipdups: bool) -> bool {
     };
     let mut new_idx = cur + n;
     if new_idx < 0 || new_idx > len {
-        return false;
+        // c:811-812 — `movehistent()` ran off the ring: `return 1`.
+        return true;
     }
     if skipdups && n != 0 {
         let cur_line: String = ZLELINE.lock().unwrap().iter().collect();
@@ -3401,20 +3410,43 @@ mod tests {
     }
 
     #[test]
-    fn uphistory_returns_1_on_exhaustion_when_histbeep_set() {
+    fn uphistory_past_oldest_entry_is_silent_even_with_histbeep() {
         let _g = crate::test_util::global_state_lock();
-        // c:236-237 — `if (!zle_goto_hist(...) && isset(HISTBEEP))
-        //              return 1;`
+        // c:811-812 — `movehistent()` running off the ring makes
+        // zle_goto_hist `return 1`, so c:236 never reaches `return 1`:
+        // zsh 5.9.2 emits no BEL for Up on the oldest line.
         let _g = zle_test_setup();
         let _zle = zle_with_history(&["only"]);
-        // Already at entry 0; trying to go up further is exhausted.
         history().lock().unwrap().cursor = 0;
+        *ZLELINE.lock().unwrap() = "only".chars().collect();
         ZMOD.lock().unwrap().mult = 1;
 
         opt_state_set("histbeep", true);
         let rc = uphistory();
-        assert_eq!(rc, 1, "exhausted up + HISTBEEP must return 1 (beep signal)");
         opt_state_set("histbeep", false);
+        assert_eq!(rc, 0, "Up past the oldest entry must not signal a beep");
+        assert_eq!(ZLELINE.lock().unwrap().iter().collect::<String>(), "only");
+        assert_eq!(history().lock().unwrap().cursor, 0);
+    }
+
+    #[test]
+    fn uphistory_beeps_when_ignoredups_skipping_runs_off_the_ring() {
+        let _g = crate::test_util::global_state_lock();
+        // c:813-825 — every older entry equals the line, so the skipdups
+        // walk leaves `he` NULL and zle_goto_hist returns 0 → c:236 beeps.
+        let _g = zle_test_setup();
+        let _zle = zle_with_history(&["dup", "dup"]);
+        *ZLELINE.lock().unwrap() = "dup".chars().collect();
+        ZLELL.store(3, Ordering::SeqCst);
+        history().lock().unwrap().cursor = 2;
+        ZMOD.lock().unwrap().mult = 1;
+
+        opt_state_set("histbeep", true);
+        opt_state_set("histignoredups", true);
+        let rc = uphistory();
+        opt_state_set("histignoredups", false);
+        opt_state_set("histbeep", false);
+        assert_eq!(rc, 1);
     }
 
     #[test]
@@ -3492,8 +3524,9 @@ mod tests {
         // Up two more → "echo a".
         assert!(zle_goto_hist(-2, false));
         assert_eq!(ZLELINE.lock().unwrap().iter().collect::<String>(), "echo a");
-        // One more up: exhausted.
-        assert!(!zle_goto_hist(-1, false));
+        // One more up runs off the ring: c:811-812 returns 1, line kept.
+        assert!(zle_goto_hist(-1, false));
+        assert_eq!(ZLELINE.lock().unwrap().iter().collect::<String>(), "echo a");
         // Down twice → "echo c".
         assert!(zle_goto_hist(2, false));
         assert_eq!(ZLELINE.lock().unwrap().iter().collect::<String>(), "echo c");
