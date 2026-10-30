@@ -2375,6 +2375,11 @@ const BASH_53_CORPUS: &[&str] = &[
 ];
 
 const BASH_KORN_CORPUS: &[&str] = &[
+    // `getopts` at the end of the options UNSETS `$OPTARG` (dash and zsh keep it),
+    // including after an earlier unknown-option `?` in the same script.
+    "OPTARG=x; set -- -z; getopts ab o 2>/dev/null; echo \"${OPTARG-u}\"; set -- -a; getopts a: o 2>/dev/null; echo \"$o ${OPTARG-u}\"",
+    // A `%d` operand past the 64-bit range saturates and printf exits 1.
+    "printf '%d\\n' 99999999999999999999 2>/dev/null; echo rc=$?; printf '%d\\n' -99999999999999999999 2>/dev/null; echo rc=$?",
     "typeset -a e; e=(); echo \"[${e[@]-none}] [${e[*]-none}] [${e[@]+set}] [${e[@]:-none}]\"; g=(a); echo \"[${g[@]-none}] [${g[@]+set}]\"",
     "set -- -a x; getopts a o; echo \"$o [${OPTARG+set}]\"",
     "set --; printf '[%s]' \"${@-x}\"; printf '\\n'",
@@ -2518,6 +2523,9 @@ const DASH_FAMILY_CORPUS: &[&str] = &[
 
 /// dash proper (the host's `ash` is busybox, which has `pipefail` and `\x`).
 const DASH_ONLY_CORPUS: &[&str] = &[
+    // dash's `type` parses no options: `-t` and `--` are looked up as names.
+    "type -t ls; echo rc=$?; type -- ls; echo rc=$?",
+    "printf '%d\\n' 99999999999999999999 2>/dev/null; echo rc=$?; printf '%d\\n' -99999999999999999999 2>/dev/null; echo rc=$?",
     "echo \"a\\x\" \"\\x41\"",
     "echo $((-9223372036854775808 / -1)) $((9223372036854775808)) $((-9223372036854775808)) $((99999999999999999999))",
     "(exec nosuch_zz) 2>/dev/null; echo $?; (exec /bin/echo hi); echo $?; (exec /nonexistent/x) 2>/dev/null; echo $?",

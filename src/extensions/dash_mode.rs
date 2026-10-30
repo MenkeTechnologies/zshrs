@@ -1961,13 +1961,14 @@ pub fn clear_optind_assignment() {
 /// bash/ksh/mksh/dash/ash → [?]        zsh → [INIT]
 /// ```
 ///
-/// bash, ksh93 and mksh also CLEAR `$OPTARG` on that return; dash and ash
-/// leave the last option's argument in place, and so does zsh:
+/// bash, ksh93 and mksh also UNSET `$OPTARG` on that return (bash's
+/// `getopts_unbind_variable ("OPTARG")`); dash and ash leave the last
+/// option's argument in place, and so does zsh:
 ///
 /// ```text
 /// $ <shell> -c 'OPTIND=1; for i in 1 2 3; do getopts "a:b" o -b -a W; done;
-///               printf "[%s]\n" "$OPTARG"'
-/// bash/ksh/mksh → []      dash/ash → [W]      zsh → [W]
+///               printf "[%s]\n" "${OPTARG-unset}"'
+/// bash/ksh/mksh → [unset]      dash/ash → [W]      zsh → [W]
 /// ```
 ///
 /// Call at every "no more options" (`return 1`) exit of `bin_getopts`. No-op
@@ -1978,7 +1979,7 @@ pub fn getopts_end_of_options(var: &str) {
     }
     crate::ported::params::setsparam(var, "?");
     if !dash_strict() {
-        crate::ported::params::setsparam("OPTARG", "");
+        crate::ported::params::unsetparam("OPTARG");
     }
 }
 

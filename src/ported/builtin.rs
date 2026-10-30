@@ -595,6 +595,12 @@ pub fn execbuiltin(
             if crate::dash_mode::dash_strict() && name == "echo" && (argv > 0 || arg_str != "-n") {
                 break;
             }
+            // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash's `type` parses no
+            // options at all: `type -t ls` and `type -- ls` look `-t` and `--` up as
+            // names (`-t: not found`), still describe `ls`, and exit 127.
+            if crate::dash_mode::dash_faithful() && name == "type" {
+                break;
+            }
             // !!! SH (no C counterpart) !!! /bin/sh is bash built with xpg_echo: `echo` takes no
             // options at all, `-n`, `-e` and `-E` are text.
             if name == "echo"
@@ -23643,7 +23649,15 @@ fn parse_int_arg(s: &str) -> i64 {
         // `-9223372036854775809` → INT64_MIN).
         let mut val = match i64::from_str_radix(&digits[..ndig], radix) {
             Ok(v) => v,
-            Err(_) if ndig > 0 => return if neg { i64::MIN } else { i64::MAX },
+            Err(_) if ndig > 0 => {
+                // dash and bash 5 report the ERANGE (`Result too large`) and
+                // exit 1; bash 3.2 as `/bin/sh` only warns.
+                if crate::dash_mode::dash_faithful() || crate::dash_mode::bash_mode() {
+                    crate::ported::utils::zwarnnam("printf", &format!("{s}: Result too large"));
+                    PRINTF_MATH_ERR.with(|c| c.set(true));
+                }
+                return if neg { i64::MIN } else { i64::MAX };
+            }
             Err(_) => 0,
         };
         if neg {
@@ -23667,6 +23681,8 @@ fn parse_int_arg(s: &str) -> i64 {
     // !!! BASH/KSH93/SH GATE (no C counterpart) !!! a plain decimal past the 64-bit
     // range saturates (strtoimax): bash 5, ksh93 and bash 3.2 all print
     // INT64_MAX / INT64_MIN where zsh truncates the digits.
+    // bash 5 (`Result too large`) and ksh93 (`overflow exception`) also report the
+    // ERANGE and make printf exit 1; bash 3.2 as `/bin/sh` only warns, status 0.
     if crate::dash_mode::bash_mode() || crate::dash_mode::ksh93_mode() || crate::dash_mode::sh_mode() {
         let t = s.trim();
         let (neg, d) = match t.strip_prefix('-') {
@@ -23674,6 +23690,10 @@ fn parse_int_arg(s: &str) -> i64 {
             None => (false, t.strip_prefix('+').unwrap_or(t)),
         };
         if !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()) && d.parse::<i64>().is_err() {
+            if crate::dash_mode::bash_mode() || crate::dash_mode::ksh93_mode() {
+                crate::ported::utils::zwarnnam("printf", &format!("{t}: Result too large"));
+                PRINTF_MATH_ERR.with(|c| c.set(true));
+            }
             return if neg { i64::MIN } else { i64::MAX };
         }
     }
