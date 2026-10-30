@@ -39,7 +39,6 @@
 //! ```
 
 use crate::compsys::ported::_description::_description;
-use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam, unsetparam};
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{options, MAX_OPS};
@@ -121,12 +120,8 @@ pub fn _all_matches_end() -> i32 {
         .unwrap_or(0);
 
     if nmatches > 1 && !in_not {
-        // sh:36
-        if lookupstyle(&ctx, "insert")
-            .first()
-            .map(|v| matches!(v.as_str(), "yes" | "true" | "1" | "on"))
-            .unwrap_or(false)
-        {
+        // sh:36 `zstyle -t "$_all_matches_context" insert`
+        if crate::compsys::ported::shared::zstyle_t(&ctx, "insert") == 0 {
             let _ = crate::ported::params::setsparam("compstate[insert]", "all");
         } else {
             // sh:39-40
