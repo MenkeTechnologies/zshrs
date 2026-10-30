@@ -3081,3 +3081,38 @@ complete -o bogus q; echo rc=$?"#;
         )
     );
 }
+
+// ════════════════════════════════════════════════════════════════════
+// `read -k` assigns the characters verbatim (Src/builtin.c:6722-6732);
+// it never reaches the IFS line splitter, so a SPACE survives.
+// `_read_comp` (^X^R) depends on it to accept `compadd a b`.
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn read_minus_k_keeps_a_space_and_skips_ifs_split() {
+    let (_ec, stdout, _stderr) = run_zshrs(
+        r#"print -n " x" | { read -u0 -k key; print -r "[$key]"; }; print -n "a b" | { read -u0 -k3 one two; print -r "[$one][$two]"; }"#,
+    );
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(stdout, "[ ]\n[a b][]\n", "read -k must not IFS-split");
+}
+
+// ════════════════════════════════════════════════════════════════════
+// `$historywords` carries HISTFILE entries, newest first: readhistfile
+// divides each entry into words (Src/hist.c:2826-2834) and histwgetfn
+// walks up from curhist-1 (Src/Modules/parameter.c:1222-1259).
+// `_history-complete-older` (\e/) completes from this array.
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn historywords_has_histfile_words_newest_first() {
+    let (_ec, stdout, _stderr) = run_zshrs(
+        r#"h=$(mktemp); print -rl -- "ls foo" "echo hello world" "grep x y" "true" >| $h; HISTSIZE=10; fc -R $h; print -r -- "${(j:,:)historywords}"; command rm -f $h"#,
+    );
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(stdout, "y,x,grep,world,hello,echo,foo,ls\n");
+}

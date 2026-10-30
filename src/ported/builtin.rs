@@ -18423,6 +18423,24 @@ pub fn bin_read(
         return eof;
     }
 
+    // c:6722-6732 — `-k` is done here too: the characters read are the
+    // value, verbatim. `-e`/`-E` echo them, `-e` skips the assignment, and
+    // NO IFS splitting happens (that is the line reader below, c:6735), so
+    // `read -k key` on a SPACE sets `key=' '`. Falling through to the IFS
+    // pass stripped it to "", and `_read_comp` (sh:53-81) never saw a space.
+    // bash `-n N` shares the raw read above but does split, so it continues.
+    if OPT_ISSET(ops, b'k') && !bash_nchars {
+        if OPT_ISSET(ops, b'e') || OPT_ISSET(ops, b'E') {
+            let mut out = io::stdout();
+            let _ = out.write_all(buf.as_bytes()); // c:6725 fwrite
+            let _ = out.flush();
+        }
+        if !OPT_ISSET(ops, b'e') {
+            setsparam(&reply, &buf); // c:6727
+        }
+        return if partial_eof { 1 } else { 0 }; // c:6732 `return eof`
+    }
+
     // Backslash-escaped chars were tagged with the Bnull mark (\u{e199}) by
     // the read loop so the IFS splitting below treats them as literal.
     // `rmark` is that tag; `unmark` strips it (keeping the escaped char),
