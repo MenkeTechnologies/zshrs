@@ -182,3 +182,43 @@ fn find_char_target_typed_after_keytimeout_is_still_the_target() {
         "`echo abc` + `0 f b x` must run `echo ac`; output was {text:?}"
     );
 }
+
+/// A count typed between an operator and its motion (`d2w`, `c2e`) is the
+/// motion's count: getvirange sets `zmult = mult1 * zmod.tmult`
+/// (c:Src/Zle/zle_vi.c:225) after the digit-argument, and the motion reads
+/// that `zmult`. The port's motions read `zmult` only under MOD_MULT, which
+/// the count after the operator did not set, so every operator ran its
+/// motion once: `d2w` on `echo one two three` left `two three`.
+#[test]
+fn count_between_operator_and_motion_reaches_the_motion() {
+    if !zshrs_bin().exists() {
+        eprintln!("skip: zshrs binary not built");
+        return;
+    }
+    let home = std::env::temp_dir().join(format!("zshrs-vi-opcount-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(home.join(".zshrc"), "bindkey -v\nPS1='> '\n").unwrap();
+    let mut pty = spawn_in_pty(&home);
+    let first = drain(&mut pty, Duration::from_millis(1200), Duration::from_secs(15));
+    assert!(!first.is_empty(), "no prompt painted");
+
+    let quiet = Duration::from_millis(300);
+    let max = Duration::from_secs(6);
+    // `echo one two three four`, ESC, `0w` onto `one`, then `d2w` and
+    // `c2eX`: the two operators each take two words.
+    for key in [&b"echo one two three four five"[..], b"\x1b", b"0w", b"d2w", b"c2eX", b"\x1b"] {
+        pty.master.write_all(key).unwrap();
+        drain(&mut pty, quiet, max);
+    }
+    pty.master.write_all(b"\r").unwrap();
+    let out = drain(&mut pty, Duration::from_millis(800), max);
+    let _ = std::fs::remove_dir_all(&home);
+
+    let text = strip_escapes(&String::from_utf8_lossy(&out));
+    let lines: Vec<&str> = text.split(['\r', '\n']).map(str::trim).collect();
+    assert!(
+        lines.contains(&"X five"),
+        "`d2w` then `c2eX` must leave `echo X five`; output was {text:?}"
+    );
+}

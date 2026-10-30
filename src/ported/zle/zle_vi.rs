@@ -372,7 +372,16 @@ pub fn getvirange(wf: i32) -> i32 {
                 // c:224
                 let tmult = ZMOD.lock().unwrap().tmult;
                 let zm = mult1 * tmult; // c:225 `zmult = mult1 * zmod.tmult;`
-                ZMOD.lock().unwrap().mult = zm;
+                let mut zmod = ZMOD.lock().unwrap();
+                zmod.mult = zm;
+                // The port's motions read `zmult` only under MOD_MULT (see the
+                // convention note in zle_word.rs); a count typed after the
+                // operator (`d2e`, MOD_TMULT from digit-argument) is that
+                // `zmult`, so it must carry the flag or the motion runs once.
+                if zmod.flags & MOD_TMULT != 0 {
+                    zmod.flags |= MOD_MULT;
+                }
+                drop(zmod);
                 if VICHGFLAG.load(SeqCst) == 2 {
                     // c:226 `if (vichgflag == 2)`
                     CURVICHG.lock().unwrap().mod_.mult = zm; // c:227
