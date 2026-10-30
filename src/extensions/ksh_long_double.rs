@@ -13,9 +13,10 @@
 //!
 //! A [`LongDouble`] is an exact `mant × 2^exp` with [`LDBL_MANT_DIG`]
 //! significand bits. Every operation is computed exactly in a `BigUint` and
-//! rounded once, half to even, which is what the hardware does. `pow` and the
-//! math functions stay in double, as ksh93's own calls to `pow()` do
-//! (`print $((2**0.5))` is the double's digits on every host).
+//! rounded once, half to even, which is what the hardware does. The `**`
+//! operator stays in double, as ksh93 calls C's `pow()` for it (`print
+//! $((2**0.5))` is the double's digits on every host); the built-in math
+//! functions are the host's long double ones (`powl`, `atan2l`, …), below.
 //!
 //! A result travels in an `mnumber` through the arena below: when `type_` is
 //! `MN_FLOAT` the C union's `l` is dead, so it carries a handle into a
@@ -229,19 +230,11 @@ impl LongDouble {
             (Zero, Zero) => LongDouble { negative: self.negative && other.negative, kind: Zero },
             (Zero, _) => other,
             (_, Zero) => self,
-            (Finite { mant: ma, exp: ea }, Finite { mant: mb, exp: eb }) => {
-                let exp = ea.min(eb);
-                let a = BigUint::from(ma) << (ea - exp) as u64;
-                let b = BigUint::from(mb) << (eb - exp) as u64;
-                if self.negative == other.negative {
-                    return round_to(prec, self.negative, a + b, exp);
-                }
-                match a.cmp(&b) {
-                    Ordering::Equal => LongDouble::ZERO,
-                    Ordering::Greater => round_to(prec, self.negative, a - b, exp),
-                    Ordering::Less => round_to(prec, other.negative, b - a, exp),
-                }
-            }
+            (Finite { mant: ma, exp: ea }, Finite { mant: mb, exp: eb }) => exact_sum(
+                prec,
+                (self.negative, BigUint::from(ma), ea),
+                (other.negative, BigUint::from(mb), eb),
+            ),
         }
     }
 
@@ -406,6 +399,22 @@ fn exact_quotient(prec: u32, negative: bool, value: BigUint, divisor: &BigUint, 
     round_to(prec, negative, quotient, exp)
 }
 
+/// The sum of two nonzero exact values `±big × 2^exp`, rounded once to `prec`
+/// bits. An exact cancellation is `+0`.
+fn exact_sum(prec: u32, a: (bool, BigUint, i64), b: (bool, BigUint, i64)) -> LongDouble {
+    let exp = a.2.min(b.2);
+    let x = a.1 << (a.2 - exp) as u64;
+    let y = b.1 << (b.2 - exp) as u64;
+    if a.0 == b.0 {
+        return round_to(prec, a.0, x + y, exp);
+    }
+    match x.cmp(&y) {
+        Ordering::Equal => LongDouble::ZERO,
+        Ordering::Greater => round_to(prec, a.0, x - y, exp),
+        Ordering::Less => round_to(prec, b.0, y - x, exp),
+    }
+}
+
 /// `"1299"` → `"1300"`, `"999"` → `"1000"`.
 fn increment_decimal(digits: &str) -> String {
     let mut bytes = digits.as_bytes().to_vec();
@@ -444,6 +453,631 @@ impl PartialOrd for LongDouble {
             }
         }
     }
+}
+
+// ─── ksh93's math functions in long double ─────────────────────────────────
+//
+// Where long double is wider than double, ksh93 calls the `l` variant of
+// every function it builds in: features/math.sh links `${name}l` ahead of
+// `${name}` for each data/math.tab entry, so `print $((pow(2,0.5)))` is
+// `powl`'s 18 digits on x86_64 Linux. Below are those functions on a
+// `LongDouble`: exact where the result is exact (fma, fdim, round, an
+// integral power or factorial), else computed in a 256-bit working float and
+// rounded once to the host's significand. C99 Annex F gives the special
+// cases; fmin/fmax ties follow glibc (sysdeps/x86_64/fpu/s_fmaxl.S,
+// math/s_fmax_template.c).
+
+/// Significand bits of [`Big`]: well past binary128's 113.
+const WORK_BITS: u64 = 256;
+
+/// A working float `±m × 2^e`, `m` truncated to [`WORK_BITS`] bits.
+#[derive(Clone, Debug)]
+struct Big {
+    negative: bool,
+    m: BigUint,
+    e: i64,
+}
+
+impl Big {
+    fn new(negative: bool, m: BigUint, e: i64) -> Big {
+        let bits = m.bits();
+        if bits > WORK_BITS {
+            let shift = bits - WORK_BITS;
+            Big { negative, m: m >> shift, e: e + shift as i64 }
+        } else {
+            Big { negative, m, e }
+        }
+    }
+
+    fn int(v: i64) -> Big {
+        Big::new(v < 0, BigUint::from(v.unsigned_abs()), 0)
+    }
+
+    /// A finite long double, exactly; zero for anything else.
+    fn of(x: LongDouble) -> Big {
+        match x.kind {
+            Kind::Finite { mant, exp } => Big::new(x.negative, BigUint::from(mant), exp),
+            _ => Big { negative: x.negative, m: BigUint::zero(), e: 0 },
+        }
+    }
+
+    fn is_zero(&self) -> bool {
+        self.m.is_zero()
+    }
+
+    /// The exponent of the top bit: `|self|` is in `[2^top, 2^(top+1))`.
+    fn top(&self) -> i64 {
+        self.e + self.m.bits() as i64 - 1
+    }
+
+    fn neg(mut self) -> Big {
+        self.negative = !self.negative;
+        self
+    }
+
+    fn abs(mut self) -> Big {
+        self.negative = false;
+        self
+    }
+
+    /// `self × 2^k`.
+    fn shl(mut self, k: i64) -> Big {
+        self.e += k;
+        self
+    }
+
+    fn add(&self, other: &Big) -> Big {
+        if self.is_zero() {
+            return other.clone();
+        }
+        if other.is_zero() {
+            return self.clone();
+        }
+        // Align at a few bits under what the larger operand keeps.
+        let floor = self.top().max(other.top()) - WORK_BITS as i64 - 4;
+        let align = |b: &Big| {
+            if b.e >= floor {
+                b.m.clone() << (b.e - floor) as u64
+            } else {
+                b.m.clone() >> (floor - b.e) as u64
+            }
+        };
+        let (a, b) = (align(self), align(other));
+        if self.negative == other.negative {
+            return Big::new(self.negative, a + b, floor);
+        }
+        match a.cmp(&b) {
+            Ordering::Less => Big::new(other.negative, b - a, floor),
+            _ => Big::new(self.negative, a - b, floor),
+        }
+    }
+
+    fn sub(&self, other: &Big) -> Big {
+        self.add(&other.clone().neg())
+    }
+
+    fn mul(&self, other: &Big) -> Big {
+        Big::new(self.negative != other.negative, &self.m * &other.m, self.e + other.e)
+    }
+
+    fn div(&self, other: &Big) -> Big {
+        let shift = WORK_BITS + other.m.bits();
+        let q = (&self.m << shift) / &other.m;
+        Big::new(self.negative != other.negative, q, self.e - shift as i64 - other.e)
+    }
+
+    fn sqrt(&self) -> Big {
+        let mut shift = (2 * WORK_BITS + 2).saturating_sub(self.m.bits());
+        if (self.e - shift as i64) % 2 != 0 {
+            shift += 1;
+        }
+        Big::new(false, (&self.m << shift).sqrt(), (self.e - shift as i64) / 2)
+    }
+
+    fn cmp(&self, other: &Big) -> Ordering {
+        let d = self.sub(other);
+        if d.is_zero() {
+            Ordering::Equal
+        } else if d.negative {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        }
+    }
+
+    /// The nearest integer, for a value well inside i64.
+    fn round_i64(&self) -> i64 {
+        let magnitude = if self.e >= 0 {
+            (&self.m << self.e as u64).to_i64().unwrap_or(i64::MAX)
+        } else {
+            let shift = (-self.e) as u64;
+            ((&self.m + (BigUint::one() << (shift - 1))) >> shift).to_i64().unwrap_or(i64::MAX)
+        };
+        if self.negative {
+            -magnitude
+        } else {
+            magnitude
+        }
+    }
+
+    /// Integer part and fraction of a non-negative value.
+    fn split(&self) -> (BigUint, Big) {
+        if self.e >= 0 {
+            return (&self.m << self.e as u64, Big::int(0));
+        }
+        let shift = (-self.e) as u64;
+        let fraction = &self.m & ((BigUint::one() << shift) - BigUint::one());
+        (&self.m >> shift, Big::new(false, fraction, self.e))
+    }
+
+    fn to_ld(&self, prec: u32) -> LongDouble {
+        if self.is_zero() {
+            return LongDouble { negative: self.negative, kind: Kind::Zero };
+        }
+        round_to(prec, self.negative, self.m.clone(), self.e)
+    }
+}
+
+/// `Σ s^k z^(2k+1)/(2k+1)` for small `z`: atanh with `s = 1`, atan with `s = -1`.
+fn odd_series(z: &Big, alternate: bool) -> Big {
+    let z2 = z.mul(z);
+    let mut power = z.clone();
+    let mut sum = Big::int(0);
+    for k in 0i64.. {
+        let mut term = power.div(&Big::int(2 * k + 1));
+        if term.is_zero() || (!sum.is_zero() && term.top() < sum.top() - WORK_BITS as i64 - 4) {
+            break;
+        }
+        if alternate && k % 2 == 1 {
+            term = term.neg();
+        }
+        sum = sum.add(&term);
+        power = power.mul(&z2);
+    }
+    sum
+}
+
+fn ln2() -> Big {
+    static LN2: std::sync::OnceLock<Big> = std::sync::OnceLock::new();
+    // ln 2 = 2 atanh(1/3).
+    LN2.get_or_init(|| odd_series(&Big::int(1).div(&Big::int(3)), false).shl(1)).clone()
+}
+
+fn pi() -> Big {
+    static PI: std::sync::OnceLock<Big> = std::sync::OnceLock::new();
+    // Machin: π = 16 atan(1/5) - 4 atan(1/239).
+    PI.get_or_init(|| {
+        let a = odd_series(&Big::int(1).div(&Big::int(5)), true).shl(4);
+        a.sub(&odd_series(&Big::int(1).div(&Big::int(239)), true).shl(2))
+    })
+    .clone()
+}
+
+/// ln x for x > 0: x = 2^n f with f in [0.75, 1.5), ln f = 2 atanh((f-1)/(f+1)).
+fn ln(x: &Big) -> Big {
+    let mut n = x.top();
+    let mut f = x.clone().shl(-n);
+    if f.cmp(&Big::int(3).shl(-1)) != Ordering::Less {
+        f = f.shl(-1);
+        n += 1;
+    }
+    let one = Big::int(1);
+    let z = f.sub(&one).div(&f.add(&one));
+    Big::int(n).mul(&ln2()).add(&odd_series(&z, false).shl(1))
+}
+
+/// e^x for |x| below 2^16: x = k ln 2 + r, e^r by Taylor on r/2^12, squared back.
+fn exp(x: &Big) -> Big {
+    const HALVINGS: i64 = 12;
+    let ln2 = ln2();
+    let k = x.div(&ln2).round_i64();
+    let r = x.sub(&Big::int(k).mul(&ln2)).shl(-HALVINGS);
+    let mut sum = Big::int(1);
+    let mut term = Big::int(1);
+    for i in 1.. {
+        term = term.mul(&r).div(&Big::int(i));
+        if term.is_zero() || term.top() < -(WORK_BITS as i64) - 8 {
+            break;
+        }
+        sum = sum.add(&term);
+    }
+    for _ in 0..HALVINGS {
+        sum = sum.mul(&sum);
+    }
+    sum.shl(k)
+}
+
+/// atan t for t ≥ 0: past 1 as π/2 - atan(1/t); three angle halvings
+/// `t / (1 + √(1+t²))` bring t under tan(π/32) for the series.
+fn atan(t: &Big) -> Big {
+    let one = Big::int(1);
+    if t.cmp(&one) == Ordering::Greater {
+        return pi().shl(-1).sub(&atan(&one.div(t)));
+    }
+    let mut t = t.clone();
+    for _ in 0..3 {
+        t = t.div(&one.add(&one.add(&t.mul(&t)).sqrt()));
+    }
+    odd_series(&t, true).shl(3)
+}
+
+/// sin(π f) for f in [0, 1].
+fn sin_pi(f: &Big) -> Big {
+    let half = Big::int(1).shl(-1);
+    let f = if f.cmp(&half) == Ordering::Greater { Big::int(1).sub(f) } else { f.clone() };
+    let theta = pi().mul(&f);
+    let theta2 = theta.mul(&theta);
+    let mut sum = theta.clone();
+    let mut term = theta;
+    for i in 1i64.. {
+        term = term.mul(&theta2).div(&Big::int((2 * i) * (2 * i + 1))).neg();
+        if term.is_zero() || term.top() < sum.top() - WORK_BITS as i64 - 4 {
+            break;
+        }
+        sum = sum.add(&term);
+    }
+    sum
+}
+
+/// Γ(x) for x > 0. x = r + n with r in [1, 2) (or x < 1, Γ(x) = Γ(x+1)/x);
+/// Γ(r) is the lower incomplete γ(r, N) = N^r e^-N Σ N^k / (r(r+1)…(r+k)),
+/// whose missing tail Γ(r, N) < N e^-N is under 2^-269 at N = 192.
+fn gamma(x: &Big) -> Big {
+    const N: i64 = 192;
+    let one = Big::int(1);
+    let (whole, fraction) = x.split();
+    let (r, scale) = if whole.is_zero() {
+        (x.add(&one), one.div(x))
+    } else {
+        let r = one.add(&fraction);
+        let mut product = one.clone();
+        let mut factor = r.clone();
+        let steps = whole.to_u64().unwrap_or(u64::MAX) - 1;
+        for _ in 0..steps {
+            product = product.mul(&factor);
+            factor = factor.add(&one);
+        }
+        (r, product)
+    };
+    let n = Big::int(N);
+    let mut term = one.div(&r);
+    let mut sum = term.clone();
+    let mut denominator = r.clone();
+    loop {
+        denominator = denominator.add(&one);
+        term = term.mul(&n).div(&denominator);
+        if term.top() < sum.top() - WORK_BITS as i64 - 8 {
+            break;
+        }
+        sum = sum.add(&term);
+    }
+    let lower = exp(&r.mul(&ln(&n)).sub(&n)).mul(&sum);
+    lower.mul(&scale)
+}
+
+fn nan() -> LongDouble {
+    LongDouble { negative: false, kind: Kind::NaN }
+}
+
+fn inf(negative: bool) -> LongDouble {
+    LongDouble { negative, kind: Kind::Inf }
+}
+
+fn zero(negative: bool) -> LongDouble {
+    LongDouble { negative, kind: Kind::Zero }
+}
+
+fn is_nan(x: LongDouble) -> bool {
+    x.kind == Kind::NaN
+}
+
+/// `Some(odd)` for an integer, `None` for anything else.
+fn integer_parity(x: LongDouble) -> Option<bool> {
+    match x.kind {
+        Kind::Zero => Some(false),
+        Kind::Finite { mant, exp } if exp >= 0 => Some(exp == 0 && mant & 1 == 1),
+        Kind::Finite { mant, exp } => {
+            let shift = (-exp) as u32;
+            if shift >= 128 || mant & ((1u128 << shift) - 1) != 0 {
+                None
+            } else {
+                Some((mant >> shift) & 1 == 1)
+            }
+        }
+        _ => None,
+    }
+}
+
+impl LongDouble {
+    pub fn is_nan(self) -> bool {
+        is_nan(self)
+    }
+
+    pub fn is_sign_negative(self) -> bool {
+        self.negative
+    }
+
+    pub fn is_finite(self) -> bool {
+        matches!(self.kind, Kind::Zero | Kind::Finite { .. })
+    }
+
+    /// Only [`nexttowardl`] makes a subnormal; every other result flushes.
+    pub fn is_subnormal_p(self, prec: u32) -> bool {
+        matches!(self.kind, Kind::Finite { mant, exp }
+            if exp + i64::from(128 - mant.leading_zeros()) - 1 < min_exp(prec))
+    }
+
+    pub fn is_normal_p(self, prec: u32) -> bool {
+        matches!(self.kind, Kind::Finite { .. }) && !self.is_subnormal_p(prec)
+    }
+}
+
+pub fn atan2l(y: LongDouble, x: LongDouble, prec: u32) -> LongDouble {
+    use Kind::*;
+    if is_nan(y) || is_nan(x) {
+        return nan();
+    }
+    let signed = |v: Big| (if y.negative { v.neg() } else { v }).to_ld(prec);
+    match (y.kind, x.kind) {
+        (Zero, _) if x.negative => signed(pi()),
+        (Zero, _) => zero(y.negative),
+        (Inf, Inf) if x.negative => signed(pi().mul(&Big::int(3)).shl(-2)),
+        (Inf, Inf) => signed(pi().shl(-2)),
+        (Inf, _) | (_, Zero) => signed(pi().shl(-1)),
+        (_, Inf) if x.negative => signed(pi()),
+        (_, Inf) => zero(y.negative),
+        _ => {
+            let angle = atan(&Big::of(y).abs().div(&Big::of(x).abs()));
+            signed(if x.negative { pi().sub(&angle) } else { angle })
+        }
+    }
+}
+
+pub fn powl(x: LongDouble, y: LongDouble, prec: u32) -> LongDouble {
+    use Kind::*;
+    let one = LongDouble::from_i128_p(1, prec);
+    if y.is_zero() || x == one {
+        return one;
+    }
+    if is_nan(x) || is_nan(y) {
+        return nan();
+    }
+    let parity = integer_parity(y);
+    let odd = parity == Some(true);
+    match x.kind {
+        Zero if y.negative => return inf(x.negative && odd),
+        Zero => return zero(x.negative && odd),
+        Inf if y.negative => return zero(x.negative && odd),
+        Inf => return inf(x.negative && odd),
+        _ => {}
+    }
+    if y.kind == Inf {
+        let magnitude = Big::of(x).abs().cmp(&Big::int(1));
+        return match magnitude {
+            Ordering::Equal => one,
+            Ordering::Less if y.negative => inf(false),
+            Ordering::Less => zero(false),
+            _ if y.negative => zero(false),
+            _ => inf(false),
+        };
+    }
+    if x.negative && parity.is_none() {
+        return nan();
+    }
+    let negative = x.negative && odd;
+    let (Finite { mant, exp }, Some(_)) = (x.kind, parity) else {
+        return general_pow(x, y, negative, prec);
+    };
+    // An integral power is exact before its one rounding.
+    let n = y.abs_i64().filter(|n| *n <= 1024);
+    let Some(n) = n else {
+        return general_pow(x, y, negative, prec);
+    };
+    let power = BigUint::from(mant).pow(n as u32);
+    if y.negative {
+        exact_quotient(prec, negative, BigUint::one(), &power, -exp * n)
+    } else {
+        round_to(prec, negative, power, exp * n)
+    }
+}
+
+impl LongDouble {
+    /// `|self|` for an integer that fits i64.
+    fn abs_i64(self) -> Option<i64> {
+        let Kind::Finite { mant, exp } = self.kind else { return None };
+        if exp >= 0 {
+            mant.checked_shl(exp as u32).filter(|_| exp < 64).and_then(|m| i64::try_from(m).ok())
+        } else {
+            i64::try_from(mant >> (-exp).min(127) as u32).ok()
+        }
+    }
+}
+
+/// x^y = e^(y ln|x|) for finite nonzero operands.
+fn general_pow(x: LongDouble, y: LongDouble, negative: bool, prec: u32) -> LongDouble {
+    let t = Big::of(y).mul(&ln(&Big::of(x).abs()));
+    if t.is_zero() {
+        return LongDouble::from_i128_p(if negative { -1 } else { 1 }, prec);
+    }
+    // Past 2^16 the result is far outside every long double's range.
+    if t.top() >= 16 {
+        return if t.negative { zero(negative) } else { inf(negative) };
+    }
+    let r = exp(&t);
+    (if negative { r.neg() } else { r }).to_ld(prec)
+}
+
+pub fn exp2l(x: LongDouble, prec: u32) -> LongDouble {
+    powl(LongDouble::from_i128_p(2, prec), x, prec)
+}
+
+/// Γ(x). Its largest finite argument is about 1755.5 in x87 and binary128.
+pub fn tgammal(x: LongDouble, prec: u32) -> LongDouble {
+    use Kind::*;
+    const OVERFLOW: i64 = 1800;
+    match x.kind {
+        NaN => return nan(),
+        Zero => return inf(x.negative),
+        Inf if x.negative => return nan(),
+        Inf => return x,
+        Finite { .. } => {}
+    }
+    let past_range = Big::of(x).abs().cmp(&Big::int(OVERFLOW)) == Ordering::Greater;
+    if integer_parity(x).is_some() {
+        if x.negative {
+            return nan();
+        }
+        if past_range {
+            return inf(false);
+        }
+        // (n-1)!, exact before its one rounding.
+        let n = x.abs_i64().expect("an integer under 1800");
+        let factorial = (1..n).fold(BigUint::one(), |f, k| f * BigUint::from(k as u64));
+        return round_to(prec, false, factorial, 0);
+    }
+    if !x.negative {
+        return if past_range { inf(false) } else { gamma(&Big::of(x)).to_ld(prec) };
+    }
+    // Reflection: Γ(x) = π / (sin(πx) Γ(1-x)); with |x| = k + f,
+    // sin(πx) = -(-1)^k sin(πf).
+    let (whole, fraction) = Big::of(x).abs().split();
+    let mut sine = sin_pi(&fraction);
+    if !whole.bit(0) {
+        sine = sine.neg();
+    }
+    if past_range {
+        return zero(sine.negative);
+    }
+    let reflected = Big::int(1).sub(&Big::of(x));
+    pi().div(&sine.mul(&gamma(&reflected))).to_ld(prec)
+}
+
+/// `x × y + z` with one rounding.
+pub fn fmal(x: LongDouble, y: LongDouble, z: LongDouble, prec: u32) -> LongDouble {
+    use Kind::*;
+    if is_nan(x) || is_nan(y) || is_nan(z) {
+        return nan();
+    }
+    let product_negative = x.negative != y.negative;
+    if x.kind == Inf || y.kind == Inf {
+        if x.kind == Zero || y.kind == Zero || (z.kind == Inf && z.negative != product_negative) {
+            return nan();
+        }
+        return inf(product_negative);
+    }
+    if z.kind == Inf {
+        return z;
+    }
+    let (Finite { mant: ma, exp: ea }, Finite { mant: mb, exp: eb }) = (x.kind, y.kind) else {
+        // A zero product.
+        return if z.kind == Zero { zero(product_negative && z.negative) } else { z };
+    };
+    let product = BigUint::from(ma) * BigUint::from(mb);
+    match z.kind {
+        Finite { mant, exp } => exact_sum(
+            prec,
+            (product_negative, product, ea + eb),
+            (z.negative, BigUint::from(mant), exp),
+        ),
+        _ => round_to(prec, product_negative, product, ea + eb),
+    }
+}
+
+/// The positive difference: `x - y` when x > y, else `+0` (NaN for a NaN).
+pub fn fdiml(x: LongDouble, y: LongDouble, prec: u32) -> LongDouble {
+    match x.partial_cmp(&y) {
+        Some(Ordering::Less | Ordering::Equal) => zero(false),
+        _ => x.add_p(y.neg(), prec),
+    }
+}
+
+/// The smaller operand; a NaN loses to a number; a tie answers `x`.
+pub fn fminl(x: LongDouble, y: LongDouble) -> LongDouble {
+    match x.partial_cmp(&y) {
+        Some(Ordering::Greater) => y,
+        Some(_) => x,
+        None if is_nan(x) => y,
+        None => x,
+    }
+}
+
+/// The larger operand; a NaN loses to a number. A tie (`-0` and `0`) answers
+/// `y` on x87, whose `fcmovb` keeps y unless y < x, and `x` in glibc's
+/// generic `isgreaterequal (x, y) ? x : …`.
+pub fn fmaxl(x: LongDouble, y: LongDouble, prec: u32) -> LongDouble {
+    match x.partial_cmp(&y) {
+        Some(Ordering::Less) => y,
+        Some(Ordering::Equal) if prec == 64 => y,
+        Some(_) => x,
+        None if is_nan(x) => y,
+        None => x,
+    }
+}
+
+/// How [`to_integral`] treats a fraction.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Rounding {
+    /// `truncl`: toward zero.
+    Trunc,
+    /// `roundl`: half away from zero.
+    Round,
+    /// `nearbyintl` in the default mode: half to even.
+    NearestEven,
+}
+
+/// `truncl`, `roundl` and `nearbyintl`. A zero result keeps x's sign.
+pub fn to_integral(x: LongDouble, mode: Rounding, prec: u32) -> LongDouble {
+    let Kind::Finite { mant, exp } = x.kind else { return x };
+    if exp >= 0 {
+        return x;
+    }
+    // A significand of at most 113 bits shifted past 114 is under one half.
+    let shift = (-exp) as u32;
+    if shift > 114 {
+        return zero(x.negative);
+    }
+    let mut whole = mant >> shift;
+    let fraction = mant & ((1u128 << shift) - 1);
+    let half = 1u128 << (shift - 1);
+    let up = match mode {
+        Rounding::Trunc => false,
+        Rounding::Round => fraction >= half,
+        Rounding::NearestEven => fraction > half || (fraction == half && whole & 1 == 1),
+    };
+    if up {
+        whole += 1;
+    }
+    if whole == 0 {
+        return zero(x.negative);
+    }
+    round_to(prec, x.negative, BigUint::from(whole), 0)
+}
+
+/// The next long double after x toward y; y when they are equal.
+pub fn nexttowardl(x: LongDouble, y: LongDouble, prec: u32) -> LongDouble {
+    use Kind::*;
+    let Some(order) = x.partial_cmp(&y) else { return nan() };
+    if order == Ordering::Equal {
+        return y;
+    }
+    let top = 1u128 << (prec - 1);
+    let (negative, mant, exp) = match x.kind {
+        // The smallest subnormal, which only this function produces.
+        Zero => return LongDouble { negative: y.negative, kind: Finite { mant: top, exp: min_exp(prec) - 2 * i64::from(prec - 1) } },
+        Inf => (x.negative, (top << 1) - 1, max_exp(prec) - i64::from(prec)),
+        Finite { mant, exp } => {
+            let away_from_zero = (order == Ordering::Less) != x.negative;
+            if away_from_zero {
+                (x.negative, mant + 1, exp)
+            } else if mant == top {
+                (x.negative, (top << 1) - 1, exp - 1)
+            } else {
+                (x.negative, mant - 1, exp)
+            }
+        }
+        NaN => return nan(),
+    };
+    round_to(prec, negative, BigUint::from(mant), exp)
 }
 
 // ─── The per-evaluation arena behind `mnumber` ─────────────────────────────
@@ -710,6 +1344,60 @@ mod tests {
         begin_evaluation();
         assert_eq!(load(&third), LongDouble::from_f64(third.d));
         assert_eq!(load(&mnumber { l: 0, d: 2.5, type_: MN_FLOAT }), LongDouble::from_f64(2.5));
+    }
+
+    /// The x86_64 Linux answers of ksh93u+m 1.0.10 (`powl`, `atan2l`, … on
+    /// x87) the emulation matrix records, printed with LDBL_DIG digits.
+    #[test]
+    fn math_functions_match_x87_ksh93() {
+        let p = |t: &str| parse(t, X87);
+        let g = |v: LongDouble| v.format_g(18);
+        assert_eq!(g(powl(p("2"), p("0.5"), X87)), "1.41421356237309505");
+        assert_eq!(g(powl(p("2"), p("10"), X87)), "1024");
+        assert_eq!(g(powl(p("2"), p("-1"), X87)), "0.5");
+        assert_eq!(g(powl(p("10"), p("20"), X87)), "1e+20");
+        assert_eq!(g(powl(p("0"), p("0"), X87)), "1");
+        assert_eq!(g(atan2l(p("1"), p("1"), X87)), "0.78539816339744831");
+        assert_eq!(g(atan2l(p("-0.0"), p("-1"), X87)), "-3.14159265358979324");
+        assert_eq!(g(atan2l(p("1"), p("0"), X87)), "1.57079632679489662");
+        assert_eq!(g(fminl(p("-0.0"), p("0.0"))), "-0");
+        assert_eq!(g(fdiml(p("3"), p("5"), X87)), "0");
+        assert_eq!(g(fmal(p("0.1"), p("10"), p("-1"), X87)), "1.35525271560688054e-20");
+        assert_eq!(g(exp2l(p("0.5"), X87)), "1.41421356237309505");
+        assert_eq!(g(exp2l(p("3"), X87)), "8");
+        assert_eq!(g(tgammal(p("5"), X87)), "24");
+        assert_eq!(g(tgammal(p("0.5"), X87)), "1.77245385090551603");
+        assert_eq!(g(tgammal(p("172"), X87)), "1.24101807021766782e+309");
+        assert_eq!(g(nexttowardl(p("1"), p("2"), X87)), "1");
+    }
+
+    /// Values that only a correct long double computation gets: binary128
+    /// digits of π/4, Γ and a fractional power, and the C99 special cases.
+    #[test]
+    fn math_functions_are_correct_past_double() {
+        let q = |t: &str| parse(t, QUAD);
+        assert_eq!(atan2l(q("1"), q("1"), QUAD).format_g(33), "0.785398163397448309615660845819876");
+        // Γ(1/2) = √π and Γ(5/2) = 3√π/4, both by bc -l.
+        assert_eq!(tgammal(q("0.5"), QUAD).format_g(30), "1.77245385090551602729816748334");
+        assert_eq!(tgammal(q("2.5"), QUAD).format_g(30), "1.32934038817913702047362561251");
+        // Γ(-1/2) = -2√π = -3.54490770181103205459633496668229036…
+        assert_eq!(tgammal(q("-0.5"), QUAD).format_g(30), "-3.54490770181103205459633496668");
+        assert_eq!(powl(q("2.5"), q("1.5"), QUAD).format_g(30), "3.95284707521047416499861693054");
+        let x = |t: &str| parse(t, X87);
+        assert!(powl(x("-8"), x("0.5"), X87).is_nan());
+        assert_eq!(powl(x("-2"), x("3"), X87).format_g(18), "-8");
+        assert_eq!(powl(x("-0.0"), x("-3"), X87).format_g(18), "-inf");
+        assert_eq!(powl(x("0.5"), LongDouble { negative: true, kind: Kind::Inf }, X87).format_g(18), "inf");
+        assert!(tgammal(x("-2"), X87).is_nan());
+        assert_eq!(tgammal(x("-0.0"), X87).format_g(18), "-inf");
+        assert_eq!(tgammal(x("1800.5"), X87).format_g(18), "inf");
+        assert_eq!(fmaxl(x("-0.0"), x("0.0"), X87).format_g(18), "0");
+        assert_eq!(fmaxl(x("-0.0"), x("0.0"), QUAD).format_g(18), "-0");
+        assert_eq!(to_integral(x("-2.5"), Rounding::Round, X87).format_g(18), "-3");
+        assert_eq!(to_integral(x("2.5"), Rounding::NearestEven, X87).format_g(18), "2");
+        assert_eq!(to_integral(x("-0.3"), Rounding::Trunc, X87).format_g(18), "-0");
+        assert_eq!(to_integral(x("12345678901234567.5"), Rounding::Round, X87).format_g(18), "12345678901234568");
+        assert_eq!(nexttowardl(x("1"), x("0"), X87), round_to(X87, false, BigUint::from(u64::MAX), -64));
     }
 
     #[test]

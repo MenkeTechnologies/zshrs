@@ -301,9 +301,16 @@ exact `BigUint` arithmetic rounded once, half to even. The value rides in the
 `type_` is `MN_FLOAT`, so it carries the arena handle while `d` keeps the f64
 rounding for every other reader — and `arithsubst` prints the result as
 macro.c:2188-2193 does: the integer when the host cast round-trips, `%Lg` for
-zero, else `%.*Lg` with `LDBL_DIG`. `pow` and the math functions stay in
-double, as ksh93's own calls do (`2**0.5` prints the double's digits on every
-host). Subnormals flush to zero on parse and on every result, as ksh93's do
+zero, else `%.*Lg` with `LDBL_DIG`. The `**` operator stays in double, as
+ksh93 calls C's `pow()` for it (`2**0.5` prints the double's digits on every
+host). The built-in functions ksh93 adds to zsh/mathfunc (`pow`, `atan2`,
+`fma`, `exp2`, `tgamma`, `nexttoward`, …) are the `l` variants ksh93 links
+where long double is wider (features/math.sh), computed the same way: exact
+where the result is exact, else in a 256-bit working float rounded once
+(`pow(2,0.5)` is `1.41421356237309505` and `tgamma(172)` the finite
+`1.24101807021766782e+309` on x86_64). On x87, `signbit` answers 512 and
+`fmax` of `-0` and `0` takes the second operand, as glibc's `fmaxl` does.
+Subnormals flush to zero on parse and on every result, as ksh93's do
 (`$((1e-310))` and `$((2.2e-308 / 4))` print `0`, `$((-1e-320))` prints `-0`).
 Variables still store a double: `float x=$((1.0/3)); print $x` prints through
 `typeset -F`'s precision, where ksh keeps the long double.

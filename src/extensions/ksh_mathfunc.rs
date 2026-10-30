@@ -8,11 +8,19 @@
 //! …) and that module's boot adds this table for the rest: `atan2`, `pow`,
 //! `fma`, `fdim`/`fmax`/`fmin`, `round`/`trunc`/`nearbyint`, `exp2`,
 //! `tgamma`, `nexttoward`, `signbit` and the classification and comparison
-//! macros. Each is the host libm's, as ksh93's are, and each answers a
+//! macros. Each is the host libm's, as ksh93's are: the double functions
+//! where long double is double, else the long double ones ksh93 links
+//! (`powl`, `atan2l`, …), computed in `ksh_long_double`. Each answers a
 //! float: `print $(( isless(1,2) / 2 ))` is `0.5` in ksh93.
 
+use crate::dash_mode::LDBL_MANT_DIG;
+use crate::ksh_long_double::{
+    atan2l, exp2l, fdiml, fmal, fmaxl, fminl, is_negative_zero, load, nexttowardl, powl, store_float, tgammal,
+    to_integral, LongDouble, Rounding,
+};
 use crate::ported::math::{mnumber, MN_FLOAT, MN_INTEGER};
 use crate::ported::zsh_h::mathfunc;
+use std::cmp::Ordering;
 
 #[cfg(unix)]
 extern "C" {
@@ -98,6 +106,66 @@ fn arg(n: &mnumber) -> f64 {
 /// The `NumMathFunc` behind every entry of [`TABLE`]. `callmathfunc` has
 /// already checked the argument count against the entry's bounds.
 fn ksh_math_func(_name: &str, _argc: i32, argv: &[mnumber], id: i32) -> mnumber {
+    if LDBL_MANT_DIG == 53 {
+        return double_math_func(argv, id);
+    }
+    let args: Vec<LongDouble> = argv.iter().map(long_arg).collect();
+    store_float(long_double_math_func(&args, id, LDBL_MANT_DIG))
+}
+
+/// An operand as a long double, keeping an integer-typed `-0`'s sign.
+fn long_arg(n: &mnumber) -> LongDouble {
+    if is_negative_zero(n) {
+        LongDouble::from_f64(-0.0)
+    } else {
+        load(n)
+    }
+}
+
+/// The table on a host whose long double is wider than double: ksh93 links
+/// the `l` variants there (`powl`, `atan2l`, …; features/math.sh).
+fn long_double_math_func(args: &[LongDouble], id: i32, prec: u32) -> LongDouble {
+    let zero = LongDouble::ZERO;
+    let x = args.first().copied().unwrap_or(zero);
+    let y = args.get(1).copied().unwrap_or(zero);
+    let z = args.get(2).copied().unwrap_or(zero);
+    let truth = |b: bool| LongDouble::from_i64(i64::from(b));
+    let order = x.partial_cmp(&y);
+    match id {
+        KF_ATAN2 => atan2l(x, y, prec),
+        KF_POW => powl(x, y, prec),
+        KF_FMA => fmal(x, y, z, prec),
+        KF_FDIM => fdiml(x, y, prec),
+        KF_FMAX => fmaxl(x, y, prec),
+        KF_FMIN => fminl(x, y),
+        KF_ROUND => to_integral(x, Rounding::Round, prec),
+        KF_TRUNC => to_integral(x, Rounding::Trunc, prec),
+        KF_NEARBYINT => to_integral(x, Rounding::NearestEven, prec),
+        KF_EXP2 => exp2l(x, prec),
+        KF_TGAMMA => tgammal(x, prec),
+        KF_NEXTTOWARD => nexttowardl(x, y, prec),
+        // x87's `signbit` answers 0x200, the status-word bit `fxam` sets
+        // from the sign: ksh93u+m 1.0.10 prints 512 for `signbit(-1.0)` on
+        // x86_64 Linux.
+        KF_SIGNBIT if x.is_sign_negative() && prec == 64 => LongDouble::from_i64(512),
+        KF_SIGNBIT => truth(x.is_sign_negative()),
+        KF_ISFINITE => truth(x.is_finite()),
+        KF_ISNORMAL => truth(x.is_normal_p(prec)),
+        KF_ISSUBNORMAL => truth(x.is_subnormal_p(prec)),
+        KF_ISZERO => truth(x.is_zero()),
+        KF_ISUNORDERED => truth(order.is_none()),
+        KF_ISGREATER => truth(order == Some(Ordering::Greater)),
+        KF_ISGREATEREQUAL => truth(matches!(order, Some(Ordering::Greater | Ordering::Equal))),
+        KF_ISLESS => truth(order == Some(Ordering::Less)),
+        KF_ISLESSEQUAL => truth(matches!(order, Some(Ordering::Less | Ordering::Equal))),
+        KF_ISLESSGREATER => truth(matches!(order, Some(Ordering::Less | Ordering::Greater))),
+        _ => zero,
+    }
+}
+
+/// The table where long double is double (Apple arm64): the host libm's
+/// double functions.
+fn double_math_func(argv: &[mnumber], id: i32) -> mnumber {
     let x = argv.first().map(arg).unwrap_or(0.0);
     let y = argv.get(1).map(arg).unwrap_or(0.0);
     let z = argv.get(2).map(arg).unwrap_or(0.0);
@@ -194,7 +262,9 @@ mod tests {
 
     #[test]
     fn predicates_answer_one_or_zero_and_see_the_sign_of_zero() {
-        assert_eq!(call(KF_SIGNBIT, &[f(-0.0)]), 1.0);
+        // x87's signbit is 0x200 (ksh93u+m prints 512 on x86_64 Linux).
+        let negative = if LDBL_MANT_DIG == 64 { 512.0 } else { 1.0 };
+        assert_eq!(call(KF_SIGNBIT, &[f(-0.0)]), negative);
         assert_eq!(call(KF_SIGNBIT, &[i(0)]), 0.0);
         assert_eq!(call(KF_ISZERO, &[f(-0.0)]), 1.0);
         assert_eq!(call(KF_ISUNORDERED, &[f(f64::NAN), i(1)]), 1.0);
