@@ -1,0 +1,72 @@
+{
+ "schema": "compsys-fixture/2",
+ "id": "approximate_star_stale_exactend",
+ "title": "`_approximate` on `f*b`: zsh's 2-error pass rejects `x=yz`, zshrs accepts it — zsh's patmatch reuses a stale `exactend` after an error before a wildcard",
+ "harness": "compsys_spec_fuzz",
+ "run": {
+  "buffer": "fzax f*b",
+  "keys": [
+   "tab"
+  ],
+  "flags": [],
+  "spec": {
+   "cmd": "fzax",
+   "kind": "compset",
+   "seed": 5100777,
+   "case": -1,
+   "widget": "default",
+   "setup": [
+    "zstyle ':completion:*' completer _complete _approximate"
+   ],
+   "completer": "#compdef fzax\n\ncompadd -- fob x=yz\nreturn 1\n"
+  }
+ },
+ "expect": "diverges",
+ "group": "completer-machinery",
+ "fingerprint": null,
+ "observed": {
+  "verdict": "FAIL",
+  "category": "grid-diff",
+  "detail": "1 row(s) differ",
+  "rows": [
+   {
+    "row": 0,
+    "zsh": "@SFZ@ fzax fob",
+    "zshrs": "@SFZ@ fzax fob"
+   },
+   {
+    "row": 1,
+    "zsh": "",
+    "zshrs": "fob   x=yz"
+   }
+  ],
+  "notes": "The completer returns 1, so _approximate (sh:while loop) runs its 2-error pass with PREFIX=(#a2)f*b. Shell-level repro, no completion: `setopt extendedglob; [[ xc = (#a2)a*c ]]` is false in zsh 5.9.2, /bin/zsh and the dev tree 5.9.999, true in zshrs; so are `[[ xz = (#a2)f*b ]]` and `[[ x=yz = (#a2)f*b* ]]`, while `[[ xcc = (#a2)a*c ]]` and `[[ xyz = (#a2)f*z ]]` match in both. Cause, from Src/pattern.c: the approximation block saves `exactpos` (savexact, c:3494) but not the file-static `exactend`; the recursive `patmatch(scan)` at c:3511 can reach a LATER P_EXACTLY node that fails and sets `exactend` to that node's literal end (c:2781), and the substitution retry at c:3520-3557 then steps `exactpos` against the stale end, comparing program bytes with the input. zshrs's port (approx_match_exactly, src/ported/pattern.rs) keeps the literal offset local, so it reports the edit-distance answer. Reproducing the zsh result means modelling a pointer into another node's literal; left for a decision rather than ported."
+ },
+ "origin": [
+  "lane-5 round-2 completer grid g3 cells g3_197/198 (apo) and g3_221/222 (cf), 2026-10-30"
+ ],
+ "history": [],
+ "confirmed": {
+  "date": "2026-10-30",
+  "commit": "02c0f65788",
+  "harness_sha256_16": {
+   "scripts/compsys_spec_fuzz.py": "7c0a079a8ae27ee7",
+   "scripts/compsys_regressions.py": "619b844636a94cb7"
+  },
+  "zshrs_binary": {
+   "path": "target/debug/zshrs",
+   "size": 134121432,
+   "mtime": "2026-10-30 09:25:19",
+   "version": "zshrs 0.13.56",
+   "sha256_16": "ec5f5a4640675943",
+   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)"
+  },
+  "zsh_binary": {
+   "path": "/opt/homebrew/bin/zsh",
+   "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)"
+  },
+  "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "zshrs": "target/debug/zshrs zshrs 0.13.56 (134121432 bytes, 2026-10-30 09:25:19)",
+  "note": "STILL-DIVERGES under scripts/compsys_regressions.py --only; the same cell also fails against the dev tree 5.9.999.3-test (~/.cache/zshrs/zsh-oracle-new)"
+ }
+}

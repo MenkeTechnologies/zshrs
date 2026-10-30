@@ -20,7 +20,7 @@ the two `NON_FIXTURE_FILES` in `scripts/compsys_regressions.py`):
 | | |
 | --- | --- |
 | fixtures pinned | 46 |
-| `diverges` | 13 |
+| `diverges` | 14 |
 | `agrees` — retired as guards | 32 |
 | `reference-crash` | 1 |
 
