@@ -3224,3 +3224,26 @@ fn epochtime_element_in_arithmetic_uses_the_gsu_getfn() {
     }
     assert_eq!(stdout, "1 1\n");
 }
+
+
+// ════════════════════════════════════════════════════════════════════
+// The `unexpand` drop-in follows GNU `unexpand()` (src/unexpand.c): with
+// `-t`/`-a` a single blank that only happens to reach a tab stop stays a
+// blank, so `one two three` is left alone at any tab width.
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn unexpand_keeps_single_blanks_before_a_tab_stop() {
+    let Some(bin) = zshrs_bin() else { return };
+    let run = |flags: &str| {
+        let out = Command::new(&bin)
+            .args(["-f", "-c", &format!("PATH=/nonexistent; print -rn -- $'one two three\\n    indented line\\na  b   c\\tx       y\\n\\t  z\\n' | unexpand {flags}")])
+            .env("ZSHRS_COREUTILS_SHADOWS", "1")
+            .output()
+            .expect("spawn zshrs");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    assert_eq!(run("-t4"), "one two three\n\tindented line\na  b   c\tx\t\ty\n\t  z\n");
+    assert_eq!(run("-a"), "one two three\n    indented line\na  b   c\tx\ty\n\t  z\n");
+    assert_eq!(run(""), "one two three\n    indented line\na  b   c\tx       y\n\t  z\n");
+}

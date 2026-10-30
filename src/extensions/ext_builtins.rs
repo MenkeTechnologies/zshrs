@@ -8466,47 +8466,76 @@ impl ShellExecutor {
                     }
                 }
             };
+            // GNU coreutils `unexpand()` (src/unexpand.c), for one uniform tab
+            // size: a run of blanks becomes tabs only where it reaches a tab
+            // stop, and a single blank just before a stop stays a blank unless
+            // more blanks follow it. Without `-a` (or `-t`) conversion ends at
+            // the first non-blank.
             for line in reader.lines().map_while(Result::ok) {
                 let mut out = String::with_capacity(line.len());
-                let mut col = 0usize;
-                let chars: Vec<char> = line.chars().collect();
-                let mut i = 0;
-                let mut leading = true;
-                while i < chars.len() {
-                    if chars[i] == ' ' && (all_runs || leading) {
-                        // Count run of spaces.
-                        let start_col = col;
-                        let mut j = i;
-                        while j < chars.len() && chars[j] == ' ' {
-                            j += 1;
-                            col += 1;
-                        }
-                        // Compress as many tabs as possible.
-                        let mut cur = start_col;
-                        let next_stop = |c: usize| (c / tabstop + 1) * tabstop;
-                        while cur + (next_stop(cur) - cur) <= col {
-                            let s = next_stop(cur);
-                            out.push('\t');
-                            cur = s;
-                        }
-                        // Pad remainder with spaces.
-                        for _ in cur..col {
-                            out.push(' ');
-                        }
-                        i = j;
-                    } else {
-                        out.push(chars[i]);
-                        if chars[i] != ' ' && chars[i] != '\t' {
-                            leading = false;
-                        }
-                        if chars[i] == '\t' {
-                            col = (col / tabstop + 1) * tabstop;
-                        } else {
-                            col += 1;
-                        }
-                        i += 1;
+                let mut convert = true;
+                let mut column = 0usize;
+                let mut one_blank_before_tab_stop = false;
+                // Leading blanks count as if the line were preceded by a blank.
+                let mut prev_blank = true;
+                let mut pending: Vec<char> = Vec::new();
+                let flush = |out: &mut String, pending: &mut Vec<char>, one_blank: &mut bool| {
+                    if pending.len() > 1 && *one_blank {
+                        pending[0] = '\t';
                     }
+                    out.extend(pending.drain(..));
+                    *one_blank = false;
+                };
+                for ch in line.chars() {
+                    if convert {
+                        let blank = ch == ' ' || ch == '\t';
+                        if blank {
+                            let next_tab_column = column - column % tabstop + tabstop;
+                            if ch == '\t' {
+                                column = next_tab_column;
+                                if let Some(first) = pending.first_mut() {
+                                    *first = '\t';
+                                }
+                            } else {
+                                column += 1;
+                                if !(prev_blank && column >= next_tab_column) {
+                                    // Not yet known whether these become a tab.
+                                    if column == next_tab_column {
+                                        one_blank_before_tab_stop = true;
+                                    }
+                                    pending.push(ch);
+                                    prev_blank = true;
+                                    continue;
+                                }
+                                // The pending blanks reach a stop: one tab.
+                                out.push('\t');
+                                pending.truncate(1);
+                                if let Some(first) = pending.first_mut() {
+                                    *first = '\t';
+                                }
+                            }
+                            // Drop the pending blanks, unless it was a single
+                            // blank just before the previous tab stop.
+                            pending.truncate(usize::from(one_blank_before_tab_stop));
+                            if ch == ' ' {
+                                prev_blank = true;
+                                convert &= all_runs || blank;
+                                flush(&mut out, &mut pending, &mut one_blank_before_tab_stop);
+                                continue;
+                            }
+                        } else if ch == '\u{8}' {
+                            column = column.saturating_sub(1);
+                        } else {
+                            column += 1;
+                        }
+                        flush(&mut out, &mut pending, &mut one_blank_before_tab_stop);
+                        prev_blank = blank;
+                        convert &= all_runs || blank;
+                    }
+                    out.push(ch);
                 }
+                // The newline is a non-blank: it releases any pending blanks.
+                flush(&mut out, &mut pending, &mut one_blank_before_tab_stop);
                 println!("{}", out);
             }
         }
