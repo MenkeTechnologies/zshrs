@@ -1357,6 +1357,14 @@ pub fn cd_get(params: &[String]) -> i32 {
             let cs = std::ffi::CStr::from_ptr(cs_ptr).to_string_lossy();
             !(cs.eq_ignore_ascii_case("UTF-8") || cs.eq_ignore_ascii_case("utf8"))
         }
+    } && {
+        // A non-UTF-8 codeset is single-byte only when `MB_CUR_MAX == 1`.
+        // `zh_CN.GB2312` (2) and `ja_JP.eucJP` (3) are multibyte, and
+        // `MB_METACHARLEN` there is a whole two-byte character: zsh cuts
+        // `aa:你好世界…` at 20 columns as `aa  -- 你好世界`, the byte walk
+        // charged the lone lead byte `\M-D`'s width and stopped after `你`.
+        let _ = *crate::ported::utils::MB_LOCALE_READY;
+        (unsafe { crate::ported::utils::mb_cur_max_raw() } as usize) == 1
     };
 
     // c:695-715 (CRT_DESC) and c:795-815 (CRT_EXPL) — C writes the same
