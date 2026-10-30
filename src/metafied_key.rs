@@ -52,6 +52,26 @@ pub fn metafied_key(s: &str) -> Cow<'_, [u8]> {
     Cow::Owned(out)
 }
 
+/// [`metafied_key`] carried in the `String` form the line-editing code
+/// passes around for `zlemetaline` bytes (see `inststrlen`,
+/// `Src/Zle/zle_tricky.c:2231`). The result is generally not valid UTF-8:
+/// it is only ever spliced into, or measured against, the metafied line.
+///
+/// Completion stores its match parts unmetafied, while C's `Cmatch` and
+/// `Cline` strings are metafied, so every insertion of them into
+/// `zlemetaline` (`instmatch`, `cline_str`) goes through here. Inserting
+/// the raw UTF-8 instead left a bare `Meta` byte (0x83, the second byte of
+/// U+0303) in the line, which `unmetafy` then read as an escape and
+/// XOR'd into the next character.
+pub fn metafied_string(s: &str) -> String {
+    match metafied_key(s) {
+        Cow::Borrowed(_) => s.to_string(),
+        // SAFETY: the bytes are only spliced into / measured against the
+        // metafied line, which is held as a `String` over raw bytes.
+        Cow::Owned(v) => unsafe { String::from_utf8_unchecked(v) },
+    }
+}
+
 /// A `zstrcmp` operand prepared once for repeated comparison: the
 /// [`metafied_key`] bytes plus a NUL terminator, and whether they hold a
 /// backslash. This is what C's comparators already have in hand — a

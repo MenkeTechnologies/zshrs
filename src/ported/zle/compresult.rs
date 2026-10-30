@@ -332,6 +332,17 @@ pub fn cline_str(
     // METACHECK(): operate on the metafied line.
     let cs = || ZLEMETACS.load(Relaxed);
     let set_cs = |v: i32| ZLEMETACS.store(v, Relaxed);
+    // C's `Cline` strings are metafied, so `inststrlen(s, mv, len)` copies
+    // zlemetaline bytes. zshrs keeps them unmetafied: metafy the first `len`
+    // bytes of `s` and insert that, returning the metafied length (the
+    // number of zlemetaline bytes the insertion occupies).
+    let meta = crate::metafied_key::metafied_string;
+    let insmeta = |s: Option<&str>, mv: bool, len: i32| -> i32 {
+        let s = s.unwrap_or("");
+        let s = meta(s.get(..len.max(0) as usize).unwrap_or(s));
+        inststrlen(&s, mv, s.len() as i32);
+        s.len() as i32
+    };
 
     // c:175 — `l = cut_cline(l)`.
     let l = cut_cline(l);
@@ -365,7 +376,7 @@ pub fn cline_str(
             if let Some(ref g) = cur {
                 let mut node = g.as_deref();
                 while let Some(n) = node {
-                    brbeg_v.push((n.str.clone().unwrap_or_default(), n.qpos, 0));
+                    brbeg_v.push((meta(n.str.as_deref().unwrap_or("")), n.qpos, 0));
                     node = n.next.as_deref();
                 }
             }
@@ -374,7 +385,7 @@ pub fn cline_str(
             if let Some(ref g) = cur {
                 let mut node = g.as_deref();
                 while let Some(n) = node {
-                    brend_v.push((n.str.clone().unwrap_or_default(), n.qpos, 0));
+                    brend_v.push((meta(n.str.as_deref().unwrap_or("")), n.qpos, 0));
                     node = n.next.as_deref();
                 }
             }
@@ -415,16 +426,17 @@ pub fn cline_str(
     while let Some(node) = cur {
         // c:214-236 — original string (no prefix) or the prefix walk.
         if node.olen != 0 && (node.flags & CLF_SUF) == 0 && node.prefix.is_none() {
-            pcs = cs() + node.olen; // c:215
-            inststrlen(node.orig.as_deref().unwrap_or(""), true, node.olen); // c:216
+            insmeta(node.orig.as_deref(), true, node.olen); // c:216
+            pcs = cs(); // c:215 — zlemetacs + olen, i.e. the end of the insert
         } else {
             let mut sp = node.prefix.as_deref();
             while let Some(s) = sp {
-                pcs = cs() + s.llen; // c:220
+                // c:220 — `zlemetacs + s->llen`, the metafied length of the line part.
+                pcs = cs() + meta(s.line.as_deref().map_or("", |t| t.get(..s.llen.max(0) as usize).unwrap_or(t))).len() as i32;
                 if (s.flags & CLF_LINE) != 0 {
-                    inststrlen(s.line.as_deref().unwrap_or(""), true, s.llen); // c:222
+                    insmeta(s.line.as_deref(), true, s.llen); // c:222
                 } else {
-                    inststrlen(s.word.as_deref().unwrap_or(""), true, s.wlen); // c:224
+                    insmeta(s.word.as_deref(), true, s.wlen); // c:224
                 }
                 scs = cs(); // c:225
                 if (s.flags & CLF_DIFF) != 0 && (dm == 0 || (s.flags & CLF_MATCHED) != 0) {
@@ -493,9 +505,9 @@ pub fn cline_str(
         pcs = cs(); // c:280
                     // c:281-285 — insert the anchor.
         if (node.flags & CLF_LINE) != 0 {
-            inststrlen(node.line.as_deref().unwrap_or(""), true, node.llen);
+            insmeta(node.line.as_deref(), true, node.llen);
         } else {
-            inststrlen(node.word.as_deref().unwrap_or(""), true, node.wlen);
+            insmeta(node.word.as_deref(), true, node.wlen);
         }
         scs = cs(); // c:286
                     // c:287-302 — brace-begins after the anchor.
@@ -554,7 +566,7 @@ pub fn cline_str(
         // c:335-415 — suffix original or the suffix sub-list walk.
         if node.olen != 0 && (node.flags & CLF_SUF) != 0 && node.suffix.is_none() {
             pcs = cs(); // c:337
-            inststrlen(node.orig.as_deref().unwrap_or(""), true, node.olen); // c:338
+            insmeta(node.orig.as_deref(), true, node.olen); // c:338
             if ins != 0 {
                 li += node.olen; // c:342
                 while brp_idx < brbeg_v.len() && li >= brbeg_v[brp_idx].2 {
@@ -593,13 +605,13 @@ pub fn cline_str(
                 }
                 pcs = cs(); // c:371
                 if (s.flags & CLF_LINE) != 0 {
-                    inststrlen(s.line.as_deref().unwrap_or(""), false, s.llen); // c:373
-                    i_acc += s.llen;
-                    scs = cs() + s.llen;
+                    let ml = insmeta(s.line.as_deref(), false, s.llen); // c:373
+                    i_acc += ml;
+                    scs = cs() + ml;
                 } else {
-                    inststrlen(s.word.as_deref().unwrap_or(""), false, s.wlen); // c:376
-                    i_acc += s.wlen;
-                    scs = cs() + s.wlen;
+                    let ml = insmeta(s.word.as_deref(), false, s.wlen); // c:376
+                    i_acc += ml;
+                    scs = cs() + ml;
                 }
                 if ins != 0 {
                     li += s.llen; // c:382
@@ -825,29 +837,33 @@ pub fn instmatch(
         }
     }
 
+    // C's `Cmatch` parts are metafied (`strlen` below counts zlemetaline
+    // bytes); zshrs keeps them unmetafied, so each part is metafied here
+    // before it is spliced into the metafied line.
+    let meta = crate::metafied_key::metafied_string;
     // c:589-593 — ignored prefix.
-    if let Some(s) = m.ipre.as_deref() {
+    if let Some(s) = m.ipre.as_deref().map(meta) {
         let l = s.len() as i32;
-        inststrlen(s, true, l);
+        inststrlen(&s, true, l);
         r += l;
     }
     // c:594-598 — -P prefix.
-    if let Some(s) = m.pre.as_deref() {
+    if let Some(s) = m.pre.as_deref().map(meta) {
         let l = s.len() as i32;
-        inststrlen(s, true, l);
+        inststrlen(&s, true, l);
         r += l;
     }
     // c:599-603 — path prefix.
-    if let Some(s) = m.ppre.as_deref() {
+    if let Some(s) = m.ppre.as_deref().map(meta) {
         let l = s.len() as i32;
-        inststrlen(s, true, l);
+        inststrlen(&s, true, l);
         r += l;
     }
     // c:604-606 — the string itself.
     {
-        let s = m.str.as_deref().unwrap_or("");
+        let s = meta(m.str.as_deref().unwrap_or(""));
         let l = s.len() as i32;
-        inststrlen(s, true, l);
+        inststrlen(&s, true, l);
         r += l;
     }
     let mut ocs = cs(); // c:607
@@ -879,7 +895,7 @@ pub fn instmatch(
     // c:608-630 — re-insert the brace beginnings.
     if !brbeg_v.is_empty() {
         let mut pcs = cs(); // c:610
-        let mut bradd = m.pre.as_deref().map_or(0, |s| s.len() as i32); // c:613
+        let mut bradd = m.pre.as_deref().map_or(0, |s| meta(s).len() as i32); // c:613
         for (i, bs) in brbeg_v.iter().enumerate() {
             // c:614-616 — `for (bp = brbeg, brpos = m->brpl; bp && brpos; …)`:
             // a NULL `brpl` means ZERO iterations, so `lastprebr` below stays
@@ -891,10 +907,11 @@ pub fn instmatch(
             let brpos = *m.brpl.get(i).unwrap_or(&0); // c:614
             set_cs(a0 + brpos + bradd); // c:617
             pcs = cs(); // c:618
+            let bs = meta(bs);
             let l = bs.len() as i32; // c:619
             bradd += l; // c:620
             brpcs.store(cs(), Relaxed); // c:621
-            inststrlen(bs, true, l); // c:622
+            inststrlen(&bs, true, l); // c:622
             r += l; // c:623
             ocs += l; // c:624
         }
@@ -919,9 +936,9 @@ pub fn instmatch(
         set_cs(ocs); // c:629
     }
     // c:631-635 — path suffix.
-    if let Some(s) = m.psuf.as_deref() {
+    if let Some(s) = m.psuf.as_deref().map(meta) {
         let l = s.len() as i32;
-        inststrlen(s, true, l);
+        inststrlen(&s, true, l);
         r += l;
     }
     // c:636-656 — re-insert the brace ends.
@@ -934,9 +951,10 @@ pub fn instmatch(
             set_cs(a1 - brpos); // c:640
             ocs = cs(); // c:641 ocs = brscs = zlemetacs
             brscs.store(ocs, Relaxed);
+            let bs = meta(bs);
             let l = bs.len() as i32;
             bradd += l;
-            inststrlen(bs, true, l); // c:644
+            inststrlen(&bs, true, l); // c:644
             brb = cs(); // c:645
             r += l;
         }
@@ -951,15 +969,15 @@ pub fn instmatch(
         }
     }
     // c:657-661 — -S suffix.
-    if let Some(s) = m.suf.as_deref() {
+    if let Some(s) = m.suf.as_deref().map(meta) {
         let l = s.len() as i32;
-        inststrlen(s, true, l);
+        inststrlen(&s, true, l);
         r += l;
     }
     // c:662-666 — ignored suffix.
-    if let Some(s) = m.isuf.as_deref() {
+    if let Some(s) = m.isuf.as_deref().map(meta) {
         let l = s.len() as i32;
-        inststrlen(s, true, l);
+        inststrlen(&s, true, l);
         r += l;
     }
     // c:667-671 — lastpostbr = zlemetaline[brb .. zlemetacs].
@@ -1270,7 +1288,7 @@ pub fn do_ambiguous(matches: &[String]) -> i32 {
             // cline_str's ins=1 bookkeeping so `lastend` still describes the
             // end of what was just inserted.
             let p = unambig_data(matches);
-            let _ = inststr(&p);
+            let _ = inststr(&crate::metafied_key::metafied_string(&p));
             lastend.store(
                 crate::ported::zle::compcore::ZLEMETACS.load(Relaxed),
                 Relaxed,
@@ -1744,7 +1762,8 @@ pub fn do_single(m: &Cmatch) {
     if let Some(suf) = m.suf.as_deref() {
         // c:1003-1027 — user-specified suffix.
         havesuff = true; // c:1004
-        let insc = suf.len() as i32; // c:1010
+        // c:1010 `strlen(m->suf)` — the metafied length `instmatch` inserted.
+        let insc = crate::metafied_key::metafied_string(suf).len() as i32; // c:1010
         if let Ok(mut g) = MINFO
             .get_or_init(|| std::sync::Mutex::new(Menuinfo::default()))
             .lock()
@@ -2029,8 +2048,10 @@ pub fn do_single(m: &Cmatch) {
         if cs() + m.qisl == lastend.load(Relaxed) {
             set_cs(cs() + insc_v); // c:1173
         }
-        set_cs(cs() + psuf.len() as i32); // c:1176
-        set_cs(cs() + m.suf.as_deref().map_or(0, |s| s.len() as i32)); // c:1177
+        // c:1176-1177 — `strlen` of the metafied parts `instmatch` inserted.
+        let meta_len = |s: &str| crate::metafied_key::metafied_string(s).len() as i32;
+        set_cs(cs() + meta_len(psuf)); // c:1176
+        set_cs(cs() + m.suf.as_deref().map_or(0, meta_len)); // c:1177
     }
     // c:1179-1197 — insert-match hook + redraw (save/restore minfo.cur).
     {
@@ -4616,6 +4637,68 @@ mod tests {
         // minfo.len reflects the inserted match length (6).
         let len = MINFO.get().unwrap().lock().unwrap().len;
         assert_eq!(len, 6);
+    }
+
+    /// c:591-664 — `instmatch` copies the metafied `Cmatch` parts into
+    /// `zlemetaline`. U+0303 is `cc 83`: its second byte IS `Meta`, so a
+    /// raw insert made `unmetafy` eat the following `x` (`a\u{303}x` came
+    /// back as `a<U+E0CC>X`). Every part, including the `-S` suffix, goes in
+    /// metafied, and the returned length counts zlemetaline bytes.
+    #[test]
+    fn instmatch_metafies_match_parts() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        if let Some(mx) = BRBEG.get() {
+            *mx.lock().unwrap() = None;
+        }
+        if let Some(mx) = BREND.get() {
+            *mx.lock().unwrap() = None;
+        }
+        if let Ok(mut g) = ZLEMETALINE
+            .get_or_init(|| std::sync::Mutex::new(String::new()))
+            .lock()
+        {
+            *g = String::new();
+        }
+        ZLEMETACS.store(0, Relaxed);
+        ZLEMETALL.store(0, Relaxed);
+        let mut m = Cmatch::default();
+        m.str = Some("a\u{303}x".to_string());
+        m.suf = Some("\u{c4}".to_string());
+        let r = instmatch(&m, None);
+        let want: &[u8] = b"a\xcc\x83\xa3x\xc3\x83\xa4";
+        let line = ZLEMETALINE.get().unwrap().lock().unwrap().clone();
+        assert_eq!(line.as_bytes(), want, "parts are metafied in the line");
+        assert_eq!(r, want.len() as i32, "length is in zlemetaline bytes");
+        let mut raw = line.into_bytes();
+        crate::ported::utils::unmetafy(&mut raw);
+        assert_eq!(raw, "a\u{303}x\u{c4}".as_bytes(), "unmetafy round-trips");
+    }
+
+    /// c:281-285 — `cline_str` inserts a `Cline` anchor metafied; with
+    /// ins=0 it copies the metafied bytes back out (c:469) and the line is
+    /// left as it was.
+    #[test]
+    fn cline_str_metafies_word_anchor() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        crate::ported::zle::compcore::hasmatched.store(0, Relaxed);
+        if let Ok(mut g) = ZLEMETALINE
+            .get_or_init(|| std::sync::Mutex::new(String::new()))
+            .lock()
+        {
+            *g = String::new();
+        }
+        ZLEMETACS.store(0, Relaxed);
+        ZLEMETALL.store(0, Relaxed);
+        WB.store(0, Relaxed);
+        WE.store(0, Relaxed);
+        let mut n = Cline::default();
+        n.word = Some("a\u{303}x".to_string());
+        n.wlen = 4;
+        let got = cline_str(Some(Box::new(n)), 0, None, None).unwrap();
+        assert_eq!(got.as_bytes(), b"a\xcc\x83\xa3x");
+        assert_eq!(ZLEMETALINE.get().unwrap().lock().unwrap().clone(), "");
     }
 
     /// c:1253-1257 — `do_menucmp(COMP_LIST_COMPLETE)` only requests a
