@@ -4496,6 +4496,16 @@ pub fn readhistfile(fn_path: Option<&str>, _err: i32, readflags: i32) {
     }
     let mut lines_iter = lines_iter.peekable();
     let ends_with_nl = contents.ends_with('\n');
+    // c:2826-2834 — "Divide up the words": every entry read gets the
+    // `words`/`nwords` spans `$historywords` (parameter.c:1230-1247) and
+    // `!:N` designators slice by. Without them a HISTFILE entry contributes
+    // no words, so `_history-complete-older` saw only this session's lines.
+    let uselex = isset(crate::ported::zsh_h::HISTLEXWORDS) && !fast; // c:2826
+    let divide_words = |he: &mut histent| {
+        let spans = histsplitwords(&he.node.nam, uselex); // c:2827
+        he.nwords = spans.len() as i32; // c:2829
+        he.words = spans.iter().flat_map(|&(b, e)| [b as i16, e as i16]).collect();
+    };
     while let Some(logical) = readhistline(&mut lines_iter, ends_with_nl) {
         let raw_line = logical.as_str();
         if let Some((stim, ftim, ref text)) = current {
@@ -4504,6 +4514,7 @@ pub fn readhistfile(fn_path: Option<&str>, _err: i32, readflags: i32) {
             entry.stim = stim;
             entry.ftim = ftim;
             entry.node.flags |= HIST_OLD as i32;
+            divide_words(&mut entry);
             batch.push(entry);
             histlinect.fetch_add(1, SeqCst);
             current = None;
@@ -4557,6 +4568,7 @@ pub fn readhistfile(fn_path: Option<&str>, _err: i32, readflags: i32) {
         entry.stim = stim;
         entry.ftim = ftim;
         entry.node.flags |= HIST_OLD as i32;
+        divide_words(&mut entry);
         batch.push(entry);
         histlinect.fetch_add(1, SeqCst);
     }

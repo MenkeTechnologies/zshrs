@@ -3309,11 +3309,22 @@ pub fn histwgetfn(pm: *mut param) -> Vec<String> {
     // nm=1 vs zsh's hist_ret=1 nm=0), and so KILLED every completer after
     // it in the chain.
     out.extend(bw.into_iter().rev());
-                    // c:1229-1247 — walk hist_ring newest-to-oldest, slicing each
-                    // entry's words by `histent.words[iw*2..iw*2+2]` byte offsets in
-                    // reverse-position order.
+    // c:1222-1223 — `i = addhistnum(curhist, -1, HIST_FOREIGN);
+    // he = gethistent(i, GETHIST_UPWARD);` — start below the line being
+    // edited. Resolved before the ring lock: addhistnum takes it itself.
+    let start = crate::ported::hist::addhistnum(
+        crate::ported::hist::curhist.load(std::sync::atomic::Ordering::SeqCst),
+        -1,
+        crate::ported::zsh_h::HIST_FOREIGN as i32,
+    );
+    // c:1229-1259 — walk newest-to-oldest (`he = up_histent(he)`), slicing
+    // each entry's words by `histent.words[iw*2..iw*2+2]` byte offsets in
+    // reverse-position order. hist_ring is stored DESCENDING by histnum
+    // (index 0 = newest; hist.rs `ring_get`), so `up_histent` is the
+    // forward iteration and GETHIST_UPWARD from `start` is the first entry
+    // with `histnum <= start`. The old `.rev()` walked oldest-first.
     if let Ok(ring) = hist_ring.lock() {
-        for he in ring.iter().rev() {
+        for he in ring.iter().filter(|he| he.histnum <= start) {
             // c:1229
             let hstr = he.node.nam.as_bytes();
             let len = hstr.len() as i32;

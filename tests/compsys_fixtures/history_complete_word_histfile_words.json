@@ -1,0 +1,46 @@
+{
+  "schema": "compsys-fixture/2",
+  "id": "history_complete_word_histfile_words",
+  "title": "GUARD \u2014 was: `_history-complete-older` (\\e/) completes nothing from HISTFILE entries, and walks `$historywords` oldest-first",
+  "harness": "compsys_spec_fuzz",
+  "run": {
+    "buffer": "fzc0000 hellozz",
+    "keys": [
+      "\u001b",
+      "/"
+    ],
+    "flags": [],
+    "spec": {
+      "cmd": "fzc0000",
+      "kind": "files",
+      "widget": "fn:_history-complete-older",
+      "setup": [
+        "print -r -- 'echo hellozzqq world' >| ~/sfz_hist",
+        "fc -R ~/sfz_hist"
+      ],
+      "completer": "#compdef fzc0000\n\n_files\n"
+    }
+  },
+  "expect": "agrees",
+  "group": "completer-machinery",
+  "fingerprint": null,
+  "fingerprint_when_diverging": null,
+  "why_this_fixture_exists": "Src/hist.c:2826-2834 (readhistfile) runs histsplitwords on every entry read so `he->words`/`nwords` exist; the port left them empty, so `$historywords` (Src/Modules/parameter.c:1217-1262, walked newest-to-oldest from addhistnum(curhist,-1,HIST_FOREIGN)) had no HISTFILE words and the port also iterated the descending ring in reverse.",
+  "observed_when_diverging": {
+    "verdict": "FAIL",
+    "category": "grid-diff",
+    "zsh_grid": [
+      "$ echo hello"
+    ],
+    "zshrs_grid": [
+      "$ echo hel"
+    ],
+    "recorded_under": "2026-10-30, lane-9 pty stepper (zsh -f -i vs zshrs --zsh -f -i, identical init with compinit) on target/debug/zshrs built from the shared tree at 41bb929329, before the fix; zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+    "notes": "grids are from the stepper run, not this fixture's buffer: stepper buffer `echo hel` after `fc -R` of a HISTFILE holding `echo hello world`, key \\e/"
+  },
+  "controls": [],
+  "variants": [],
+  "origin": [
+    "lane-9 round-2 widget sweep (2026-10-30): every compinit-bound widget driven by hand with a pty stepper"
+  ]
+}
