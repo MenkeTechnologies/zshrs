@@ -3520,10 +3520,14 @@ pub fn match_named_colour(teststrp: &str) -> Option<u8> {
     // the input first which made the function case-INsensitive,
     // accepting `"RED"` where C rejects it. Fixed 2026-05 to match
     // the C strncmp contract: input must already be lowercase.
+    // c:1926 — `strncmp(teststr, *cptr, len)` with `len` the length of the
+    // input: the first table name the input is a PREFIX of wins, so
+    // `%F{bl}` is black (before blue) and `%F{mag}` magenta. An empty
+    // input never reaches here from C (match_colour enters the named
+    // branch only on an alphabetic first byte), so it stays None.
     for (i, &n) in COLOUR_NAMES.iter().enumerate() {
         // c:1925
-        if n == teststrp {
-            // c:1926 strncmp(teststr, *cptr, len)
+        if !teststrp.is_empty() && n.starts_with(teststrp) {
             return Some(i as u8); // c:1927
         }
     }
@@ -3724,7 +3728,14 @@ pub fn match_colour(cursor: Option<&mut usize>, spec: &str, is_fg: bool, colour:
                     *cursor += end;
                     colour = c as i32;
                 }
-                None => return TXT_ERROR, // c:2004-2005
+                // c:2004-2005 — match_named_colour has already moved
+                // `*teststrp` past the alphabetic run (c:1923) when it
+                // fails, so `%F{nosuch}` consumes `nosuch` and its caller's
+                // `}` check skips the brace instead of printing the name.
+                None => {
+                    *cursor += end;
+                    return TXT_ERROR;
+                }
             }
         } else {
             // c:2008 — `colour = (int)zstrtol(*teststrp, (char **)teststrp, 10)`.
@@ -5544,6 +5555,22 @@ mod tests {
             "uppercase color must NOT resolve per C source's strcmp"
         );
         assert!(match_named_colour("Red").is_none());
+    }
+
+    /// c:1926 — `strncmp(teststr, name, len)` matches the input as a
+    /// PREFIX of the table name, in table order; and c:1923 moves the
+    /// cursor past the alphabetic run even when no name matches, so
+    /// match_colour's caller skips `nosuch` instead of printing it.
+    #[test]
+    fn match_colour_named_prefix_and_failed_name_advance() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(match_named_colour("bl"), Some(0), "bl -> black, first in table");
+        assert_eq!(match_named_colour("blu"), Some(4));
+        assert_eq!(match_named_colour("mag"), Some(5));
+        assert_eq!(match_named_colour("blackx"), None);
+        let mut cur = 0usize;
+        assert_eq!(match_colour(Some(&mut cur), "nosuch}z", true, 0), TXT_ERROR);
+        assert_eq!(cur, 6, "cursor sits on the closing brace after a failed name");
     }
 
     /// c:1915 — Empty string returns None. Defensive boundary.

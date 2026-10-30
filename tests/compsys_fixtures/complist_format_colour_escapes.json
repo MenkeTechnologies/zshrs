@@ -1,0 +1,42 @@
+{
+ "schema": "compsys-fixture/1",
+ "id": "complist_format_colour_escapes",
+ "title": "GUARD \u2014 was: with zsh/complist loaded, a format style's %F/%K/%f/%k printed no colour, %F{nosuch} leaked its name, %F{bl} did not resolve to black, and every listing newline carried an unconditional CSI K",
+ "harness": "compsys_spec_fuzz",
+ "run": {
+  "buffer": "fzc6000 ",
+  "keys": [
+   "tab"
+  ],
+  "flags": [
+   "--compare-attrs"
+  ],
+  "spec": {
+   "cmd": "fzc6000",
+   "kind": "tags",
+   "seed": 6099000,
+   "case": 0,
+   "setup": [
+    "zmodload zsh/complist",
+    "zstyle ':completion:*' format '%2F<%d>%f %K{red}x%k %F{nosuch}z%f %F{bl}w%f %3K{green'",
+    "zstyle ':completion:*' group-name ''"
+   ],
+   "completer": "#compdef fzc6000\n_wanted alpha expl 'al' compadd -- a1 b2; _wanted beta expl 'be' compadd -- c1\n"
+  }
+ },
+ "expect": "agrees",
+ "group": "description-escapes",
+ "fingerprint": null,
+ "observed": {
+  "verdict": "PASS",
+  "detail": "PASS",
+  "measured": "2026-10-30, debug build of main + this fix vs zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "notes": "complist's compprintfmt (5.9.2 Src/Zle/complist.c:1164-1186) writes %F/%K/%f/%k through set_colour_attribute; match_named_colour (Src/prompt.c:1923-1927) advances past a failed name and matches by prefix; compprintnl (complist.c:1058) erases only through cleareol, which is gated on mlbeg >= 0 (complist.c:610)."
+ },
+ "observed_when_diverging": {
+  "verdict": "FAIL",
+  "category": "attr-diff",
+  "detail": "3 row(s) differ in SGR attributes only (with the colour arms already ported); before that, the %F{nosuch} rows differed in text: zsh '<al> x y z', zshrs '<al> x y nosuch}z'",
+  "notes": "raw stream at that point: zsh wrote \\e[30m before 'w' (%F{bl}) and zshrs did not; zshrs wrote \\e[K after the %3K{green row and after each listing row where zsh wrote nothing, painting the header row green. Without the colour arms, '%F{blue}<%d>%f' printed the header uncoloured (zsh: \\e[34m ... \\e[39m)."
+ }
+}

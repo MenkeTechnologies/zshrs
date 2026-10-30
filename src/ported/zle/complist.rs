@@ -1927,9 +1927,13 @@ pub fn asklistscroll(ml: i32) -> i32 {
 /// Port of `compprintnl()` from `Src/Zle/complist.c:1054`.
 pub fn compprintnl(ml: i32) -> i32 {
     // c:1054
-    // c:1056 — `cleareol();` followed by `putc('\n', shout);`. We
-    //          emit both as a single write (CSI K + LF).
-    crate::shout::write(b"\x1b[K\n");
+    // c:1058-1059 — `cleareol(); putc('\n', shout);`. `cleareol` only
+    // erases while menu selection owns the list (`mlbeg >= 0`, c:610); a
+    // plain listing writes the bare newline. An unconditional CSI K here
+    // painted the rest of an explanation row with whatever background a
+    // `%K{...}` in the `format` style left set.
+    cleareol();
+    crate::shout::write(b"\n");
     // c:1058 — `if (mscroll && !--mrestlines && (ask = asklistscroll(ml)))
     //           return ask;`. This is the per-newline half of the scroll
     //          pager; `printfmt` handles the column-wrap half the same way
@@ -2152,20 +2156,58 @@ pub fn compprintfmt(
                         tcout(TCUNDERLINEEND); // c:1162
                     }
                 }
-                // c:1179-1185 — `%f` / `%k` reset one colour channel. Left
-                // silent: the port has no `set_colour_attribute(TXTNOFGCOLOUR,
-                // …)` call site here yet and no fixture exercises them.
-                Some('f') | Some('k') => {}
-                // c:1162-1183 — %F / %K optionally carry a `{colour}` payload
-                // that must be consumed so it does not leak into the output.
-                Some('F') | Some('K') => {
-                    if chars.peek() == Some(&'{') {
-                        chars.next(); // '{'
-                        for cp in chars.by_ref() {
-                            if cp == '}' {
-                                break;
-                            }
+                // 5.9.2 c:1164-1186 — `%F`/`%K` set a colour, `%f`/`%k`
+                // reset one channel, each written out at once through
+                // `set_colour_attribute` (Src/prompt.c). `%F{blue}<%d>%f` in
+                // a `format` style colours the group header; the port used to
+                // consume the escapes and emit nothing.
+                Some(cf @ ('F' | 'K')) => {
+                    use crate::ported::zsh_h::{COL_SEQ_BG, COL_SEQ_FG, TXT_ERROR};
+                    let is_fg = cf == 'F'; // c:1166
+                    let atr = if chars.peek() == Some(&'{') {
+                        // c:1168-1172 — `p++; atr = match_colour(&p, is_fg, 0);
+                        // if (*p == '}') p++;`
+                        chars.next();
+                        let rest: String = chars.clone().collect();
+                        let mut cur = 0usize;
+                        let atr = crate::ported::prompt::match_colour(
+                            Some(&mut cur),
+                            &rest,
+                            is_fg,
+                            0,
+                        );
+                        for _ in rest[..cur].chars() {
+                            chars.next();
                         }
+                        if chars.peek() == Some(&'}') {
+                            chars.next();
+                        }
+                        atr
+                    } else {
+                        crate::ported::prompt::match_colour(None, "", is_fg, arg) // c:1174
+                    };
+                    if atr != TXT_ERROR && dopr != 0 {
+                        // c:1175-1177
+                        let fg_bg = if is_fg { COL_SEQ_FG } else { COL_SEQ_BG };
+                        crate::shout::write(
+                            crate::ported::prompt::set_colour_attribute(atr, fg_bg, 0).as_bytes(),
+                        );
+                    }
+                }
+                Some(cf @ ('f' | 'k')) => {
+                    use crate::ported::zsh_h::{
+                        COL_SEQ_BG, COL_SEQ_FG, TXTNOBGCOLOUR, TXTNOFGCOLOUR,
+                    };
+                    if dopr != 0 {
+                        // c:1179-1186
+                        let (atr, fg_bg) = if cf == 'f' {
+                            (TXTNOFGCOLOUR, COL_SEQ_FG)
+                        } else {
+                            (TXTNOBGCOLOUR, COL_SEQ_BG)
+                        };
+                        crate::shout::write(
+                            crate::ported::prompt::set_colour_attribute(atr, fg_bg, 0).as_bytes(),
+                        );
                     }
                 }
                 // c:1184-1192 — %H optionally carries a `{highlight}` payload.

@@ -19,9 +19,9 @@ the two `NON_FIXTURE_FILES` in `scripts/compsys_regressions.py`):
 
 | | |
 | --- | --- |
-| fixtures pinned | 45 |
+| fixtures pinned | 46 |
 | `diverges` | 13 |
-| `agrees` — retired as guards | 31 |
+| `agrees` — retired as guards | 32 |
 | `reference-crash` | 1 |
 
 Re-derive it with `scripts/compsys_regressions.py --list`, which boots no
@@ -76,7 +76,7 @@ off `retired.fix_commit`:
 | `e7bee11d9d` | `zle_line_tag_char_printable_width` |
 | `9add6ade84` | `all_matches_end_hook_missing`, `postfunc_curcontext_completer_field` |
 
-Eight `agrees` fixtures carry no `retired` block:
+Ten `agrees` fixtures carry no `retired` block:
 
 * `multiline_backslash_continuation_cd`, `multiline_dquote_parameter_list`,
   `multiline_squote_corrections` — the fix commit, `96382cfb71`, is named
@@ -98,6 +98,13 @@ Eight `agrees` fixtures carry no `retired` block:
   `guard_verified` records the pre-fix build it fails on.
 * `arguments_scalar_action_builtin_runs` — added as an `agrees` cell
   with the `dispatch_action_command` builtin arm (the commit that adds the
+  fixture); its `observed_when_diverging` records the pre-fix measurement.
+* `fake_style_description_recursion` — added as an `agrees` cell with
+  the `_description` fake-style recursion fix, `0829796aa3`; its
+  `guard_verified` records the pre-fix build it fails on.
+* `complist_format_colour_escapes` — added as an `agrees` cell with the
+  complist `compprintfmt` colour arms, the `match_named_colour` prefix /
+  cursor fix and the `compprintnl` erase gate (the commit that adds the
   fixture); its `observed_when_diverging` records the pre-fix measurement.
 
 ## Running it
