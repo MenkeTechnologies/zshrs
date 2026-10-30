@@ -1424,9 +1424,9 @@ pub fn eval_comp(comp: &str, line: u64) -> i32 {
 ///
 /// The three arms mirror what `execcmd` does with a command word: a shell
 /// function (or port) runs; a builtin runs in-process through
-/// `dispatch_builtin_raw`, as `execbuiltin` does in C; a name on `$PATH` is
-/// real but has no execution route from here, so it keeps the pre-existing
-/// "action did not succeed" answer rather than having one invented for it;
+/// `dispatch_builtin_raw`, as `execbuiltin` does in C; an executable (on
+/// `$PATH`, or named by a path) is forked and exec'd through
+/// `execute_external`, as `execute()` does;
 /// and only a name that resolves to nothing reaches
 /// `Src/exec.c:903`'s diagnostic.
 ///
@@ -1530,9 +1530,12 @@ pub fn dispatch_action_command(cmd: &str, argv: &[String], line: u64) -> i32 {
         if slash == 0 || !isset(PATHDIRS) || dot {
             let lerrno = direct_exec_errno(cmd);
             if lerrno == 0 {
-                // An executable file: real, but with no execution route from
-                // here — the same answer the `$PATH` arm below gives.
-                return 1;
+                // c:758 `zexecve(arg0, …)` — an executable file is run, the
+                // same as the `$PATH` arm below.
+                return crate::fusevm_bridge::with_executor(|exec| {
+                    exec.execute_external(cmd, argv, &[])
+                })
+                .unwrap_or(127);
             }
             let _subsh = crate::ported::exec::SubshStateGuard::enter(); // c:1247-1248
             crate::ported::utils::zwarn(&format!(
@@ -1557,8 +1560,12 @@ pub fn dispatch_action_command(cmd: &str, argv: &[String], line: u64) -> i32 {
     if crate::ported::builtin::createbuiltintable().contains_key(cmd) {
         return crate::fusevm_bridge::dispatch_builtin_raw(cmd, argv.to_vec());
     }
+    // c:Src/exec.c:3050-3068 fall-through → c:4369 `execute()` — a name on
+    // `$PATH` is forked and exec'd with the editor's terminal as it stands;
+    // `_arguments '1:x:uname'` prints `uname: illegal option -- J` there.
     if crate::ported::exec::findcmd(cmd, 0, 0).is_some() {
-        return 1;
+        return crate::fusevm_bridge::with_executor(|exec| exec.execute_external(cmd, argv, &[]))
+            .unwrap_or(127);
     }
 
     // c:Src/exec.c:820-833 — the `$path` walk `execute()` runs before it can
@@ -1577,8 +1584,11 @@ pub fn dispatch_action_command(cmd: &str, argv: &[String], line: u64) -> i32 {
         };
         let ee = direct_exec_errno(&candidate);
         if ee == 0 {
-            // A program the exec would start (see the slash arm above).
-            return 1;
+            // c:822-830 — a program the exec starts (see the slash arm above).
+            return crate::fusevm_bridge::with_executor(|exec| {
+                exec.execute_external(&candidate, argv, &[])
+            })
+            .unwrap_or(127);
         }
         if crate::ported::exec::isgooderr(ee, pp) {
             eno = ee; // c:823-824 / c:831-832
