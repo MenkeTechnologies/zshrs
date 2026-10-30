@@ -9291,6 +9291,13 @@ pub fn addunprintable(c: char) -> String {
 enum MetaChar {
     Ch(char),
     Raw(u8),
+    /// One character of a MULTIBYTE codeset that is not UTF-8 (`ja_JP.eucJP`,
+    /// `zh_CN.GB2312`, `zh_CN.GB18030`): the wide character `mbrtowc` decoded
+    /// (`None` when its code has no Rust `char`, e.g. the eucJP pair
+    /// `\xd8\xa1` = 0xD8A1, a surrogate) and the `len` source bytes it spans.
+    /// C copies those bytes through as one unit (c:6431-6433), or hands them all
+    /// to one `addunprintable` call (c:6439).
+    Mb(Option<char>, [u8; 4], u8),
 }
 
 /// Port of `quotestring()` from `Src/utils.c:6141`.
@@ -9338,7 +9345,7 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
     // instead of per byte. This runs once per completion match
     // (`multiquote` -> `quotestring`, c:Src/Zle/compcore.c:1073), which is why
     // it is hoisted out of the walk below.
-    let mb_sb = mb
+    let mb_not_utf8 = mb
         && unsafe {
             // c:5583 — `mbrtowc(&wc, &inchar, 1, mbsp)` is LOCALE-driven: with
             // MB_CUR_MAX == 1 it consumes one byte and returns that byte as
@@ -9360,6 +9367,16 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
                 !(cs.eq_ignore_ascii_case("UTF-8") || cs.eq_ignore_ascii_case("utf8"))
             }
         };
+    // A non-UTF-8 codeset is either SINGLE-byte (`MB_CUR_MAX == 1`: C,
+    // ISO-8859-*), where c:5583 consumes one byte per call, or MULTIBYTE
+    // (`ja_JP.eucJP` 3, `zh_CN.GB2312` 2, `zh_CN.GB18030` 4), where
+    // mb_metacharlenconv_r (c:5577-5585) feeds bytes until a character
+    // completes. Treating the multibyte ones as single-byte split every
+    // two-byte character: zsh copies the eucJP kana `\x8e\xb1` and the
+    // GB18030 `\x81\x5c` through whole, the port emitted `$'\216'` + 0xb1 and
+    // `$'\201'\\` (the trail byte read as a lone backslash).
+    let mb_multi = mb_not_utf8 && (unsafe { mb_cur_max_raw() } as usize) > 1;
+    let mb_sb = mb_not_utf8 && !mb_multi;
     let meta_chars = |s: &str| -> Vec<MetaChar> {
         // c:5672 — the byte stream is what mbrtowc consumes; a `Meta`+byte pair
         // and a literal high byte are the same input to the step below.
@@ -9390,6 +9407,26 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
                 i += 1;
                 continue;
             }
+            if mb_multi {
+                // c:5635 → mb_metacharlenconv_r (c:5577-5593): the locale's
+                // own `mbrtowc`, one byte at a time with the shift state
+                // carried, until a character completes; MB_INVALID or running
+                // out is WEOF for ONE byte. macOS eucJP accepts any lead byte
+                // above 0x7f with any trail byte, so `\xa5b` is one character
+                // there, exactly as zsh sees it.
+                let (n, ch, _) = mb_metacharlenconv(&bytes[i..]);
+                if n <= 1 && ch.is_none() {
+                    out.push(MetaChar::Raw(b));
+                    i += 1;
+                } else {
+                    let n = n.min(4);
+                    let mut unit = [0u8; 4];
+                    unit[..n].copy_from_slice(&bytes[i..i + n]);
+                    out.push(MetaChar::Mb(ch, unit, n as u8));
+                    i += n;
+                }
+                continue;
+            }
             // c:5635 → mb_metacharlenconv_r: shortest valid multibyte prefix.
             let hi = (i + 4).min(bytes.len());
             let mut n = 0usize;
@@ -9416,6 +9453,11 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
     let mc_printable = |mc: MetaChar| -> bool {
         match mc {
             MetaChar::Ch(c) => crate::ported::compat::u9_iswprint(c),
+            // c:6424 — a decoded multibyte-codeset character: `WC_ISPRINT` is
+            // the Unicode 9 table (Src/ztype.h:77) applied to the locale code
+            // mbrtowc returned, which is why eucJP 0xD8A1 (a surrogate, no
+            // `char`) is NOT printable and comes out `$'\330\241'`.
+            MetaChar::Mb(ch, _, _) => ch.is_some_and(crate::ported::compat::u9_iswprint),
             // With MULTIBYTE on an undecodable byte IS the WEOF case, so the
             // `cc != WEOF` conjunct short-circuits. With it off there is no
             // WEOF at all (c:5615-5617 always sets `*wcp` to the byte), so the
@@ -9447,6 +9489,17 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
     // UTF-8 encoding of U+00`b` instead of the one byte the shell holds.
     let push_metachar = |out: &mut String, mc: MetaChar| match mc {
         MetaChar::Ch(c) => out.push(c),
+        // c:6431-6433 — the unit's source bytes, each high one metafied.
+        MetaChar::Mb(_, u, n) => {
+            for &b in &u[..n as usize] {
+                if b < 0x80 {
+                    out.push(b as char);
+                } else {
+                    out.push(char::from(Meta));
+                    out.push(char::from(b ^ 32));
+                }
+            }
+        }
         MetaChar::Raw(b) => {
             out.push(char::from(Meta));
             out.push(char::from(b ^ 32));
@@ -9465,6 +9518,7 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
                 buf[0] = b;
                 &buf[0..1]
             }
+            MetaChar::Mb(_, ref u, n) => &u[..n as usize],
         };
         for i in 0..bytes.len() {
             let b = bytes[i];
@@ -9479,6 +9533,7 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
                             c.encode_utf8(&mut nb).as_bytes()[0]
                         }
                         MetaChar::Raw(rb) => rb,
+                        MetaChar::Mb(_, u, _) => u[0],
                     })
                 };
                 if matches!(follows, Some(b'0'..=b'7')) {
@@ -9626,6 +9681,33 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
             }
             (v, m)
         };
+        // c:6259-6260 — "we start by going through bytewise": every style but
+        // QT_BACKSLASH leaves through the c:6392 pass-through one BYTE at a
+        // time (`*v++ = *u++`), and only QT_BACKSLASH reaches the c:6422
+        // MB_METACHARLENCONV that takes a character whole. In a UTF-8 locale
+        // that difference is invisible (a trail byte is never special), but in
+        // a multibyte codeset a trail byte can be ASCII: zsh 5.9.2 under
+        // zh_CN.GB18030 quotes `\x81\x5c` as `"\x81\\"` for `${(qqq)}` while
+        // `${(q)}` copies the pair through bare. So a multibyte-codeset unit
+        // is only a unit for QT_BACKSLASH.
+        let (mcs, tokmask) = if mb_multi && instring != QT_BACKSLASH {
+            let mut v: Vec<MetaChar> = Vec::with_capacity(mcs.len());
+            let mut m: Vec<bool> = Vec::with_capacity(mcs.len());
+            for (k, mc) in mcs.into_iter().enumerate() {
+                if let MetaChar::Mb(_, u, n) = mc {
+                    for &b in &u[..n as usize] {
+                        v.push(if b <= 0x7f { MetaChar::Ch(b as char) } else { MetaChar::Raw(b) });
+                        m.push(false);
+                    }
+                } else {
+                    v.push(mc);
+                    m.push(tokmask[k]);
+                }
+            }
+            (v, m)
+        } else {
+            (mcs, tokmask)
+        };
         // c:6262-6299 — before ANY quoting decision C copies three
         // constructs through verbatim. Each `*u` C tests there is one BYTE,
         // which is one element of `mcs` here. C can compare bytes directly
@@ -9639,6 +9721,7 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
                 MetaChar::Raw(b) if tokmask[k] => crate::token_char::token_char_from_byte(b)
                     .map_or(b as u32, |t| t as u32),
                 MetaChar::Raw(b) => b as u32,
+                MetaChar::Mb(ch, u, _) => ch.map_or(u[0] as u32, |c| c as u32),
                 MetaChar::Ch(c) => c as u32,
             }
         };
@@ -9753,6 +9836,9 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
                 // A raw byte is never `\n` and never ispecial — it is the
                 // not-printable case below. Stand in with its byte value so the
                 // `=`/`~` lookbehind still advances correctly.
+                // A multibyte-codeset character is never `\n` nor ispecial
+                // either: c:6301 tests its lead byte, which is above 0x7f.
+                MetaChar::Mb(ch, u, _) => ch.unwrap_or(u[0] as char),
                 MetaChar::Raw(b) => b as char,
             };
             if !skip_special {

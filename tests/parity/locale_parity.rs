@@ -248,6 +248,79 @@ mod multibyte_width_is_locale_driven {
              print -rn -- \"${(q+)x}|${(V)x}|${(q+)${:-a$x}}|${(q+)y}|${(V)y}\"",
         );
     }
+
+    /// `quotestring` (`Src/utils.c:6141`) walks QT_BACKSLASH by CHARACTER
+    /// (c:6422 `MB_METACHARLENCONV`, whose `mbrtowc` is the locale's) and
+    /// every other style BYTEWISE (c:6259-6260, the c:6392 pass-through).
+    /// In a multibyte codeset that is not UTF-8 a trail byte can be ASCII,
+    /// so the two walks disagree visibly: GB18030 `\x81\x5c` is one
+    /// character that `(q)` copies bare, while `(qqq)` backslashes its trail
+    /// `\`. eucJP `\x8e\xb1` (half-width kana) is printable whole,
+    /// `\xd8\xa1` decodes to the surrogate 0xD8A1 and becomes ONE
+    /// `$'\330\241'` island, and Darwin eucJP takes `\xa5b` as one
+    /// character, so the UTF-8 bytes of `日` that completion inserts
+    /// (`a\xe6\x97\xa5b`) stay bare. The port treated every non-UTF-8
+    /// codeset as single-byte and emitted `$'\201'\\`, `$'\216'`+0xb1 and
+    /// `$'\227'`.
+    ///
+    /// Pinned bytes, not an oracle comparison: `WC_ISPRINT` is the wcwidth9
+    /// table only in an `--enable-unicode9` build (Src/ztype.h:77), and the
+    /// dev oracle is built without it, so it answers from Darwin `iswprint`
+    /// (which rejects these locale codes) and escapes everything. Darwin
+    /// only: its `mbrtowc` returns the LOCALE code (`\xc4\xe3` -> 0xC4E3)
+    /// where glibc returns Unicode, so the printable set differs there.
+    /// Verified byte for byte against zsh 5.9.2 (Homebrew, unicode9, macOS).
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn multibyte_codeset_quoting_walks_characters_for_backslash_style_only() {
+        let script = "for x in $'\\x81\\x5c' $'\\x8e\\xb1' $'\\xd8\\xa1' \
+                      $'a\\xe6\\x97\\xa5b' $'\\xa4\\xa2a b'; do \
+                      print -r -- \"${(q)x}|${(qqq)x}|${(qqqq)x}|${(q+)x}\"; done";
+        // Lines common to all three codesets.
+        let tail = [
+            r#"$'\330\241'|"\xd8\xa1"|$'\330\241'|$'\ud8a1'"#,
+            r#"a\xe6\x97\xa5b|"a\xe6\x97\xa5b"|$'a\xe6\x97\xa5b'|a\xe6\x97\xa5b"#,
+            r#"\xa4\xa2a\ b|"\xa4\xa2a b"|$'\xa4\xa2a b'|'\xa4\xa2a b'"#,
+        ];
+        let lone_81 = r#"$'\201'\\|"\x81\\"|$'\201\\'|$'\M-\C-A\\'"#;
+        let kana = r#"\x8e\xb1|"\x8e\xb1"|$'\x8e\xb1'|\x8e\xb1"#;
+        let cases: [(&str, [&str; 2]); 3] = [
+            ("zh_CN.GB18030", [r#"\x81\x5c|"\x81\\"|$'\x81\x5c'|'\x81\x5c'"#, kana]),
+            (
+                "zh_CN.GB2312",
+                [lone_81, r#"$'\216'$'\261'|"\x8e\xb1"|$'\216\261'|$'\M-\C-N\M-1'"#],
+            ),
+            ("ja_JP.eucJP", [lone_81, kana]),
+        ];
+        // `\xNN` in the tables above is one raw byte; everything else is literal.
+        let unhex = |t: &str| -> Vec<u8> {
+            let b = t.as_bytes();
+            let mut out = Vec::new();
+            let mut i = 0;
+            while i < b.len() {
+                if b[i] == b'\\' && b.get(i + 1) == Some(&b'x') {
+                    out.push(u8::from_str_radix(&t[i + 2..i + 4], 16).expect("hex"));
+                    i += 4;
+                } else {
+                    out.push(b[i]);
+                    i += 1;
+                }
+            }
+            out
+        };
+        for (loc, head) in cases {
+            if !have_locale(loc) {
+                continue;
+            }
+            let mut want = Vec::new();
+            for line in head.iter().chain(tail.iter()) {
+                want.extend(unhex(line));
+                want.push(b'\n');
+            }
+            let got = run_in(zshrs_bin().to_str().expect("path"), loc, script);
+            assert_eq!(got, want, "locale {loc}");
+        }
+    }
 }
 
 /// `unset LC_ALL` calls `lc_allsetfn(pm, NULL)` through `stdunsetfn`
