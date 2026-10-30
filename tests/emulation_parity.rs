@@ -1720,7 +1720,7 @@ const BASH_ONLY_CORPUS: &[&str] = &[
     "type -p echo; type -p ls | grep -c ls",
     "sleep 0.05 & p=$!; wait $p; wait $p 2>/dev/null; echo $?",
     "read -t 0 x </dev/null; echo $?",
-    "echo a | { read -t 0 x; echo $?; }",
+    "read -t 0 x <<< a; echo $?",
     "sleep 0.4 & sleep 0.4 & jobs; wait",
     "sleep 0.4 & jobs; wait",
     "cd //tmp; pwd; echo $PWD",
