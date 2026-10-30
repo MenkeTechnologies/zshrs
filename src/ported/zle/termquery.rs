@@ -318,7 +318,15 @@ pub fn probe_terminal(
             illgotten += 1;
         } else {
             // c:245-253 — the C buffer doubles when full; the Vec grows.
-            let got = getbyte(timeout); // c:254 `ch = getbyte(timeout, 0, 1);`
+            // c:254 — `ch = getbyte(timeout, 0, 1)` reads SHTTY. With no terminal
+            // (SHTTY == -1) that read fails and the probe ends at `ch == EOF`;
+            // the port's getbyte falls back to fd 0 there, which would swallow
+            // the rest of a script piped into `zshrs -i`.
+            let got = if crate::ported::init::SHTTY.load(Ordering::Relaxed) == -1 {
+                None
+            } else {
+                getbyte(timeout)
+            };
             if errflag.load(Ordering::Relaxed) != 0 {
                 // c:255
                 errflag.store(0, Ordering::Relaxed); // c:256

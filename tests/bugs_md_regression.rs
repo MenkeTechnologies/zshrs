@@ -3280,3 +3280,45 @@ fn unexpand_keeps_single_blanks_before_a_tab_stop() {
     assert_eq!(run("-a"), "one two three\n    indented line\na  b   c\tx\ty\n\t  z\n");
     assert_eq!(run(""), "one two three\n    indented line\na  b   c\tx       y\n\t  z\n");
 }
+
+// ════════════════════════════════════════════════════════════════════
+// An interactive shell reading commands from a pipe with no terminal
+// (SHTTY == -1) went on past `bindkey`: loading zsh/zle runs the terminal
+// probe, whose reads go to SHTTY (Src/Zle/termquery.c:254) and fail there.
+// The port's getbyte fell back to fd 0, swallowed the rest of the script
+// and the shell exited 1.
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn piped_interactive_shell_runs_past_bindkey_without_a_tty() {
+    use std::io::Write;
+    use std::os::unix::process::CommandExt;
+    let Some(bin) = zshrs_bin() else { return };
+    let mut cmd = Command::new(&bin);
+    cmd.args(["-f", "-i"])
+        .env_clear()
+        .env("HOME", std::env::temp_dir())
+        .env("TERM", "xterm")
+        .env("PATH", "/usr/bin:/bin")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    // A new session has no controlling terminal, so /dev/tty cannot open.
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+    let mut child = cmd.spawn().expect("spawn zshrs");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"print before\nbindkey -e\nprint after\n")
+        .unwrap();
+    let out = child.wait_with_output().expect("wait zshrs");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("before") && stdout.contains("after"), "stdout: {stdout:?}");
+    assert_eq!(out.status.code(), Some(0));
+}
