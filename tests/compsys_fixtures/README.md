@@ -19,9 +19,9 @@ the two `NON_FIXTURE_FILES` in `scripts/compsys_regressions.py`):
 
 | | |
 | --- | --- |
-| fixtures pinned | 46 |
+| fixtures pinned | 49 |
 | `diverges` | 14 |
-| `agrees` — retired as guards | 32 |
+| `agrees` — retired as guards | 34 |
 | `reference-crash` | 1 |
 
 Re-derive it with `scripts/compsys_regressions.py --list`, which boots no
@@ -42,7 +42,7 @@ exit 0.
 
 | | |
 | --- | --- |
-| fixtures pinned | 29 |
+| fixtures pinned | 49 |
 | cells attempted | 47 — 29 fixture cells and 18 controls |
 | still diverging | 22 |
 | retired as guards, now asserting the two shells AGREE | 6 |
