@@ -1,0 +1,65 @@
+{
+ "schema": "compsys-fixture/2",
+ "id": "comp_setup_local_ifs_reaches_completers",
+ "title": "GUARD — was: a completer runs with `_comp_setup`'s IFS=$' \\t\\r\\n\\0' (zsh); zshrs's completers saw the caller's $' \\t\\n\\0', because the `local IFS` shadow dropped the special's setfn",
+ "harness": "compsys_spec_fuzz",
+ "run": {
+  "buffer": "fzif ",
+  "keys": [
+   "tab"
+  ],
+  "flags": [],
+  "spec": {
+   "cmd": "fzif",
+   "kind": "compset",
+   "seed": 0,
+   "case": -1,
+   "widget": "default",
+   "setup": [],
+   "completer": "#compdef fzif\n_message -r \"ifs=${(q+)IFS}\"\n"
+  }
+ },
+ "expect": "agrees",
+ "group": "completer-machinery",
+ "fingerprint": null,
+ "observed": {
+  "verdict": "PASS",
+  "detail": "both shells show the message row ifs=$' \\t\\C-M\\n\\C-@'",
+  "measured": "2026-10-30, target/debug/zshrs with the declare_locals PM_SPECIAL fix (zshrs 0.13.56) vs zsh 5.9.2 (/opt/homebrew/bin/zsh), scripts/compsys_regressions.py --only comp_setup_local_ifs_reaches_completers",
+  "notes": "compinit sh:183 (`_comp_setup`) is `local IFS=$' \\t\\r\\n\\0'`, eval'd by _main_complete sh:25 after its own sh:11 `local IFS=$' \\t\\n\\0'`, so every completer sees the \\r. The native _main_complete declares IFS through compsys::ported::shared::declare_locals and then writes it with setsparam; declare_locals created the shadow with createparam(name, PM_LOCAL) and stamped PM_SPECIAL afterwards, so createparam never carried the special's gsu over (params.rs createparam special-gsu arm skips a displaced shadow without PM_SPECIAL in the flags). Reads still went to ifsgetfn, writes never reached ifssetfn, and IFS stayed at the caller's value. Visible on the stock `typeset <TAB>` / `unset <TAB>` listing when any described value is printed with IFS: zsh prints `IFS -- \\t\\r` and the \\r erases the row, zshrs did not."
+ },
+ "observed_when_diverging": {
+  "verdict": "FAIL",
+  "detail": "1 row(s) differ: row 1 zsh `ifs=$' \\t\\C-M\\n\\C-@'`, zshrs `ifs=$' \\t\\n\\C-@'`",
+  "recorded_under": "target/debug/zshrs built 2026-10-30 10:32 from HEAD 1c8da62e97 src/compsys/ported/shared.rs (before the fix), zshrs 0.13.56, vs zsh 5.9.2; scripts/compsys_regressions.py --only comp_setup_local_ifs_reaches_completers -> CONTROL-MOVED x3"
+ },
+ "why_this_fixture_exists": "Found by round-3 lane-E comptab_parity sweep: `typeset `/`export `/`unset ` ctrl-d listings differed in their row and possibility counts; shrunk to the IFS row of a `_describe` listing of parameter values, then to the completer's own $IFS.",
+ "controls": [],
+ "variants": [],
+ "origin": [
+  "comptab_parity.py --zsh /opt/homebrew/bin/zsh --case 'unset ' --keys ctrl-d"
+ ],
+ "history": [],
+ "confirmed": {
+  "date": "2026-10-30",
+  "commit": "025889b648",
+  "harness_sha256_16": {
+   "scripts/compsys_spec_fuzz.py": "7c0a079a8ae27ee7",
+   "scripts/compsys_regressions.py": "619b844636a94cb7"
+  },
+  "zshrs_binary": {
+   "path": "target/debug/zshrs",
+   "size": 134148328,
+   "mtime": "2026-10-30 10:41:59",
+   "version": "zshrs 0.13.57",
+   "sha256_16": "47710120b94819d2",
+   "kind": "debug build under target/ (NOT the Homebrew-installed zshrs)"
+  },
+  "zsh_binary": {
+   "path": "/opt/homebrew/bin/zsh",
+   "version": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)"
+  },
+  "zsh": "zsh 5.9.2 (aarch64-apple-darwin25.4.0)",
+  "note": "CONTROL-HOLDS on the fixed binary; CONTROL-MOVED on the pre-fix binary"
+ }
+}

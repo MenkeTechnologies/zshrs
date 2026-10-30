@@ -19,9 +19,9 @@ the two `NON_FIXTURE_FILES` in `scripts/compsys_regressions.py`):
 
 | | |
 | --- | --- |
-| fixtures pinned | 49 |
+| fixtures pinned | 50 |
 | `diverges` | 14 |
-| `agrees` — retired as guards | 34 |
+| `agrees` — retired as guards | 35 |
 | `reference-crash` | 1 |
 
 Re-derive it with `scripts/compsys_regressions.py --list`, which boots no
@@ -76,7 +76,7 @@ off `retired.fix_commit`:
 | `e7bee11d9d` | `zle_line_tag_char_printable_width` |
 | `9add6ade84` | `all_matches_end_hook_missing`, `postfunc_curcontext_completer_field` |
 
-Ten `agrees` fixtures carry no `retired` block:
+Eleven `agrees` fixtures carry no `retired` block:
 
 * `multiline_backslash_continuation_cd`, `multiline_dquote_parameter_list`,
   `multiline_squote_corrections` — the fix commit, `96382cfb71`, is named
@@ -105,6 +105,9 @@ Ten `agrees` fixtures carry no `retired` block:
 * `complist_format_colour_escapes` — added as an `agrees` cell with the
   complist `compprintfmt` colour arms, the `match_named_colour` prefix /
   cursor fix and the `compprintnl` erase gate (the commit that adds the
+  fixture); its `observed_when_diverging` records the pre-fix measurement.
+* `comp_setup_local_ifs_reaches_completers` — added as an `agrees` cell
+  with the `declare_locals` PM_SPECIAL fix (the commit that adds the
   fixture); its `observed_when_diverging` records the pre-fix measurement.
 
 ## Running it

@@ -78,8 +78,19 @@ pub fn declare_locals(names: &[&str], kind: u32) {
         if !needs_shadow {
             continue;
         }
-        // c:2470 — `createparam(pname, on | PM_LOCAL)`.
-        let _ = createparam(name, (kind | PM_LOCAL) as i32);
+        // c:2470 — `createparam(pname, on | PM_LOCAL)`. For a special, C
+        // never reaches createparam at all: the newspecial arm (c:2386-2425,
+        // "For specials, we keep the same struct but zero everything")
+        // re-uses the special's own Param, accessors included. zshrs builds
+        // a fresh node, and createparam only carries the special's gsu over
+        // to it when the caller ORs PM_SPECIAL into the flags (the same
+        // signal `typeset_single` sends, builtin.rs `keep_special`). Without
+        // it the shadow was a plain scalar stamped PM_SPECIAL after the
+        // fact: reads still routed to the special's getfn but writes never
+        // reached its setfn, so `_comp_setup`'s `local IFS=$' \t\r\n\0'`
+        // (compinit sh:183) left completers running with the caller's IFS.
+        let special = if newspecial { PM_SPECIAL } else { 0 };
+        let _ = createparam(name, (kind | PM_LOCAL | special) as i32);
         // c:2575 — `else if (on & PM_LOCAL) pm->level = locallevel;`
         // plus the attribute stamp so `typeset -U` keeps PM_UNIQUE.
         if let Ok(mut tab) = paramtab().write() {
