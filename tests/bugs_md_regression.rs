@@ -3225,6 +3225,20 @@ fn epochtime_element_in_arithmetic_uses_the_gsu_getfn() {
     assert_eq!(stdout, "1 1\n");
 }
 
+// ════════════════════════════════════════════════════════════════════
+// `TRAPERR` (the alternative name of TRAPZERR) fires: dotrap finds the
+// function with `gettrapnode(sig, 0)` (Src/signals.c:1252), which also
+// tries the `alt_sigs` names (Src/jobs.c:3164-3170).
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn traperr_function_fires_on_a_failed_command() {
+    let (ec, stdout, _stderr) = run_zshrs(r#"TRAPERR() { print FNERR $1 }; false; print after"#);
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!((ec, stdout.as_str()), (0, "FNERR 32\nafter\n"));
+}
 
 // ════════════════════════════════════════════════════════════════════
 // The `unexpand` drop-in follows GNU `unexpand()` (src/unexpand.c): with

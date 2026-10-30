@@ -1998,9 +1998,10 @@ pub fn dotrap(sig: i32) -> i32 {
     // below doesn't double-dispatch. Bug #541 in docs/BUGS.md.
     let mut fn_dispatched = false;
     if trapped & ZSIG_FUNC != 0 {
-        let signame = getsigname(sig);
-        let trap_fn = format!("TRAP{}", signame);
-        if getshfunc(&trap_fn).is_some() {
+        // c:1252 — `HashNode hn = gettrapnode(sig, 0)`: the function may be
+        // defined under an alternative name (`TRAPERR` for SIGZERR,
+        // `TRAPCLD` for SIGCHLD), which a `TRAP<canonical>` lookup misses.
+        if let Some(trap_fn) = gettrapnode(sig, false) {
             // c:1252-1255 — `dotrapargs(sig, sigtrapped+sig, funcprog)`.
             //              Drives the shfunc with `$1 = sig`. With the
             //              executor not directly callable from this
