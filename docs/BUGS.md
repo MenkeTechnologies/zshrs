@@ -47,7 +47,8 @@ non-ASCII byte is one unit but more than one char of the port's metafied string,
 landed inside a unit and every later range shifted. The cut now runs over the units
 (`scalar_range_cut::units_range_cut`, sharing `str_range_cut`'s bounds). Surfaced by
 `examples/demos/362_xml_parser_full.zsh`; pinned by
-`zsh_zshrs_demo_equivalence::eq362_xml_parser_full` (no dedicated unit test).
+`zsh_zshrs_demo_equivalence::eq362_xml_parser_full` and by `scalar_range_cut::tests::units_cut_keeps_multichar_units_whole`
+(added `1f5b6cfd11`).
 
 ---
 

@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-10-28T05:00:00.016467+00:00
+Generated: 2026-10-30T07:05:32.711835+00:00
 
 ## Method
 
@@ -86,13 +86,13 @@ python3 scripts/gen_port_stubs.py
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
-| 7540 | `unmeta` | 4 | 35 | 11% |
-| 8461 | `mb_metacharlenconv_r` | 5 | 32 | 15% |
+| 7545 | `unmeta` | 4 | 35 | 11% |
+| 8466 | `mb_metacharlenconv_r` | 5 | 32 | 15% |
 | 113 | `set_widearray` | 6 | 30 | 20% |
-| 7375 | `metafy` | 11 | 54 | 20% |
-| 3979 | `timespec_diff_us` | 5 | 18 | 27% |
-| 1731 | `delprepromptfn` | 4 | 14 | 28% |
-| 7915 | `niceztrlen` | 4 | 14 | 28% |
+| 7380 | `metafy` | 11 | 54 | 20% |
+| 3984 | `timespec_diff_us` | 5 | 18 | 27% |
+| 1736 | `delprepromptfn` | 4 | 14 | 28% |
+| 7920 | `niceztrlen` | 4 | 14 | 28% |
 
 ### `src/ported/zle/zle_keymap.rs` — 3 stubs
 
@@ -106,9 +106,9 @@ python3 scripts/gen_port_stubs.py
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
-| 1717 | `handleundo` | 2 | 28 | 7% |
+| 1761 | `handleundo` | 2 | 28 | 7% |
 | 47 | `sizeline` | 5 | 20 | 25% |
-| 639 | `zle_free_positions` | 3 | 11 | 27% |
+| 678 | `zle_free_positions` | 3 | 11 | 27% |
 
 ### `src/ported/compat.rs` — 2 stubs
 
@@ -226,7 +226,7 @@ python3 scripts/gen_port_stubs.py
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
-| 6641 | `freematches` | 6 | 26 | 23% |
+| 6672 | `freematches` | 6 | 26 | 23% |
 
 ### `src/ported/zle/complete.rs` — 1 stubs
 
@@ -262,5 +262,5 @@ python3 scripts/gen_port_stubs.py
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
-| 4242 | `pfxlen` | 4 | 38 | 10% |
+| 4256 | `pfxlen` | 4 | 38 | 10% |
 
