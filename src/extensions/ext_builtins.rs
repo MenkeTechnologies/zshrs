@@ -1392,8 +1392,12 @@ impl ShellExecutor {
         }
 
         let table = args[0].as_str();
-        let filter = args.get(1).map(|s| s.as_str());
-        let count_only = args.iter().any(|a| a == "--count" || a == "-c");
+        let is_count = |a: &str| a == "--count" || a == "-c";
+        let count_only = args.iter().any(|a| is_count(a));
+        // The filter is the first word after the table that is not the count
+        // flag, so `dbview scripts --count` counts every row rather than the
+        // rows matching the text `--count`.
+        let filter = args[1..].iter().map(|s| s.as_str()).find(|a| !is_count(a));
 
         match table {
             "autoloads" => {

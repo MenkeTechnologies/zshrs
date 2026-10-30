@@ -112,3 +112,20 @@ fn a_script_run_by_relative_path_that_changes_directory_is_still_stored() {
     assert!(listing.contains("walk.sh"), "a script that cd's is stored:\n{listing}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn dbview_count_without_a_filter_counts_every_row() {
+    let dir = scratch("count");
+    for name in ["one.zsh", "two.zsh"] {
+        let file = dir.join(name);
+        std::fs::write(&file, "alias zqd='echo d'\nzqd x\n").unwrap();
+        let _ = run(&dir, &["-f", "-c", &format!("source {}", file.display())], &[]);
+    }
+    // `--count` / `-c` is the flag, not the filter word: both forms count
+    // every stored script, and a real filter word still narrows the count.
+    let (all, _) = run(&dir, &["-f", "-c", "dbview scripts --count; dbview scripts -c"], &[]);
+    assert_eq!(all, "2\n2\n");
+    let (one, _) = run(&dir, &["-f", "-c", "dbview scripts one.zsh --count"], &[]);
+    assert_eq!(one, "1\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
