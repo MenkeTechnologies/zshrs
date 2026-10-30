@@ -1346,6 +1346,9 @@ pub fn clnicezputs(do_colors: i32, s: &str, ml_in: i32) -> i32 {
         }
     };
 
+    // c:739 — `memset(&mbs, 0, sizeof mbs)`; c:722 `eol = 0`.
+    let mut mbs: crate::ported::utils::MbStateBuf = crate::ported::utils::MBSTATE_ZERO;
+    let mut eol = false;
     // c:750 — `while (umleft > 0)`.
     let mut idx = 0usize;
     while idx < ubytes.len() {
@@ -1365,26 +1368,67 @@ pub fn clnicezputs(do_colors: i32, s: &str, ml_in: i32) -> i32 {
         } else {
             0 // invalid lead byte
         };
+        // The wide character's own bytes in the locale's encoding and its
+        // display width, for the libc-decoded (non-UTF-8) path below.
+        let mut wide: Option<(Vec<u8>, i32)> = None;
         let (rep, cnt): (String, usize) = if mb_single_byte {
-            // c:751/773-775 — single-byte locale: `mbrtowc` returns 1 and the
-            // wide character IS the byte, so it always takes the `default:`
-            // (wcs_nicechar) arm — except under the ASCII C locale, which
-            // rejects a byte above 0x7f (`crate::c_locale`): c:757-767
-            // MB_INVALID, nicechar of the byte.
+            // c:751 — `mbrtowc(&cc, uptr, umleft, &mbs)` over ALL the
+            // remaining bytes with the one `mbs` (c:739) carried across
+            // calls: a single-byte locale consumes one byte, EUC-JP / GB2312
+            // the whole two- or three-byte character. Decoding one byte at a
+            // time with a fresh state split every multibyte character into
+            // its bytes and printed the trailing ones as `\M-^W`. The ASCII C
+            // locale rejects a byte above 0x7f (`crate::c_locale`).
+            use crate::ported::utils::{mbrtowc, wcrtomb, MbStateBuf, MB_INCOMPLETE, MB_INVALID};
             let mut wc: libc::wchar_t = 0;
-            let mut mbs = crate::ported::utils::MBSTATE_ZERO;
-            let r = unsafe {
-                crate::ported::utils::mbrtowc(
-                    &mut wc,
-                    ubytes[idx..].as_ptr() as *const libc::c_char,
-                    1,
-                    &mut mbs as *mut crate::ported::utils::MbStateBuf as *mut libc::c_void,
-                )
+            let r = if eol {
+                MB_INVALID
+            } else {
+                unsafe {
+                    mbrtowc(
+                        &mut wc,
+                        ubytes[idx..].as_ptr() as *const libc::c_char,
+                        ubytes.len() - idx,
+                        &mut mbs as *mut MbStateBuf as *mut libc::c_void,
+                    )
+                }
             };
-            if r == crate::ported::utils::MB_INVALID {
+            if r == MB_INCOMPLETE || r == MB_INVALID {
+                // c:754-767 — MB_INCOMPLETE sets eol and falls through to
+                // MB_INVALID: nicechar of the byte, one byte consumed, and
+                // `mbs` out of its undefined state.
+                eol |= r == MB_INCOMPLETE;
+                mbs = crate::ported::utils::MBSTATE_ZERO;
                 (nicechar(b0 as char), 1)
             } else {
-                (wcs_nicechar(char::from(b0), None, None), 1)
+                // c:768-775 — `case 0` (a NUL) counts one byte, then the
+                // `default:` wcs_nicechar arm. The wide character is the
+                // LOCALE's code (EUC-JP `a4 a2` is 0xA4A2 on Darwin), which
+                // zsh's WC_ISPRINT / WCWIDTH still run through the Unicode 9
+                // tables (Src/zsh.h:3302, compat.c u9_iswprint), so a value
+                // no `char` spells is non-printable there: wcwidth9 is -1.
+                let wcu = wc as u32;
+                let rep = match char::from_u32(wcu) {
+                    Some(ch) => wcs_nicechar(ch, None, None),
+                    None if wcu >= 0x10000 => format!("\\U{:08x}", wcu), // utils.c:657
+                    None => format!("\\u{:04x}", wcu),                   // utils.c:661
+                };
+                // utils.c:681-698 — a printable character goes out as
+                // `wcrtomb`'s bytes, not as a UTF-8 encoding of its code.
+                let mut mb = [0u8; 16];
+                let mut st: MbStateBuf = crate::ported::utils::MBSTATE_ZERO;
+                let n = unsafe {
+                    wcrtomb(
+                        mb.as_mut_ptr() as *mut libc::c_char,
+                        wc,
+                        &mut st as *mut MbStateBuf as *mut libc::c_void,
+                    )
+                };
+                if n != MB_INVALID {
+                    let w = crate::ported::compat::u9_wcwidth(wcu); // utils.c:684
+                    wide = Some((mb[..n].to_vec(), if w >= 0 { w } else { 1 }));
+                }
+                (rep, r.max(1))
             }
         } else if seq_len >= 1 && idx + seq_len <= ubytes.len() {
             match std::str::from_utf8(&ubytes[idx..idx + seq_len]) {
@@ -1428,7 +1472,13 @@ pub fn clnicezputs(do_colors: i32, s: &str, ml_in: i32) -> i32 {
             // byte itself (0xe2 above), which this port holds as a `char` in
             // U+0080..U+00FF whose UTF-8 encoding is TWO bytes — so it has to
             // go out as the raw byte, not as `encode_utf8`.
-            if mb_single_byte && (ch as u32) < 0x100 {
+            // The libc-decoded wide character itself goes out as wcrtomb's
+            // bytes (utils.c:690-697), so EUC-JP / GB2312 text is written in
+            // its own encoding.
+            let wide_here = if (ch as u32) >= 0x80 { wide.as_ref() } else { None };
+            if let Some((bytes, _)) = wide_here {
+                crate::shout::write(bytes);
+            } else if mb_single_byte && (ch as u32) < 0x100 {
                 crate::shout::write(&[ch as u8]);
             } else {
                 crate::shout::write(ch.encode_utf8(&mut buf).as_bytes());
@@ -1437,6 +1487,8 @@ pub fn clnicezputs(do_colors: i32, s: &str, ml_in: i32) -> i32 {
             //             wide character contributes its display width.
             col += if (ch as u32) < 0x80 {
                 1
+            } else if let Some((_, w)) = wide_here {
+                *w
             } else {
                 zwcwidth(ch) as i32
             };
@@ -9137,5 +9189,42 @@ mod tests {
             "c:1756-1757 + c:1767 — the mtab cell must carry the built \
              placeholder text, as C's stored pointer does for msearch (c:2327)"
         );
+    }
+
+    /// c:750-775 — `clnicezputs` decodes with `mbrtowc` over the REMAINING
+    /// bytes and one carried `mbs`, so an EUC-JP character (`a4 a2`, two
+    /// bytes, one wide character) is printed whole, in the locale's own
+    /// encoding (`wcrtomb`, Src/utils.c:681-698). Decoding a byte at a time
+    /// printed the trailing byte as a `\M-` escape. The locale is set for
+    /// this thread only (`uselocale`); a host without it skips.
+    #[test]
+    fn clnicezputs_euc_jp_prints_whole_characters() {
+        let _g = crate::test_util::global_state_lock();
+        let name = std::ffi::CString::new("ja_JP.eucJP").unwrap();
+        let loc = unsafe {
+            libc::newlocale(libc::LC_CTYPE_MASK, name.as_ptr(), std::ptr::null_mut())
+        };
+        if loc.is_null() {
+            return;
+        }
+        let old = unsafe { libc::uselocale(loc) };
+        // zshrs carries a byte that is not UTF-8 as U+0083 + (byte ^ 32).
+        let s = "\u{83}\u{84}\u{83}\u{82}x\u{83}\u{84}";
+        let mut fds = [0 as libc::c_int; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe(2)");
+        let saved = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+        crate::ported::init::SHTTY.store(fds[1], Ordering::Relaxed);
+        clnicezputs(0, s, 0);
+        crate::ported::init::SHTTY.store(saved, Ordering::Relaxed);
+        unsafe {
+            libc::uselocale(old);
+            libc::freelocale(loc);
+            libc::close(fds[1]);
+        }
+        let mut buf = [0u8; 64];
+        let n = unsafe { libc::read(fds[0], buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
+        unsafe { libc::close(fds[0]) };
+        // The trailing lone lead byte is MB_INCOMPLETE: eol, nicechar.
+        assert_eq!(&buf[..n.max(0) as usize], b"\xa4\xa2x\\M-$");
     }
 }
