@@ -3207,3 +3207,20 @@ fn emulate_sh_reads_bourne_startup_files_and_terse_ps4() {
         assert_eq!(out, "profile-read\nbody\n", "--emulate {mode} login reads ~/.profile");
     }
 }
+
+// ════════════════════════════════════════════════════════════════════
+// `$(( epochtime[1] ))` read 0: getstrvalue's PM_ARRAY arm read the
+// stored array directly instead of `getvaluearr(v)` (Src/params.c:2369),
+// which runs the node's own `gsu.a->getfn` — zsh/datetime's getcurrenttime.
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn epochtime_element_in_arithmetic_uses_the_gsu_getfn() {
+    let (_ec, stdout, _stderr) = run_zshrs(
+        r#"zmodload zsh/datetime; print -r -- $(( epochtime[1] > 1700000000 )) $(( epochtime[2] >= 0 && epochtime[2] < 1000000000 ))"#,
+    );
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(stdout, "1 1\n");
+}

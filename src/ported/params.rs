@@ -5302,7 +5302,15 @@ pub fn getstrvalue(v: Option<&mut value>) -> String {
         // c:2359-2369 (PM_ARRAY, and the ksh-emulation PM_HASHED fall-through).
         // Both arms end in `return s;` (c:2369): an element is neither
         // padded nor cut by the scalar tail below.
-        let arr = arrgetfn(pm);
+        // c:2369 — `ss = getvaluearr(v)`. A stored array is exactly what
+        // getvaluearr's stdgsu arm returns (arrgetfn), read here without its
+        // second copy; anything else goes through getvaluearr, so a module
+        // special's own `gsu.a->getfn` answers `$(( epochtime[1] ))`.
+        let arr = if pm.u_arr.is_some() {
+            arrgetfn(pm)
+        } else {
+            getvaluearr(Some(v))
+        };
         if v.scanflags != 0 {
             // c:2361
             return arr.join(" ");
