@@ -49,6 +49,12 @@ fn fixture(tag: &str) -> std::path::PathBuf {
     dir
 }
 
+/// `$HOME` for runs in `dir`: a sibling, so the state zshrs materialises under
+/// `~/.zshrs` at startup never shows up among the fixture's files.
+fn home_for(dir: &Path) -> std::path::PathBuf {
+    dir.with_extension("home")
+}
+
 fn run(bin: &Path, flags: &[&str], script: &str, dir: &Path) -> (String, i32) {
     let out = Command::new(bin)
         .args(flags)
@@ -56,7 +62,7 @@ fn run(bin: &Path, flags: &[&str], script: &str, dir: &Path) -> (String, i32) {
         .current_dir(dir)
         .env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-        .env("HOME", dir)
+        .env("HOME", home_for(dir))
         .env("LANG", "en_US.UTF-8")
         .env("TERM", "xterm")
         .stdin(std::process::Stdio::null())
@@ -87,8 +93,10 @@ fn sweep(area: &str, rows: &[&str]) {
         let _ = fixture(&format!("{area}-ref"));
         let _ = fixture(&format!("{area}-rs"));
     }
-    let _ = std::fs::remove_dir_all(&rd);
-    let _ = std::fs::remove_dir_all(&zd);
+    for d in [&rd, &zd] {
+        let _ = std::fs::remove_dir_all(d);
+        let _ = std::fs::remove_dir_all(home_for(d));
+    }
     assert!(bad.is_empty(), "{area}: {} row(s) diverge from zsh:\n{}", bad.len(), bad.join("\n"));
 }
 
