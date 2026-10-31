@@ -110,6 +110,19 @@ pub fn dash_atomax_clamps() -> bool {
     ASH_MODE.load(Ordering::Relaxed) && dash_strict()
 }
 
+/// Whether dash's `type` runs its operands through `nextopt`. dash 0.5.13
+/// added `nextopt(nullstr)` to `typecmd` (commit ba57b84b30 "builtin: Ignore
+/// first -- in type for consistency"; dash-0.5.13.5 `src/exec.c:775`), so the
+/// `ash` reference drops a leading `--` and rejects any option letter
+/// (`type -a echo` is "Illegal option -a", status 2). `/bin/dash` predates it
+/// and looks `-a` / `--` up as command names.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+#[inline]
+pub fn dash_type_parses_options() -> bool {
+    ASH_MODE.load(Ordering::Relaxed) && dash_strict()
+}
+
 /// strtoimax over an unsigned digit string in `radix`: None if `digits` is
 /// empty or holds a non-digit; an overflow saturates to i64::MAX / i64::MIN
 /// and is reported in the bool (strtoimax's ERANGE). Accumulated negatively

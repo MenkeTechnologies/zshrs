@@ -695,3 +695,38 @@ fn out_of_range_integers_ash_clamps_dash_errors() {
         }
     }
 }
+
+/// dash 0.5.13 (the ash reference) runs `type`'s operands through `nextopt`
+/// (dash-0.5.13.5 `src/exec.c:775`): a leading `--` is dropped, any option
+/// letter is "Illegal option" (status 2), and a lone `-` stays an operand.
+/// `/bin/dash` (dash-16) has no option parsing in `type` and looks `-a` / `--`
+/// up as command names.
+#[test]
+fn type_options_ash_parses_dash_looks_up() {
+    let cases: &[(&str, &str, &str)] = &[
+        // (script, --ash stdout+status, --dash stdout+status)
+        ("type -a echo; echo $?", "2\n0", "-a: not found\necho is a shell builtin\n127\n0"),
+        ("type -- echo; echo $?", "echo is a shell builtin\n0\n0", "--: not found\necho is a shell builtin\n127\n0"),
+        ("type - echo; echo $?", "-: not found\necho is a shell builtin\n127\n0", "-: not found\necho is a shell builtin\n127\n0"),
+        ("type -- --; echo $?", "--: not found\n127\n0", "--: not found\n--: not found\n127\n0"),
+    ];
+    let run = |bin: &str, flag: Option<&str>, script: &str| -> String {
+        let mut c = Command::new(bin);
+        if let Some(f) = flag {
+            c.arg(f);
+        }
+        let out = c.args(["-c", script]).output().expect("spawn");
+        format!("{}{}", String::from_utf8_lossy(&out.stdout), out.status.code().unwrap_or(-1))
+    };
+    let zshrs = zshrs_bin();
+    for &(script, ash, dash) in cases {
+        assert_eq!(run(&zshrs, Some("--ash"), script), ash, "--ash: {script}");
+        assert_eq!(run(&zshrs, Some("--dash"), script), dash, "--dash: {script}");
+        if Path::new("/opt/homebrew/bin/ash").exists() {
+            assert_eq!(run("/opt/homebrew/bin/ash", None, script), ash, "/opt/homebrew/bin/ash: {script}");
+        }
+        if Path::new("/bin/dash").exists() && cfg!(target_os = "macos") {
+            assert_eq!(run("/bin/dash", None, script), dash, "/bin/dash: {script}");
+        }
+    }
+}

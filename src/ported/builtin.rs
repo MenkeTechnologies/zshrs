@@ -597,8 +597,13 @@ pub fn execbuiltin(
             }
             // !!! DASH-FAITHFUL GATE (no C counterpart) !!! dash's `type` parses no
             // options at all: `type -t ls` and `type -- ls` look `-t` and `--` up as
-            // names (`-t: not found`), still describe `ls`, and exit 127.
-            if crate::dash_mode::dash_faithful() && name == "type" {
+            // names (`-t: not found`), still describe `ls`, and exit 127. dash 0.5.13
+            // (the ash reference) parses them, but its `nextopt` leaves a lone `-`
+            // as an operand (`-: not found`); see `dash_type_parses_options`.
+            if crate::dash_mode::dash_faithful()
+                && name == "type"
+                && (!crate::dash_mode::dash_type_parses_options() || arg_str == "-")
+            {
                 break;
             }
             // !!! SH (no C counterpart) !!! /bin/sh is bash built with xpg_echo: `echo` takes no
