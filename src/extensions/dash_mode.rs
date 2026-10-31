@@ -93,6 +93,63 @@ static NOCASEMATCH: AtomicBool = AtomicBool::new(false);
 /// while ksh93 prints `[]`.
 static PDKSH_FAMILY: AtomicBool = AtomicBool::new(false);
 
+/// Whether dash's `atomax` saturates an out-of-range integer instead of
+/// failing with "Illegal number". dash 0.5.13.1 removed the check
+/// (commit a8d4986223 "mystring: Ignore ERANGE errors in atomax", deleting
+/// `if (errno == ERANGE) badnum(s);` from src/mystring.c `atomax`), so `test`
+/// operands (bltin/test.c `getn` -> `atomax10`) and arithmetic variable reads
+/// (var.c `lookupvarint` -> `atomax(.., 0)`) take strtoimax's clamped
+/// INTMAX_MAX / INTMAX_MIN. That is the `ash` reference (dash 0.5.13.x, see
+/// [`ASH_MODE`]); `/bin/dash` (Apple dash-16) predates it and still errors.
+/// `number()` (shift/exit/kill/...) is unaffected: it rejects the clamped
+/// value as > INT_MAX in both.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+#[inline]
+pub fn dash_atomax_clamps() -> bool {
+    ASH_MODE.load(Ordering::Relaxed) && dash_strict()
+}
+
+/// strtoimax over an unsigned digit string in `radix`: None if `digits` is
+/// empty or holds a non-digit; an overflow saturates to i64::MAX / i64::MIN
+/// and is reported in the bool (strtoimax's ERANGE). Accumulated negatively
+/// so i64::MIN, which strtoimax accepts, has a value.
+fn strtoimax_digits(neg: bool, digits: &str, radix: u32) -> Option<(i64, bool)> {
+    if digits.is_empty() {
+        return None;
+    }
+    let mut acc = 0i64;
+    let mut erange = false;
+    for c in digits.chars() {
+        let d = c.to_digit(radix)? as i64;
+        if !erange {
+            match acc.checked_mul(radix as i64).and_then(|a| a.checked_sub(d)) {
+                Some(a) => acc = a,
+                None => erange = true,
+            }
+        }
+    }
+    let v = match (erange, neg) {
+        (true, true) => i64::MIN,
+        (true, false) => i64::MAX,
+        (false, true) => acc,
+        (false, false) => match acc.checked_neg() {
+            Some(v) => v,
+            None => return Some((i64::MAX, true)),
+        },
+    };
+    Some((v, erange))
+}
+
+/// dash `atomax` result: a clamped value is kept where [`dash_atomax_clamps`],
+/// otherwise ERANGE is "Illegal number" (None).
+fn dash_atomax_range(r: Option<(i64, bool)>) -> Option<i64> {
+    match r? {
+        (_, true) if !dash_atomax_clamps() => None,
+        (v, _) => Some(v),
+    }
+}
+
 /// True while the shell runs a `-c` command string (set by the binary before
 /// the string is compiled). mksh treats such a string differently from a
 /// script file: `$LINENO` is always 0 and `set -n` is ignored.
@@ -761,11 +818,7 @@ pub fn dash_arith_var(raw: &str) -> Option<i64> {
     } else {
         (10, body)
     };
-    if !digits.starts_with(|c: char| c.is_ascii_alphanumeric()) {
-        return None;
-    }
-    let v = i64::from_str_radix(digits, radix).ok()?;
-    Some(if neg { -v } else { v })
+    dash_atomax_range(strtoimax_digits(neg, digits, radix))
 }
 
 /// dash's POSIX special builtins (parser.c `goodname` rejects them as function
@@ -4447,8 +4500,8 @@ fn dash_getop(s: &str) -> Option<&'static DashOp> {
 }
 
 /// dash `atomax10`: optional blanks, sign and decimal digits filling the whole
-/// string; anything else, or a value strtoimax reports as ERANGE, is
-/// "Illegal number" (mystring.c `atomax`: `if (errno == ERANGE) badnum(s);`).
+/// string; anything else is "Illegal number". A value strtoimax reports as
+/// ERANGE is clamped or rejected per [`dash_atomax_clamps`].
 fn dash_getn(s: &str) -> Result<i64, String> {
     // dash's `atomax` skips leading blanks and `number()` tolerates trailing ones
     // (`[ '1 ' -eq 1 ]` is true).
@@ -4458,15 +4511,7 @@ fn dash_getn(s: &str) -> Result<i64, String> {
         Some(b'+') => (false, &t[1..]),
         _ => (false, t),
     };
-    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-        return Err(format!("Illegal number: {s}"));
-    }
-    // Accumulated negatively so i64::MIN, which strtoimax accepts, has a value.
-    digits
-        .bytes()
-        .try_fold(0i64, |a, b| a.checked_mul(10)?.checked_sub((b - b'0') as i64))
-        .and_then(|m| if neg { Some(m) } else { m.checked_neg() })
-        .ok_or_else(|| format!("Illegal number: {s}"))
+    dash_atomax_range(strtoimax_digits(neg, digits, 10)).ok_or_else(|| format!("Illegal number: {s}"))
 }
 
 struct DashTest {

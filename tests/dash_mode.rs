@@ -654,3 +654,44 @@ fn glob_order_ash_collates_dash_bytewise() {
     assert_eq!(run(&zshrs, Some("--ash"), "C"), bytewise, "--ash LC_ALL=C");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ── out-of-range integers: ash (dash 0.5.13.1+) clamps, /bin/dash errors ─
+
+/// dash 0.5.13.1 dropped `if (errno == ERANGE) badnum(s);` from
+/// `atomax` (src/mystring.c, commit a8d4986223), so `test` operands and
+/// arithmetic variable reads take strtoimax's clamped value; macOS
+/// `/bin/dash` (dash-16) predates it and says "Illegal number" (status 2).
+/// `number()` callers (`shift`, `exit`) still reject the value in both.
+#[test]
+fn out_of_range_integers_ash_clamps_dash_errors() {
+    let cases: &[(&str, &str, &str)] = &[
+        // (script, --ash stdout+status, --dash stdout+status)
+        ("test 99999999999999999999 -gt 0; echo $?", "0\n0", "2\n0"),
+        ("[ -99999999999999999999 -eq -9223372036854775808 ]; echo $?", "0\n0", "2\n0"),
+        ("test 9223372036854775808 -eq 9223372036854775807; echo $?", "0\n0", "2\n0"),
+        ("test -9223372036854775808 -lt 0; echo $?", "0\n0", "0\n0"),
+        ("x=99999999999999999999; echo $((x))", "9223372036854775807\n0", "2"),
+        ("x=-0x999999999999999999999; echo $((x))", "-9223372036854775808\n0", "2"),
+        ("x=-9223372036854775808; echo $((x))", "-9223372036854775808\n0", "-9223372036854775808\n0"),
+        ("shift 99999999999999999999; echo no", "2", "2"),
+    ];
+    let run = |bin: &str, flag: Option<&str>, script: &str| -> String {
+        let mut c = Command::new(bin);
+        if let Some(f) = flag {
+            c.arg(f);
+        }
+        let out = c.args(["-c", script]).output().expect("spawn");
+        format!("{}{}", String::from_utf8_lossy(&out.stdout), out.status.code().unwrap_or(-1))
+    };
+    let zshrs = zshrs_bin();
+    for &(script, ash, dash) in cases {
+        assert_eq!(run(&zshrs, Some("--ash"), script), ash, "--ash: {script}");
+        assert_eq!(run(&zshrs, Some("--dash"), script), dash, "--dash: {script}");
+        if Path::new("/opt/homebrew/bin/ash").exists() {
+            assert_eq!(run("/opt/homebrew/bin/ash", None, script), ash, "/opt/homebrew/bin/ash: {script}");
+        }
+        if Path::new("/bin/dash").exists() && cfg!(target_os = "macos") {
+            assert_eq!(run("/bin/dash", None, script), dash, "/bin/dash: {script}");
+        }
+    }
+}
