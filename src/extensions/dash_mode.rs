@@ -123,6 +123,34 @@ pub fn set_pdksh_family(on: bool) {
     PDKSH_FAMILY.store(on, Ordering::Relaxed);
 }
 
+/// `zshrs --ash` (or argv[0] `ash`): the dash-strict personality, diverging only where the
+/// ash reference (current upstream dash) does. For glob order: the `ash` parity reference is
+/// dash 0.5.13 (Homebrew `dash-shell`, built with plain `./configure
+/// --with-libedit`, so no `--enable-glob` and its own `expmeta`), whose
+/// `msort` orders glob results with `strcoll(p->text, q->text)`
+/// (dash-0.5.13.5 `src/expand.c:1823`) under the locale `changelocale`
+/// installs from `LC_ALL`/`LC_COLLATE`/`LANG` (`src/var.c:85-89,111-115`).
+/// The `dash` reference, macOS `/bin/dash`, imports `strcmp` and neither
+/// `strcoll` nor `setlocale` (`nm -u /bin/dash`), so `--dash` keeps the
+/// bytewise order. Variable listings stay bytewise in both
+/// (dash 0.5.13.5 `varcmp`, `src/var.c:663`).
+static ASH_MODE: AtomicBool = AtomicBool::new(false);
+
+/// Select the ash flavour of dash-strict mode. Called from the binary's CLI
+/// mode application. See [`ASH_MODE`].
+#[inline]
+pub fn set_ash_mode(on: bool) {
+    ASH_MODE.store(on, Ordering::Relaxed);
+}
+
+/// True when glob results collate by locale as the ash reference's `msort`
+/// does. Only meaningful under [`dash_strict`]; a later `emulate zsh`
+/// clears that and with it this.
+#[inline]
+pub fn ash_glob_collates() -> bool {
+    ASH_MODE.load(Ordering::Relaxed) && dash_strict()
+}
+
 /// True when `shopt -s nocasematch` is active (bash case-insensitive matching).
 #[inline]
 pub fn nocasematch() -> bool {
@@ -4594,7 +4622,9 @@ impl DashTest {
     }
 }
 
-fn dash_strcoll(a: &str, b: &str) -> i32 {
+/// `strcoll(a, b)` as dash calls it: test.c `<`/`>` and ash glob `msort`
+/// (`src/expand.c:1823`; see [`ASH_MODE`]).
+pub fn dash_strcoll(a: &str, b: &str) -> i32 {
     let (Ok(a), Ok(b)) = (std::ffi::CString::new(a), std::ffi::CString::new(b)) else {
         return 0;
     };

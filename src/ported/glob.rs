@@ -1297,15 +1297,19 @@ pub fn gmatchcmp(
             // `Path::to_string_lossy` + `strip_prefix` pair on EVERY
             // comparison — 11.7% of a 60605-match `man` glob, since a
             // sort comparator runs O(n log n) times.
-            zstrcmp(
-                &a.uname,
-                &b.uname,
-                if numeric_sort {
-                    crate::zsh_h::SORTIT_NUMERICALLY as u32
-                } else {
-                    0
-                },
-            )
+            let flags = if numeric_sort {
+                crate::zsh_h::SORTIT_NUMERICALLY as u32
+            } else {
+                0
+            };
+            // !!! ASH GATE (no C counterpart) !!! zstrcmp compares bytewise
+            // under dash-strict mode, but the ash reference's glob `msort`
+            // collates with strcoll; see dash_mode::ASH_MODE.
+            if crate::dash_mode::ash_glob_collates() {
+                crate::dash_mode::dash_strcoll(&a.uname, &b.uname).cmp(&0)
+            } else {
+                zstrcmp(&a.uname, &b.uname, flags)
+            }
         } else if key_unshifted == GS_DEPTH {
             // c:949-972 — pairwise: skip the common prefix of the two
             // full paths, then `slasha`/`slashb` = does the remainder of

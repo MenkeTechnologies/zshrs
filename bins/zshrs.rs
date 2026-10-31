@@ -350,7 +350,7 @@ byte-for-byte; every `source` re-runs the file fresh, every echo re-fires):
   --pdksh      identical-behaviour drop-in for pdksh (Public Domain ksh; ksh base)
   --sh         identical-behaviour drop-in for /bin/sh / POSIX (alias of --posix)
   --dash       identical-behaviour drop-in for /bin/dash (strict POSIX subset)
-  --ash        identical-behaviour drop-in for ash (Almquist; alias of --dash)
+  --ash        identical-behaviour drop-in for ash (Almquist; current upstream dash)
   --csh        identical-behaviour drop-in for /bin/csh
   --posix      identical-behaviour drop-in for /bin/sh (Bourne)
   --emulate MODE  alias for --MODE (zsh-compat: `emulate zsh` etc.)
@@ -1554,6 +1554,14 @@ pub fn zshrs_main() {
     // dash_mode can answer per-shell; see dash_mode::PDKSH_FAMILY.
     zsh::extensions::dash_mode::set_pdksh_family(
         !zsh_style_requested && args.iter().any(|a| a == "--mksh" || a == "--pdksh"),
+    );
+    // `--ash` / argv[0] `ash` select the same dash-strict preset as `--dash`;
+    // record which reference was asked for (see dash_mode::ASH_MODE).
+    let dash_flag = args.iter().any(|a| a == "--dash");
+    zsh::extensions::dash_mode::set_ash_mode(
+        matches!(shell_mode(), ShellMode::Dash)
+            && !dash_flag
+            && (args.iter().any(|a| a == "--ash") || argv0_basename == "ash"),
     );
 
     // bash-specific option deltas on top of the shared `sh` emulation base.

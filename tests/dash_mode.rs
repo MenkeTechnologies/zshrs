@@ -606,3 +606,51 @@ fn dash_only_quirks_match_dash() {
     }
     let _ = std::fs::remove_file(&sourced);
 }
+
+// ── glob result order: ash collates, dash compares bytes ─────────────────
+
+/// Homebrew dash 0.5.13 (the `ash` reference) sorts glob results in
+/// `msort` with `strcoll` (`src/expand.c:1823`); macOS `/bin/dash` uses
+/// `strcmp`. `--dash` must stay bytewise in every locale, `--ash` must
+/// follow the locale, and both must match their reference when present.
+#[test]
+fn glob_order_ash_collates_dash_bytewise() {
+    let dir = std::env::temp_dir().join(format!("zshrs-ash-glob-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("sd")).unwrap();
+    for f in ["b", "a", "C", ".h", "a1", "a2", "a10", "sd/i"] {
+        std::fs::write(dir.join(f), "").unwrap();
+    }
+    let script = "printf '<%s>' *; echo; for f in *; do printf '%s ' $f; done; echo; \
+                  printf '<%s>' ?; echo; printf '<%s>' [!a]*; echo";
+    let run = |bin: &str, flag: Option<&str>, lc: &str| -> String {
+        let mut c = Command::new(bin);
+        if let Some(f) = flag {
+            c.arg(f);
+        }
+        let out = c
+            .args(["-c", script])
+            .current_dir(&dir)
+            .env("LANG", "C.UTF-8")
+            .env("LC_ALL", lc)
+            .output()
+            .expect("spawn");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let bytewise = "<C><a><a1><a10><a2><b><sd>\nC a a1 a10 a2 b sd \n<C><a><b>\n<C><b><sd>\n";
+    let zshrs = zshrs_bin();
+    for lc in ["C", "en_US.UTF-8"] {
+        assert_eq!(run(&zshrs, Some("--dash"), lc), bytewise, "--dash LC_ALL={lc}");
+        if Path::new("/bin/dash").exists() {
+            assert_eq!(run("/bin/dash", None, lc), bytewise, "/bin/dash LC_ALL={lc}");
+        }
+        if Path::new("/opt/homebrew/bin/ash").exists() {
+            assert_eq!(
+                run(&zshrs, Some("--ash"), lc),
+                run("/opt/homebrew/bin/ash", None, lc),
+                "--ash vs /opt/homebrew/bin/ash LC_ALL={lc}"
+            );
+        }
+    }
+    assert_eq!(run(&zshrs, Some("--ash"), "C"), bytewise, "--ash LC_ALL=C");
+    let _ = std::fs::remove_dir_all(&dir);
+}
