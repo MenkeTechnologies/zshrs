@@ -5014,8 +5014,20 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
         let mut child_pids: Vec<libc::pid_t> = Vec::with_capacity(n - 1);
         for (i, chunk) in stages_vec.iter().take(last_idx).enumerate() {
+            // c:Src/exec.c:2877 — execcmd_fork's synch pipe. The parent does
+            // not fork the next stage until this one has finished entersubsh,
+            // so stages start in pipeline order: `print a | exit 5 | cat` has
+            // its print write before the `exit 5` stage closes the pipe.
+            let mut synch = [-1 as libc::c_int; 2];
+            if unsafe { libc::pipe(synch.as_mut_ptr()) } < 0 {
+                synch = [-1, -1];
+            }
             match unsafe { libc::fork() } {
                 -1 => {
+                    unsafe {
+                        libc::close(synch[0]); // c:2881
+                        libc::close(synch[1]); // c:2882
+                    }
                     // fork failed — kill any children we already started
                     for pid in &child_pids {
                         unsafe { libc::kill(*pid, libc::SIGTERM) };
@@ -5029,6 +5041,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     return Value::Status(1);
                 }
                 0 => {
+                    unsafe { libc::close(synch[0]) }; // c:2915
                     forked_child_subsh_levels(); // c:Src/exec.c:1221
                     EXECCMD_FORKED.with(|f| f.set(true)); // c:Src/exec.c:3063 `last1 = forked = 1`
                     // Reset SIGPIPE to default so a broken-pipe write
@@ -5099,6 +5112,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         .get_or_init(|| std::sync::Mutex::new(-1))
                         .lock()
                         .unwrap() = -1;
+                    // c:2923-2927 — entersubsh is done; release the parent.
+                    unsafe { libc::close(synch[1]) };
                     // c:Src/exec.c:3720-3724 — the stage's own fds go
                     // onto 0/1 only AFTER its argument words have been
                     // expanded (prefork c:3304 / globlist c:3702), so
@@ -5163,6 +5178,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     forked_child_exit(stage_vm.last_status);
                 }
                 pid => {
+                    unsafe { libc::close(synch[1]) }; // c:2888
+                    if synch[0] >= 0 {
+                        let _ = crate::ported::utils::read_loop(synch[0], &mut [0u8; 1]); // c:2889
+                    }
+                    unsafe { libc::close(synch[0]) }; // c:2890
                     child_pids.push(pid);
                     child_started.push(std::time::Instant::now()); // c:Src/jobs.c:1480 bgtime
                 }
