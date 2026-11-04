@@ -15386,7 +15386,26 @@ pub fn bin_getopts(
             crate::dash_mode::clear_optind_assignment(); // getopts' own write
         }
     };
-    let mut zoptind = if optind_set {
+    // !!! EMULATION-ONLY (no C counterpart) !!! The ash reference never sees a
+    // script's write to $OPTIND (dash_mode::ash_ignores_optind_writes): it
+    // parses on from its own index and offset, and starts over only when that
+    // index lies past the arguments (dash_mode::ash_getopts_rewinds). Every
+    // ash getopts call also rewrites $OPTIND from that index, so a script's
+    // write is gone even when the call only reports the end of the options
+    // (dash_mode::getopts_last_reported).
+    let ash_internal = crate::dash_mode::ash_ignores_optind_writes();
+    if ash_internal {
+        if crate::dash_mode::ash_getopts_rewinds(args.len()) {
+            ZOPTIND.store(1, Relaxed);
+            OPTCIND.store(0, Relaxed);
+            write_optind(crate::dash_mode::getopts_optind_report(1, 0, 0) as i64);
+        } else if let Some(reported) = crate::dash_mode::getopts_last_reported() {
+            if reported != raw_optind {
+                write_optind(reported);
+            }
+        }
+    }
+    let mut zoptind = if optind_set && !ash_internal {
         paramtab_oi as i32
     } else {
         ZOPTIND.load(Relaxed)
@@ -15409,8 +15428,9 @@ pub fn bin_getopts(
     // to $OPTIND, not just on a write of 1 from elsewhere; dash and ash never
     // do. See dash_mode::getopts_optind_user_reset — false in --zsh, so the
     // c:5681-5685 rule on the left stands alone there.
-    let mut optcind = if (optind_set && paramtab_oi == 1 && ZOPTIND.load(Relaxed) != 1)
-        || crate::dash_mode::getopts_optind_user_reset(raw_optind)
+    let mut optcind = if !ash_internal
+        && ((optind_set && paramtab_oi == 1 && ZOPTIND.load(Relaxed) != 1)
+            || crate::dash_mode::getopts_optind_user_reset(raw_optind))
     {
         0
     } else {

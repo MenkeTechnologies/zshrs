@@ -123,6 +123,56 @@ pub fn dash_type_parses_options() -> bool {
     ASH_MODE.load(Ordering::Relaxed) && dash_strict()
 }
 
+/// Whether a script's write to `$OPTIND` is invisible to `getopts`. dash
+/// 0.5.13 gave OPTIND's `varinit` entry `VNOFUNC` (commit c4a9b31b9b
+/// "options: Always reset OPTIND in getoptsreset"; dash-0.5.13.5
+/// `src/var.c:103`), and `setvareq` ORs the variable's own flags into the
+/// assignment's (`flags |= vp->flags & bits`), so its
+/// `if (!(flags & VNOFUNC)) varfunc(vp)` (`src/var.c:327`) never reaches
+/// `getoptsreset` and `getopts` keeps reading `shellparam.optind` /
+/// `shellparam.optoff`. The `ash` reference therefore carries on where it left
+/// off after `OPTIND=1`:
+///
+/// ```text
+/// $ ash -c 'OPTIND=1; getopts ab o -b; OPTIND=1; getopts ab o -b; echo "$o/$OPTIND"'
+/// ?/2
+/// ```
+///
+/// `/bin/dash` (0.5.12 and Apple dash-16) calls the hook on every write
+/// (dash-0.5.12 `src/var.c:268`) and answers `b/2`.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+#[inline]
+pub fn ash_ignores_optind_writes() -> bool {
+    ASH_MODE.load(Ordering::Relaxed) && dash_strict()
+}
+
+/// dash's `getoptscmd` rewind: when the index it left off at lies past the
+/// argument list now being parsed, it starts over at the first argument
+/// (`if ((unsigned)shellparam.optind > argc - 2) { shellparam.optind = 1;
+/// shellparam.optoff = -1; }`, dash-0.5.13.5 `src/options.c:418-428`). With
+/// script writes ignored ([`ash_ignores_optind_writes`]) this is the only way
+/// the `ash` reference re-parses. `shellparam.optind` is the value `getopts`
+/// last stored in `$OPTIND`, which [`getopts_optind_report`] records.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn ash_getopts_rewinds(nargs: usize) -> bool {
+    let reported = GETOPTS_REPORTED.load(Ordering::Relaxed);
+    reported >= 0 && reported as usize > nargs + 1
+}
+
+/// The `$OPTIND` value `getopts` last stored, i.e. dash's `shellparam.optind`,
+/// or None before the first call. dash's `getopts()` ends every call at `out:`
+/// with `setvarint("OPTIND", ind, VNOFUNC)` (dash-0.5.13.5 `src/options.c:508`),
+/// so under [`ash_ignores_optind_writes`] a script's own write never survives a
+/// `getopts`, not even one that only reports the end of the options.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn getopts_last_reported() -> Option<i64> {
+    let reported = GETOPTS_REPORTED.load(Ordering::Relaxed);
+    (reported >= 0).then_some(reported as i64)
+}
+
 /// strtoimax over an unsigned digit string in `radix`: None if `digits` is
 /// empty or holds a non-digit; an overflow saturates to i64::MAX / i64::MIN
 /// and is reported in the bool (strtoimax's ERANGE). Accumulated negatively
