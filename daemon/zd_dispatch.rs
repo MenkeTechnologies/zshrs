@@ -430,6 +430,10 @@ fn daemon_start(paths: &crate::paths::CachePaths, exe: &std::path::Path) -> Resu
     use std::process::{Command, Stdio};
     let mut cmd = Command::new(exe);
     cmd.env("ZSHRS_HOME", &paths.root).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    // The socket is gone, but a daemon that `stop` just shut down can still
+    // hold the singleton lock while it drains. Wait it out, as the IPC
+    // restart's replacement does (ops.rs), instead of exiting "already running".
+    cmd.env("ZSHRS_DAEMON_LOCK_WAIT_MS", LIFECYCLE_WAIT.as_millis().to_string());
     // New session: the daemon must outlive the shell or script that started it.
     // SAFETY: setsid is async-signal-safe and touches no Rust state.
     unsafe {
