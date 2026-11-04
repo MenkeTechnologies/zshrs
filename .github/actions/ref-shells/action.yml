@@ -1,10 +1,11 @@
-name: bash and ksh93 references
+name: bash, ksh93 and ash references
 description: >
-  Build (or restore from cache) the bash 5.3.20 and ksh93u+m 1.0.10 that
-  `--bash` / `--ksh` are diffed against, via scripts/build_ref_shells.sh, and
-  put them first on PATH. Linux only: the distro packages lag both releases
-  (Ubuntu 24.04 ships bash 5.2.21 and ksh93u+m 1.0.8), while the macOS jobs
-  get the same two releases from Homebrew.
+  Build (or restore from cache) the bash 5.3.20, ksh93u+m 1.0.10 and dash
+  0.5.13.5 (installed as `ash`) that `--bash` / `--ksh` / `--ash` are diffed
+  against, via scripts/build_ref_shells.sh, and put them first on PATH. Linux
+  only: the distro packages lag all three releases (Ubuntu 24.04 ships bash
+  5.2.21, ksh93u+m 1.0.8 and dash 0.5.12), while the macOS jobs get bash and
+  ksh93 from Homebrew.
 runs:
   using: composite
   steps:
@@ -13,7 +14,7 @@ runs:
       with:
         path: ~/.cache/zshrs/ref-shells
         key: ref-shells-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build_ref_shells.sh', '.github/actions/ref-shells/action.yml') }}
-    - name: Build bash and ksh93
+    - name: Build bash, ksh93 and ash
       if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
       run: sh scripts/build_ref_shells.sh "$HOME/.cache/zshrs/ref-shells"

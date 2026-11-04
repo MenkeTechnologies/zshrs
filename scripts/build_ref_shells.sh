@@ -1,15 +1,16 @@
 #!/bin/sh
-# Build the bash and ksh93 references the emulation suites diff `--bash` and
-# `--ksh` against (tests/emulation_parity.rs, tests/builtin_output_parity.rs)
-# into a prefix whose bin/ goes first on PATH.
+# Build the bash, ksh93 and ash references the emulation suites diff `--bash`,
+# `--ksh` and `--ash` against (tests/emulation_parity.rs,
+# tests/builtin_output_parity.rs) into a prefix whose bin/ goes first on PATH.
 #
 #   scripts/build_ref_shells.sh [prefix]
 #
 # zshrs advertises bash 5.3.20 (dash_mode::BASH_VERSION_*) and follows
 # ksh93u+m 1.0.10; distro packages lag both (Ubuntu 24.04: bash 5.2.21,
 # ksh93u+m 1.0.8), and the rows where those releases answer differently are
-# not zshrs defects. macOS CI gets the same two versions from Homebrew; the
-# pins and checksums below are Homebrew's, so both runners measure one release.
+# not zshrs defects. macOS CI gets the same bash and ksh93 from Homebrew; the
+# pins and checksums below are Homebrew's (dash: its `dash-shell` formula), so
+# both runners measure one release.
 set -eu
 prefix=${1:-$HOME/.cache/zshrs/ref-shells}
 work=$(mktemp -d "${TMPDIR:-/tmp}/ref-shells.XXXXXX")
@@ -53,6 +54,15 @@ done <<'EOF'
 EOF
 (cd "$work/bash-5.3" && ./configure -q --prefix="$prefix" --without-bash-malloc >/dev/null && make -s -j"$jobs" >/dev/null && make -s install >/dev/null)
 
+# dash 0.5.13.5, installed only as `ash`: `--ash` follows dash 0.5.13, which
+# clamps out-of-range integers where 0.5.12 (Ubuntu 24.04's dash) rejects them
+# with status 2. `--dash` keeps diffing against the platform /bin/dash.
+fetch https://cdn.netbsd.org/pub/pkgsrc/distfiles/dash-0.5.13.5.tar.gz 40090101a2a491f13e901d3d48e90414f26634628b9bfff35ff540363c227a7d "$work/dash.tar.gz"
+tar -xzf "$work/dash.tar.gz" -C "$work"
+(cd "$work/dash-0.5.13.5" && ./configure -q --prefix="$work/dash-root" >/dev/null && make -s -j"$jobs" >/dev/null && make -s install >/dev/null)
+mkdir -p "$prefix/bin"
+cp "$work/dash-root/bin/dash" "$prefix/bin/ash"
+
 # ksh93u+m 1.0.10, statically linked: a dynamic build installs libshell.so
 # into a lib/ the dynamic loader does not search.
 git clone -q --depth 1 --branch v1.0.10 https://github.com/ksh93/ksh.git "$work/ksh"
@@ -60,3 +70,4 @@ git clone -q --depth 1 --branch v1.0.10 https://github.com/ksh93/ksh.git "$work/
 
 "$prefix/bin/bash" --version | head -1
 "$prefix/bin/ksh" -c 'echo "$KSH_VERSION"'
+"$prefix/bin/ash" -c 'test 99999999999999999999 -gt 0 2>/dev/null; echo "ash: test 99999999999999999999 -gt 0 -> status $?"'

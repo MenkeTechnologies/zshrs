@@ -218,13 +218,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install reference shells (ubuntu runner)
         if: runner.os == 'Linux'
-        # zsh/dash from the distro, mksh best-effort; `ash` is dash under its
-        # Debian name, so the ash leg runs the `--ash` alias against a real binary.
+        # zsh/dash from the distro, mksh best-effort. `ash` is not the distro
+        # dash (0.5.12): the ref-shells step below builds dash 0.5.13.5 as `ash`,
+        # the release `--ash` follows.
         run: |
           sudo apt-get update && sudo apt-get install -y zsh dash mksh
-          sudo ln -sf "$(command -v dash)" /usr/local/bin/ash
-      # bash 5.3.20 and ksh93u+m 1.0.10, the releases `--bash` / `--ksh` follow;
-      # Ubuntu 24.04 ships bash 5.2.21 and ksh93u+m 1.0.8.
+      # bash 5.3.20, ksh93u+m 1.0.10 and dash 0.5.13.5 (as `ash`), the releases
+      # `--bash` / `--ksh` / `--ash` follow; Ubuntu 24.04 ships bash 5.2.21,
+      # ksh93u+m 1.0.8 and dash 0.5.12.
       - if: runner.os == 'Linux'
         uses: ./.github/actions/ref-shells
       - name: Install reference shells (macOS runner)
