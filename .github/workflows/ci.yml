@@ -141,7 +141,9 @@ jobs:
   corpus:
     name: Corpus tests
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    # A cold-cache macOS release build alone runs 9-12 min, and the AOT step
+    # follows it; 15 cancelled the job mid-AOT (run 41901360153).
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
