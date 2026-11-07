@@ -62382,3 +62382,26 @@ signal that arrives inside `malloc` is queued, never dispatched there.
 which marks a thread as inside the allocator for each call; `zhandler` queues
 the signal while that mark is set, as it already did for a busy `paramtab` /
 `JOBTAB`. 0 hangs in 40000 runs, against 10 in 20000 before.
+
+
+## #1213 — an `isset()` read on one thread could put back the value another thread's `setopt` had just replaced — fixed
+
+**Status:** `fixed` 2026-11-07.
+
+`isset()` reads `opts_cache`, a per-option slot array in front of the option
+map (`src/extensions/opts_cache.rs`). A miss read the map and stored the result
+in the slot. A writer updates the map, bumps the generation and resets the
+slot, so a read that started before the write and stored after the reset left
+the slot holding the old value, and every later `isset()` of that option
+answered it until the option was written again. Worker-pool threads read
+options while the main thread sets them. In the test binary it showed as
+`setopt extendedglob` not taking: `[a]#.hidden` compiled with `#` as a literal
+(`pattern::tests::nogld_rejects_a_leading_dot_only_for_wildcard_opcodes`,
+about 1 run in 5 with every core busy).
+
+**C reference.** None: C reads `opts[X]` directly (`#define isset(X) (opts[X])`, c:Src/zsh.h:2557), with
+no cache to go stale.
+
+**Fix.** A miss records the generation before reading the map and, after
+storing, resets the slot again if the generation moved. The test above passed
+in 10 runs under the same load.

@@ -26,10 +26,12 @@
 //! Every option-store mutation funnels through exactly three functions —
 //! `opt_state_set`, `opt_state_unset`, `opt_state_restore` (and
 //! `opt_state_set_via_alias`, which routes through the first two). Each of
-//! those calls [`invalidate_all`] after mutating the map, so the next read
-//! of any slot repopulates from the authoritative value. Reads outnumber
-//! writes by orders of magnitude, so a full invalidate on write is far
-//! cheaper than doing the name lookup on every read.
+//! those, after mutating the map, bumps [`OPT_GEN`] and resets the changed
+//! slots ([`invalidate_one`]; [`invalidate_all`] for a wholesale change), so
+//! the next read of the slot repopulates from the authoritative value. A
+//! read that misses re-checks [`OPT_GEN`] after storing what it read and
+//! drops it again if a write landed meanwhile — otherwise a reader on
+//! another thread could put back the value the write just replaced.
 
 use std::sync::atomic::{AtomicI8, Ordering};
 
@@ -53,9 +55,9 @@ pub fn generation() -> u64 {
 /// Drop the entire cache. Used when a wholesale option-store change makes
 /// per-slot tracking impossible (e.g. an unfiltered snapshot restore).
 pub fn invalidate_all() {
-    OPT_GEN.fetch_add(1, Ordering::Relaxed);
+    OPT_GEN.fetch_add(1, Ordering::SeqCst);
     for slot in OPTS_CACHE.iter() {
-        slot.store(-1, Ordering::Relaxed);
+        slot.store(-1, Ordering::SeqCst);
     }
 }
 
@@ -66,10 +68,10 @@ pub fn invalidate_all() {
 /// `optno` may be negative (a `no…` alias); the sign is dropped since the
 /// alias and its canonical share a slot.
 pub fn invalidate_one(optno: i32) {
-    OPT_GEN.fetch_add(1, Ordering::Relaxed);
+    OPT_GEN.fetch_add(1, Ordering::SeqCst);
     let idx = optno.unsigned_abs() as usize;
     if idx < OPT_SIZE as usize {
-        OPTS_CACHE[idx].store(-1, Ordering::Relaxed);
+        OPTS_CACHE[idx].store(-1, Ordering::SeqCst);
     }
 }
 
@@ -88,8 +90,19 @@ pub fn is_set(optno: i32) -> bool {
     if cached >= 0 {
         return cached != 0;
     }
+    // A miss races the writers: this thread can read the map before another
+    // thread's `setopt` lands and store that old value after the writer has
+    // already reset the slot, leaving the slot stale until the next write to
+    // the option (worker-pool threads read options while the main thread
+    // sets them). Every writer updates the map, then bumps OPT_GEN, then
+    // resets the slot, so a generation that moved while this read was in
+    // flight means the stored value may predate a write: undo it.
+    let gen = OPT_GEN.load(Ordering::SeqCst);
     let v = authoritative(optno);
-    slot.store(v as i8, Ordering::Relaxed);
+    slot.store(v as i8, Ordering::SeqCst);
+    if OPT_GEN.load(Ordering::SeqCst) != gen {
+        slot.store(-1, Ordering::SeqCst);
+    }
     v
 }
 
