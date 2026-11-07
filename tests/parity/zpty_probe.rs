@@ -130,15 +130,22 @@ all="${all//$'\e'[()][A-Za-z0-9]/}"
 /// for a shell bug while these were being written. Strip once here so
 /// every driver matches against what was DISPLAYED.
 ///
+/// Reads until 60 tries have found nothing (the 6s of waiting the loop has
+/// always allowed); a read that returns data does not use up a try. When
+/// every read counted, a shell that redraws in many small writes (the
+/// dev-tree oracle does) used the 60 up before the probe's last command,
+/// `cd /tmp`, had printed its `chpwd` mark. The 2000-read cap only stops a
+/// shell that never goes quiet.
+///
 /// Carriage returns are deliberately KEPT: they are the only thing
 /// separating one redraw of the line from the next, and folding them
 /// away would let two unrelated fragments match as one string.
 pub const DRAIN: &str = concat!(
     r#"
 local out all=
-integer i=0
-while (( i++ < 60 )); do
-  if zpty -r -t w out 2>/dev/null; then all+="$out"; else sleep 0.1; fi
+integer i=0 idle=0
+while (( idle < 60 && i++ < 2000 )); do
+  if zpty -r -t w out 2>/dev/null; then all+="$out"; else (( idle++ )); sleep 0.1; fi
 done
 zpty -d w 2>/dev/null
 "#,

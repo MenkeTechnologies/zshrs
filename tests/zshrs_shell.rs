@@ -17332,15 +17332,18 @@ fn test_dash_keeps_empty_positionals_of_unquoted_star_under_empty_ifs() {
     // expectation used to be hard-coded as "dash keeps the empty positionals"
     // (`<><a><b>`), but dash itself drops them — measured 2026-10-19 with
     // macOS dash-16 and Ubuntu dash 0.5.12 (`<a><b>`, `<a>`) — so the
-    // reference shell decides.
+    // reference shell decides. `--dash` follows the distro dash (0.5.12), the
+    // split `.github/workflows/ci.yml` pins: Homebrew's `dash` on PATH is
+    // 0.5.13.5 (`--ash`), which keeps them.
     let script = "set -- '' a b; IFS=; for x in $*; do printf '<%s>' \"$x\"; done; echo; \
                   for x in $@; do printf '<%s>' \"$x\"; done; echo";
     let trail = "set -- '' a ''; IFS=; printf '<%s>' $*; echo";
-    let Ok(dash_ref) = Command::new("dash").args(["-c", script]).output() else {
+    let Some(dash) = ["/bin/dash", "/usr/bin/dash"].into_iter().find(|p| std::path::Path::new(p).exists()) else {
         eprintln!("skip: dash not installed");
         return;
     };
-    let dash_trail_ref = Command::new("dash").args(["-c", trail]).output().expect("dash");
+    let dash_ref = Command::new(dash).args(["-c", script]).output().expect("dash");
+    let dash_trail_ref = Command::new(dash).args(["-c", trail]).output().expect("dash");
     let (_, dash, _) = run_zshrs_with_args(&["--dash", "-c", script]);
     assert_eq!(dash, String::from_utf8_lossy(&dash_ref.stdout));
     let (_, dash_trail, _) = run_zshrs_with_args(&["--dash", "-c", trail]);

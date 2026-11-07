@@ -20,7 +20,7 @@
 #![allow(non_snake_case)]
 #![allow(clippy::doc_lazy_continuation)]
 
-use crate::zpty_probe::{assert_same_dump, dump_widget, sq, DUMP_KEY, OPEN};
+use crate::zpty_probe::{assert_same_dump, dump_widget, sq, DUMP_KEY_PUMPED, OPEN, OPEN_PUMPED};
 
 /// Run `print MARKONE`, then type `recall` and press Return, and report
 /// HOW MANY times the marker reached the terminal.
@@ -60,31 +60,25 @@ print -r -- \"N=$(print -r -- \"$all\" | grep -c MARKONE)\" >! $OUTFILE
 
 /// Same interaction, but dumping the BUFFER after the recall's Return —
 /// which is where `HIST_VERIFY` is supposed to leave the expansion.
+///
+/// Pumped: with blind `sleep`s nothing read the pty until the end, its
+/// buffer filled during the setup lines, the inner shell blocked on write
+/// and the dump key was never read — on a host whose prompt redraws are
+/// long enough, both shells "dumped no editor state".
 fn buffer_driver(setopt: &str, recall: &str) -> String {
     let widget = dump_widget(r#""BUF=[$BUFFER] CUR=[$CURSOR]""#);
     format!(
-        "{OPEN}
-zpty -w w 'unsetopt beep'
-zpty -w w 'HISTSIZE=100; SAVEHIST=0; unset HISTFILE'
-zpty -w w {}
+        "{OPEN_PUMPED}
+zpty -w w 'unsetopt beep'; pump
+zpty -w w 'HISTSIZE=100; SAVEHIST=0; unset HISTFILE'; pump
+zpty -w w {}; pump
 {widget}
-sleep 2
-zpty -w -n w 'print MARKONE'
-sleep 2
-zpty -w -n w $'\\r'
-sleep 2
-zpty -w -n w {}
-sleep 2
-zpty -w -n w $'\\r'
-sleep 2
-{DUMP_KEY}
-local out all=
-integer i=0
-while (( i++ < 50 )); do
-  if zpty -r -t w out 2>/dev/null; then all+=\"$out\"; else sleep 0.1; fi
-done
-zpty -d w 2>/dev/null
-",
+pump
+zpty -w -n w 'print MARKONE'; pump
+zpty -w -n w $'\\r'; pump
+zpty -w -n w {}; pump
+zpty -w -n w $'\\r'; pump
+{DUMP_KEY_PUMPED}",
         sq(setopt),
         sq(recall)
     )
