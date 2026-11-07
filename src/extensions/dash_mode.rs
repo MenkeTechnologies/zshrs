@@ -2788,6 +2788,65 @@ pub fn getopts_forget_reported() {
     GETOPTS_INTERNAL.store(-1, Ordering::Relaxed);
 }
 
+/// dash's `shellparam.optind = 1; shellparam.optoff = -1;` WITHOUT touching
+/// the `$OPTIND` variable, which is what `shift` (dash-0.5.13.5
+/// `src/options.c:365-366`) and a function call (`src/eval.c:1015-1016`) do.
+/// The internal position goes back to the first argument, and the variable's
+/// current value is recorded as the one `getopts` last reported, so the next
+/// `getopts` reads it as untouched rather than as a script's `OPTIND=` write:
+///
+/// ```text
+/// $ dash -c 'getopts ab o -a; f() { getopts ab o -b; echo "$o/$OPTIND"; }; f'
+/// b/2                                          (zshrs --dash, before: ?/2)
+/// $ dash -c 'set -- -a z; getopts ab o; shift; getopts ab o -b; echo "$o"'
+/// b                                            (zshrs --dash, before: ?)
+/// ```
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn getopts_rewind_shellparam() {
+    crate::ported::builtin::ZOPTIND.store(1, Ordering::Relaxed);
+    crate::ported::builtin::OPTCIND.store(0, Ordering::Relaxed);
+    let shown = crate::ported::params::getiparam("OPTIND") as i32;
+    GETOPTS_REPORTED.store(shown, Ordering::Relaxed);
+    GETOPTS_INTERNAL.store(1, Ordering::Relaxed);
+}
+
+/// The getopts position a dash function call saves (dash-0.5.13.5
+/// `src/eval.c:999` `saveparam = shellparam`): the internal index and the
+/// within-argument cursor.
+pub type GetoptsShellparam = (i32, i32);
+
+/// Function entry in the dash family: save the caller's getopts position and
+/// start the body's at the first argument (`src/eval.c:999,1015-1016`). None
+/// outside it.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn getopts_funcsave() -> Option<GetoptsShellparam> {
+    if !getopts_reset_on_set_positional() {
+        return None;
+    }
+    let saved = (
+        crate::ported::builtin::ZOPTIND.load(Ordering::Relaxed),
+        crate::ported::builtin::OPTCIND.load(Ordering::Relaxed),
+    );
+    getopts_rewind_shellparam();
+    Some(saved)
+}
+
+/// Function return in the dash family: `shellparam = saveparam`
+/// (`src/eval.c:1024`). The caller resumes at its own position whatever the
+/// body left in `$OPTIND`: dash's getopts stores the variable with VNOFUNC, so
+/// that value never moved `shellparam.optind`.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn getopts_funcrestore((zoptind, optcind): GetoptsShellparam) {
+    crate::ported::builtin::ZOPTIND.store(zoptind, Ordering::Relaxed);
+    crate::ported::builtin::OPTCIND.store(optcind, Ordering::Relaxed);
+    let shown = crate::ported::params::getiparam("OPTIND") as i32;
+    GETOPTS_REPORTED.store(shown, Ordering::Relaxed);
+    GETOPTS_INTERNAL.store(zoptind, Ordering::Relaxed);
+}
+
 // ===========================================================================
 // bash `${parameter@operator}` parameter transformations
 // ===========================================================================

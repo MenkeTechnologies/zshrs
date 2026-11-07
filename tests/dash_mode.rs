@@ -730,3 +730,53 @@ fn type_options_ash_parses_dash_looks_up() {
         }
     }
 }
+
+// ── getopts position across function calls and shift ──────────────────────
+
+/// dash keeps `getopts`' place in `shellparam.optind` / `optoff`, not in
+/// `$OPTIND`. A function call saves it, starts the body at the first argument
+/// and restores it on return (dash-0.5.13.5 `src/eval.c:999,1015-1016,1024`);
+/// `shift` rewinds it (`src/options.c:365-366`). Neither writes `$OPTIND`.
+/// Both dash builds agree on every row, so `--dash` and `--ash` share them.
+#[test]
+fn getopts_position_is_saved_per_function_and_rewound_by_shift() {
+    let cases: &[(&str, &str)] = &[
+        (
+            r#"getopts ab o -a; f() { getopts ab o -b; echo "$o/$OPTIND"; }; f; echo "$o/$OPTIND""#,
+            "b/2\nb/2\n",
+        ),
+        (
+            r#"getopts ab o -a; f() { local OPTIND; getopts ab o -b; echo "$o/$OPTIND"; }; f"#,
+            "b/2\n",
+        ),
+        (
+            r#"set -- -a -b; getopts ab o; f() { OPTIND=1; getopts ab o -a; }; f; getopts ab o; echo "$o/$OPTIND""#,
+            "b/3\n",
+        ),
+        (
+            r#"set -- -a -b -a; f() { getopts ab o; echo "$o"; }; f -b; getopts ab o; echo "$o/$OPTIND""#,
+            "b\na/2\n",
+        ),
+        (
+            r#"set -- -a z; getopts ab o; shift; echo "$OPTIND"; getopts ab o -b; echo "$o/$OPTIND""#,
+            "2\nb/2\n",
+        ),
+    ];
+    let run = |bin: &str, flag: Option<&str>, script: &str| -> String {
+        let mut c = Command::new(bin);
+        if let Some(f) = flag {
+            c.arg(f);
+        }
+        String::from_utf8_lossy(&c.args(["-c", script]).output().expect("spawn").stdout).into_owned()
+    };
+    let zshrs = zshrs_bin();
+    for &(script, want) in cases {
+        assert_eq!(run(&zshrs, Some("--dash"), script), want, "--dash: {script}");
+        assert_eq!(run(&zshrs, Some("--ash"), script), want, "--ash: {script}");
+        for reference in ["/bin/dash", "/opt/homebrew/bin/ash"] {
+            if Path::new(reference).exists() {
+                assert_eq!(run(reference, None, script), want, "{reference}: {script}");
+            }
+        }
+    }
+}

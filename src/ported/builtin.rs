@@ -15311,6 +15311,12 @@ pub fn bin_shift(
         // shift is immediately visible — no exec.positional_params
         // mirror needed.
         drop(pp);
+        // !!! EMULATION-ONLY (no C counterpart) !!! dash's shiftcmd rewinds
+        // getopts to the first argument and leaves $OPTIND alone. See
+        // dash_mode::getopts_rewind_shellparam.
+        if ret == 0 && crate::dash_mode::getopts_reset_on_set_positional() {
+            crate::dash_mode::getopts_rewind_shellparam();
+        }
     }
     unqueue_signals(); // c:5658
     ret // c:5659

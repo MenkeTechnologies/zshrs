@@ -7631,6 +7631,10 @@ pub fn doshfunc(
         crate::ported::builtin::OPTCIND.store(0, Ordering::Relaxed);
         saved
     });
+    // !!! EMULATION-ONLY (no C counterpart) !!! dash and ash save the caller's
+    // getopts position and start the body's at the first argument, leaving
+    // $OPTIND alone. See dash_mode::getopts_funcsave.
+    let dash_getopts_saved = crate::dash_mode::getopts_funcsave();
 
     // c:6021-6042 — body execution. C: `runshfunc(prog, wrappers, name)`.
     // zshrs delegates to the body_runner closure (typically a fusevm
@@ -7850,6 +7854,9 @@ pub fn doshfunc(
         }
         crate::ported::builtin::ZOPTIND.store(zoptind, Ordering::Relaxed);
         crate::ported::builtin::OPTCIND.store(optcind, Ordering::Relaxed);
+    }
+    if let Some(saved) = dash_getopts_saved {
+        crate::dash_mode::getopts_funcrestore(saved);
     }
 
     // c:6064 — `scriptname = funcsave->scriptname;`
