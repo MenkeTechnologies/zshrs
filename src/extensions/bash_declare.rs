@@ -69,7 +69,8 @@ fn special_value(name: &str) -> Option<String> {
         "SHELLOPTS" => quoted(crate::dash_mode::bash_shellopts()),
         "EUID" => quoted(unsafe { libc::geteuid() }.to_string()),
         "UID" => quoted(unsafe { libc::getuid() }.to_string()),
-        "PPID" => quoted(unsafe { libc::getppid() }.to_string()),
+        // The startup value $PPID reads, which a forked subshell keeps (bash too).
+        "PPID" => quoted(crate::ported::params::ppid.load(std::sync::atomic::Ordering::Relaxed).to_string()),
         "OPTIND" => quoted(crate::ported::params::getiparam("OPTIND").to_string()),
         "BASH_VERSINFO" => Some(format!(
             "({})",
