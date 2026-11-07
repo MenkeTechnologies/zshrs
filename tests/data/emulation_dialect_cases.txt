@@ -417,13 +417,13 @@ ksh	float v=1.5; typeset -p v
 mksh	typeset -r r=1; typeset +r r 2>/dev/null; (: $((1/0))) 2>/dev/null; print -r -- $?
 bash	set -k; echo a=1 b; echo "[$a]"
 bash	declare -i
-bash	declare -ir
-bash	declare -i n=5; declare -a ar=(1 2); declare -i; declare -a
+bash	declare -ir | sed 's/darwin[0-9.]*/darwin/'
+bash	declare -i n=5; declare -a ar=(1 2); declare -i | sed 's/darwin[0-9.]*/darwin/'; declare -a | sed 's/darwin[0-9.]*/darwin/'
 bash	set -k; f() { echo "[$a]"; }; f a=5 b; echo "[$a]"
 bash	set -k; /bin/echo a=1 b
 sh/zsh-style,ksh/zsh-style	setopt NO_UNSET 2>/dev/null; k=1; print -r -- $nope[$k]; print after
 bash	set -k; echo "a=1" b; echo a=1 c; echo "[$a]"
-bash	true | false; declare -a
+bash	true | false; declare -a | sed 's/darwin[0-9.]*/darwin/'
 sh/zsh-style,ksh/zsh-style	setopt NO_UNSET 2>/dev/null; out=(); print -r -- $out; print after
 ksh	unset u; w='a b'; s() { for a in "$@"; do printf '<%s>' "$a"; done; echo; }; s "${u:-"$w"}" "${u:-"d e"}" "x${u:-"d e"}y"
 ksh	unset u w; s() { for a in "$@"; do printf '<%s>' "$a"; done; echo; }; s ${u-"$w"} x

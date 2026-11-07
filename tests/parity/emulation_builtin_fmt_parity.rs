@@ -63,13 +63,11 @@ fn mksh() -> Option<String> {
         "/usr/bin/mksh",
     ])
 }
+/// `--dash` follows the distro dash (0.5.12) and `--ash` dash 0.5.13.5, the
+/// split `.github/workflows/ci.yml` pins; the candidates match the
+/// `tests/emulation_parity.rs` matrix, so Homebrew's 0.5.13.5 is never `dash`.
 fn dash() -> Option<String> {
-    find_shell(&[
-        "dash",
-        "/opt/homebrew/bin/dash",
-        "/bin/dash",
-        "/usr/bin/dash",
-    ])
+    find_shell(&["/bin/dash", "/usr/bin/dash"])
 }
 fn ash() -> Option<String> {
     find_shell(&["ash", "/opt/homebrew/bin/ash", "/bin/ash", "/usr/bin/ash"])

@@ -25,6 +25,12 @@
 use std::path::Path;
 use std::process::Command;
 
+// Rows such as `(( x = 1 ))` in dash or `unalias x; x` run a command named `x`,
+// which on macOS with XQuartz installed starts the X server and holds the row's
+// pipes open for good. Same scrub as the parity suite.
+#[path = "parity/x11_scrub.rs"]
+mod x11_scrub;
+
 fn zshrs_bin() -> String {
     env!("CARGO_BIN_EXE_zshrs").to_string()
 }
@@ -5944,19 +5950,12 @@ fn run_code(bin: &str, args: &[&str], script: &str) -> (String, i32) {
 /// zsh disagree with dash: fatal syntax errors (status 2, also in `-c`, `eval`
 /// and dot-sourced files), usage-error statuses, `kill -l NAME`, literal
 /// `~+`/`~-`, `\0NNN` echo escapes and dash's strict arithmetic variables.
-/// Compared on stdout AND exit status against the real dash; `--ash` is the
-/// same shell and must agree.
+/// Compared on stdout AND exit status: `--dash` against the distro dash
+/// (0.5.12) and `--ash` against dash 0.5.13.5 built as `ash`, the references
+/// the matrix's `dash` and `ash` cases resolve.
 #[test]
 fn dash_specifics_match_dash() {
-    let Some(dash) = find_shell(&["/opt/homebrew/bin/dash", "/bin/dash", "dash"]) else {
-        eprintln!("skip: dash not found");
-        return;
-    };
-    // dash releases disagree on `type -a`: older ones take `-a` for a command name
-    // (`-a: not found`, 127), newer ones reject it as an illegal option (2), which is
-    // what zshrs mirrors. The probe runs only against a dash that rejects it.
-    let type_rejects_options = run_code(&dash, &[], "type -a echo").1 == 2;
-    let mut probes = vec![
+    let common = [
         "echo (",
         "echo a; if; echo b",
         "echo a; eval 'if'; echo after",
@@ -6022,37 +6021,54 @@ fn dash_specifics_match_dash() {
         "[ ! ! 1 = 1 ]; echo $?",
         "[ a = a -o b = c -a c = d ]; echo $?",
     ];
-    if type_rejects_options {
-        probes.push("type -a echo");
-    }
-    // Some dash builds (Ubuntu's package) print nothing for `$LINENO` inside a function,
-    // so that probe runs only against a dash that numbers function lines.
-    if run_code(&dash, &[], "f(){ echo $LINENO; }; f").0.trim() != "" {
-        probes.push("f(){ echo $LINENO; echo $LINENO; }; f");
-    }
-    // Missing-file `-nt` / `-ot` and an out-of-range integer in `[` are answered
-    // differently by dash builds (macOS's and Ubuntu's both say 1 / 1 / 2). zshrs
-    // mirrors the dash that answers 0 for each, so a probe runs only against a dash
-    // that does.
-    for probe in [
-        "[ /bin/sh -nt /nonexistent ]; echo $?",
-        "[ /nonexistent -ot /bin/sh ]; echo $?",
-        "[ 99999999999999999999 -gt 1 ]; echo $?",
+    let mut compared = 0;
+    for (flag, candidates) in [
+        ("--dash", &["/bin/dash", "/usr/bin/dash"][..]),
+        ("--ash", &["ash", "/bin/ash", "/usr/bin/ash"][..]),
     ] {
-        if run_code(&dash, &[], probe).0 == "0\n" {
-            probes.push(probe);
+        let Some(dash) = find_shell(candidates) else {
+            eprintln!("skip {flag}: reference not found");
+            continue;
+        };
+        compared += 1;
+        let mut probes = common.to_vec();
+        // `type -a` differs by release: 0.5.12 takes `-a` for a command name
+        // (`-a: not found`, 127), 0.5.13 rejects it as an illegal option (2).
+        // zshrs follows each mode's release; the probe runs where the
+        // reference rejects it.
+        if run_code(&dash, &[], "type -a echo").1 == 2 {
+            probes.push("type -a echo");
         }
-    }
-    for flag in ["--dash", "--ash"] {
+        // Some dash builds (Ubuntu's package) print nothing for `$LINENO` inside a function,
+        // so that probe runs only against a dash that numbers function lines.
+        if run_code(&dash, &[], "f(){ echo $LINENO; }; f").0.trim() != "" {
+            probes.push("f(){ echo $LINENO; echo $LINENO; }; f");
+        }
+        // Missing-file `-nt` / `-ot` and an out-of-range integer in `[` are answered
+        // differently by dash builds (macOS's and Ubuntu's both say 1 / 1 / 2). zshrs
+        // mirrors the dash that answers 0 for each, so a probe runs only against a dash
+        // that does.
+        for probe in [
+            "[ /bin/sh -nt /nonexistent ]; echo $?",
+            "[ /nonexistent -ot /bin/sh ]; echo $?",
+            "[ 99999999999999999999 -gt 1 ]; echo $?",
+        ] {
+            if run_code(&dash, &[], probe).0 == "0\n" {
+                probes.push(probe);
+            }
+        }
         let bad: Vec<String> = probes
             .iter()
             .filter_map(|p| {
                 let z = run_code(&zshrs_bin(), &[flag, "-f"], p);
                 let r = run_code(&dash, &[], p);
-                (z != r).then(|| format!("  {p:?}\n    dash: {r:?}\n    zrs:  {z:?}"))
+                (z != r).then(|| format!("  {p:?}\n    {dash}: {r:?}\n    zrs:  {z:?}"))
             })
             .collect();
-        assert!(bad.is_empty(), "{flag} diverged from dash:\n{}", bad.join("\n"));
+        assert!(bad.is_empty(), "{flag} diverged from {dash}:\n{}", bad.join("\n"));
+    }
+    if compared == 0 {
+        eprintln!("skip: no dash or ash reference found");
     }
 }
 
