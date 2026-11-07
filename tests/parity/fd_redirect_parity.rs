@@ -289,11 +289,16 @@ mod swap_stdout_stderr {
     use super::*;
 
     /// Classic swap: 3>&1 1>&2 2>&3.
+    ///
+    /// With the pipe on fd 1, MULTIOS makes `1>&2` tee: `a` reaches the pipe
+    /// through zsh's tee process while `b` writes it directly, so zsh itself
+    /// orders the two by a race (`b a` on macOS, `a b` on the ubuntu runner).
+    /// `sort` pins the pipe's contents without the arrival order.
     #[test]
     fn swap_stdout_and_stderr() {
         assert_parity_in(
             tdir().path(),
-            "{ echo a; echo b >&2; } 3>&1 1>&2 2>&3 3>&- | cat",
+            "{ echo a; echo b >&2; } 3>&1 1>&2 2>&3 3>&- | sort",
         );
     }
 }
