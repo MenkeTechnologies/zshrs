@@ -261,7 +261,11 @@ mod exit_in_a_forked_child_inside_a_function_or_subshell {
     #[test]
     fn pipeline_stage_status() {
         assert_parity("f(){ false | exit 2 | true; print $? $pipestatus }; f");
-        assert_parity("(print a | exit 5 | cat; print $pipestatus)");
+        // The first stage writes nothing: `print a` there races the `exit 5`
+        // stage closing the pipe, and loses to SIGPIPE (141) whenever it is
+        // descheduled long enough — in zsh as well, whose window is only
+        // narrower (about 1 run in 2000 for zshrs on a loaded Linux host).
+        assert_parity("(true | exit 5 | cat; print $pipestatus)");
         assert_parity("f(){ { exit 4; print no } | cat; print $pipestatus; }; f");
     }
 
