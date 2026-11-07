@@ -744,7 +744,10 @@ mod tests {
     use super::*;
 
     fn lock() -> std::sync::MutexGuard<'static, ()> {
-        crate::test_util::global_state_lock()
+        let g = crate::test_util::global_state_lock();
+        // `compute_autosuggestion` falls back to `complete_at`.
+        crate::compsys::in_editor::bootstrap_without_user_state();
+        g
     }
 
     fn src(items: &[&str]) -> impl Fn(&str, usize) -> Vec<String> {

@@ -328,6 +328,34 @@ pub fn bootstrap() {
     let _ = shell_thread();
 }
 
+/// Test-only: start the shell thread with `$ZSHRS_HOME` on an empty dir and
+/// wait until its bootstrap is done. The bootstrap replays the newest
+/// recorder shard under `CachePaths::resolve()` into the process-wide
+/// tables; on a machine that has run `zshrs-recorder` that is the
+/// developer's own shell (its functions, hooks, POWERLEVEL9K_* params),
+/// which every later test in the binary would then see. Every test that
+/// can reach [`complete_at`] calls this first, holding
+/// `test_util::global_state_lock`.
+#[cfg(test)]
+pub(crate) fn bootstrap_without_user_state() {
+    if is_ready() {
+        return;
+    }
+    let empty = tempfile::tempdir().expect("tempdir");
+    let prev = std::env::var_os("ZSHRS_HOME");
+    std::env::set_var("ZSHRS_HOME", empty.path());
+    bootstrap();
+    let t0 = Instant::now();
+    while !is_ready() && t0.elapsed() < Duration::from_secs(30) {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    match prev {
+        Some(v) => std::env::set_var("ZSHRS_HOME", v),
+        None => std::env::remove_var("ZSHRS_HOME"),
+    }
+    assert!(is_ready(), "compsys shell thread never finished its bootstrap");
+}
+
 /// The bootstrap the shell thread runs before serving anything.
 ///
 /// Builds a real `ShellExecutor` (option table + params + env
@@ -822,6 +850,8 @@ mod tests {
     // an in-process `compinit` bootstrap so we can hard-assert.
     #[test]
     fn complete_at_smoke_does_not_panic() {
+        let _g = crate::test_util::global_state_lock();
+        bootstrap_without_user_state();
         let req = CompsysRequest::new_with_default_budget("setopt ext", 10);
         let resp = complete_at(req);
         eprintln!(
