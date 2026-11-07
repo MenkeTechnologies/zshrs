@@ -309,6 +309,7 @@ mod tests {
     /// `main` would say "no loops" for a program that plainly has one.
     #[test]
     fn the_loop_lives_in_a_chunk_other_than_main() {
+        let _g = crate::test_util::global_state_lock();
         let report = report(PROGRAM).expect("runs");
         assert!(report.chunks.len() > 1, "{report}");
         assert!(
@@ -328,6 +329,7 @@ mod tests {
     /// a verdict — this is the list to shrink to reach native code.
     #[test]
     fn the_counted_loop_is_refused_by_the_tracing_tier() {
+        let _g = crate::test_util::global_state_lock();
         let report = report(PROGRAM).expect("runs");
         let looped = report
             .chunks

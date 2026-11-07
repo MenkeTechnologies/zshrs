@@ -119,6 +119,7 @@ mod tests {
 
     #[test]
     fn set_then_isset_reflects_change_through_cache() {
+        let _g = crate::test_util::global_state_lock();
         let no = optlookup("ksharrays");
         assert!(no > 0, "ksharrays should resolve to a canonical optno");
         opt_state_set("ksharrays", true);

@@ -11794,10 +11794,19 @@ esac"#;
                             failed_files.push((file_path, err));
                         }
                         Err(_) => {
+                            // Still reported as over budget, but the parse
+                            // is waited out: abandoned, it kept bumping the
+                            // process-wide `strin` and history state after
+                            // this test released the lock, under whichever
+                            // test ran next.
+                            assert!(
+                                rx.recv_timeout(Duration::from_secs(120)).is_ok(),
+                                "{file_path}: parse still running after 120s"
+                            );
                             timeout_files.push(file_path);
-                            // Thread will be abandoned
                         }
                     }
+                    let _ = handle.join();
                 }
             }
         }

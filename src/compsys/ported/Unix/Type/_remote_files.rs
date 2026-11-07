@@ -409,6 +409,7 @@ mod tests {
 
     #[test]
     fn glob_filter_keeps_matching_files() {
+        let _g = crate::test_util::global_state_lock();
         // sh:87 — `-g '*.rs'` keeps only .rs names, tolerating the ls -F
         // classifier suffix via the appended `(|[*=|])`.
         let effective = format!("{}(|[*=|])", strip_trailing_qualifier("*.rs"));
@@ -431,6 +432,7 @@ mod tests {
 
     #[test]
     fn escape_by_pattern_escapes_matched_chars() {
+        let _g = crate::test_util::global_state_lock();
         // sh:91 — -Q '[ab]' escapes only a and b.
         assert_eq!(escape_by_pattern("cabbage", "[ab]"), "c\\a\\b\\b\\age");
     }

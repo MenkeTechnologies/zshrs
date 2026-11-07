@@ -64,7 +64,7 @@
 //!     `compstate` from inside a compdef function — none of the 50+
 //!     ported functions do.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -284,6 +284,11 @@ static SHELL_READY: AtomicBool = AtomicBool::new(false);
 /// an empty popup while a queued one is merely late.
 static SHELL_BUSY: AtomicBool = AtomicBool::new(false);
 
+/// Jobs handed to the shell thread and not yet finished (queued, running,
+/// or dropped as stale). `complete_at` returns at its deadline while the
+/// dispatch it queued may still be running.
+static JOBS_PENDING: AtomicUsize = AtomicUsize::new(0);
+
 /// Last completed dispatch: `(line, cursor, matches, finished_at)`.
 ///
 /// This is what makes a slow completer usable in an editor. A cold
@@ -328,18 +333,41 @@ pub fn bootstrap() {
     let _ = shell_thread();
 }
 
-/// Test-only: start the shell thread with `$ZSHRS_HOME` on an empty dir and
-/// wait until its bootstrap is done. The bootstrap replays the newest
-/// recorder shard under `CachePaths::resolve()` into the process-wide
-/// tables; on a machine that has run `zshrs-recorder` that is the
-/// developer's own shell (its functions, hooks, POWERLEVEL9K_* params),
-/// which every later test in the binary would then see. Every test that
-/// can reach [`complete_at`] calls this first, holding
-/// `test_util::global_state_lock`.
+/// Test-only guard for any test that can reach [`complete_at`]: holds
+/// `test_util::global_state_lock`, and on drop waits for the shell thread
+/// to finish every job it was handed. `complete_at` returns at its
+/// deadline while the dispatch runs on, and that dispatch saves and
+/// restores the ZLE line and other process-wide state; finishing after the
+/// lock is released, it wrote one test's line into the next test's.
 #[cfg(test)]
-pub(crate) fn bootstrap_without_user_state() {
+pub(crate) struct EditorTestLock {
+    _g: std::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(test)]
+impl Drop for EditorTestLock {
+    fn drop(&mut self) {
+        let t0 = Instant::now();
+        while JOBS_PENDING.load(Ordering::SeqCst) != 0 && t0.elapsed() < Duration::from_secs(60) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+}
+
+/// Take [`EditorTestLock`], starting the shell thread on first use with
+/// `$ZSHRS_HOME` on an empty dir and waiting until its bootstrap is done.
+/// The bootstrap replays the newest recorder shard under
+/// `CachePaths::resolve()` into the process-wide tables; on a machine that
+/// has run `zshrs-recorder` that is the developer's own shell (its
+/// functions, hooks, POWERLEVEL9K_* params), which every later test in the
+/// binary would then see.
+#[cfg(test)]
+pub(crate) fn editor_test_lock() -> EditorTestLock {
+    let lock = EditorTestLock {
+        _g: crate::test_util::global_state_lock(),
+    };
     if is_ready() {
-        return;
+        return lock;
     }
     let empty = tempfile::tempdir().expect("tempdir");
     let prev = std::env::var_os("ZSHRS_HOME");
@@ -354,6 +382,7 @@ pub(crate) fn bootstrap_without_user_state() {
         None => std::env::remove_var("ZSHRS_HOME"),
     }
     assert!(is_ready(), "compsys shell thread never finished its bootstrap");
+    lock
 }
 
 /// The bootstrap the shell thread runs before serving anything.
@@ -466,11 +495,13 @@ fn shell_thread_main(rx: Receiver<Job>) {
         // A job whose deadline already passed while it sat in the
         // queue is a stale line — the client stopped waiting.
         if Instant::now() >= job.deadline {
+            JOBS_PENDING.fetch_sub(1, Ordering::SeqCst);
             continue;
         }
         SHELL_BUSY.store(true, Ordering::SeqCst);
         let resp = dispatch_on_shell_thread(&job);
         SHELL_BUSY.store(false, Ordering::SeqCst);
+        JOBS_PENDING.fetch_sub(1, Ordering::SeqCst);
         // Publish before replying: the client that gave up on this
         // dispatch is about to ask again, and that retry must hit.
         if !resp.matches.is_empty() {
@@ -559,7 +590,9 @@ pub fn complete_at(req: CompsysRequest<'_>) -> CompsysResponse {
         deadline: req.deadline,
         reply: reply_tx,
     };
+    JOBS_PENDING.fetch_add(1, Ordering::SeqCst);
     if tx.try_send(job).is_err() {
+        JOBS_PENDING.fetch_sub(1, Ordering::SeqCst);
         return CompsysResponse {
             matches: Vec::new(),
             is_incomplete: true,
@@ -850,8 +883,7 @@ mod tests {
     // an in-process `compinit` bootstrap so we can hard-assert.
     #[test]
     fn complete_at_smoke_does_not_panic() {
-        let _g = crate::test_util::global_state_lock();
-        bootstrap_without_user_state();
+        let _g = editor_test_lock();
         let req = CompsysRequest::new_with_default_budget("setopt ext", 10);
         let resp = complete_at(req);
         eprintln!(

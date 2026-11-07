@@ -525,6 +525,7 @@ mod tests {
 
     #[test]
     fn native_lowering_covers_the_whole_script_not_one_op() {
+        let _g = crate::test_util::global_state_lock();
         // A spread of real shell: the simplest possible command, a loop, a
         // function, and a script with arrays and expansion. Whatever path each
         // takes, it must not be a native plan that gives up after a couple of
@@ -563,6 +564,7 @@ mod tests {
 
     #[test]
     fn emitted_code_grows_with_the_program() {
+        let _g = crate::test_util::global_state_lock();
         // The regression's signature: `print hello` and a million-iteration loop
         // emitted byte-identical drivers, because neither's ops were lowered.
         //
@@ -602,6 +604,7 @@ mod tests {
 
     #[test]
     fn zsh_builtins_are_not_arity_honest() {
+        let _g = crate::test_util::global_state_lock();
         // Why a shell chunk takes the threaded path, stated as a test so the day
         // it stops being true is visible. `Op::CallBuiltin(id, argc)` may only be
         // lowered inline when every handler pops exactly `argc`; zshrs's do not
