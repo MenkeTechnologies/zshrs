@@ -14,6 +14,11 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use zsh::vm_helper::ShellExecutor;
+
+// A signal handler that lands inside the allocator queues instead of
+// re-entering it (zsh::alloc_signal_guard).
+#[global_allocator]
+static ALLOC: zsh::alloc_signal_guard::SignalGuardedAlloc = zsh::alloc_signal_guard::SignalGuardedAlloc;
 use zsh::zwc;
 
 // CompletionGroup / Completion / CompletionState / do_completion /

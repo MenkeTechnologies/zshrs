@@ -255,6 +255,11 @@ pub mod pat_cache;
 /// execution (zshrs-original; ported from stryke's `provenance.rs`).
 #[path = "extensions/provenance.rs"]
 pub mod provenance;
+/// `alloc_signal_guard` submodule — marks a thread that is inside the
+/// allocator so `zhandler` queues a signal there instead of re-entering
+/// `malloc` (C brackets `malloc` with `queue_signals`, Src/mem.c:965-970).
+#[path = "extensions/alloc_signal_guard.rs"]
+pub mod alloc_signal_guard;
 /// `reaped_status` submodule — the raw wait statuses the SIGCHLD reaper
 /// collected, so a targeted `waitpid` that loses the race to it can
 /// still read the status it needed (C never needs this: it has exactly

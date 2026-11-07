@@ -427,7 +427,10 @@ pub extern "C" fn zhandler(sig: libc::c_int) {
         Err(std::sync::TryLockError::WouldBlock)
     ) || crate::ported::jobs::JOBTAB
         .get()
-        .is_some_and(|jt| matches!(jt.try_lock(), Err(std::sync::TryLockError::WouldBlock)));
+        .is_some_and(|jt| matches!(jt.try_lock(), Err(std::sync::TryLockError::WouldBlock)))
+        // The interrupted code is inside the allocator, whose lock the dispatch below
+        // would take again (C queues signals around `malloc`, Src/mem.c:965-970).
+        || crate::alloc_signal_guard::alloc_busy();
 
     // c:410-424 — `if (queueing_enabled) { ... return; }`
     if queueing_enabled.load(Ordering::SeqCst) != 0 || tables_busy {

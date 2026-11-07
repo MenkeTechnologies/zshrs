@@ -62358,3 +62358,27 @@ zshrs   3
 `pm.u_val` instead of dispatching `pm->gsu.i->setfn` (c:Src/params.c:2874), so
 the limit never applies.
 
+
+## #1212 — a SIGCHLD that interrupted `malloc` re-entered it from `zhandler`, so the shell deadlocked on its own allocator lock — fixed
+
+**Status:** `fixed` 2026-11-07.
+
+```console
+$ zshrs --zsh -fc 'printf '"'"'a\t\tb\n'"'"' | { IFS="$(printf '"'"'\t'"'"')" read -r x y; printf "[%s][%s]\n" "$x" "$y"; }'
+[a][b]                     # ~1 run in 2000 on Linux never returned
+```
+
+The hung process had two threads: the `$(…)` reader blocked in `read`, and the
+main thread in glibc `__lll_lock_wait_private` under `malloc`, under
+`zhandler` → `wait_for_processes`, under `malloc`. The forked first stage
+exited while the main thread was allocating; the handler, which runs on the
+interrupted thread, allocated again and waited on the lock that thread held.
+
+**C reference.** `zalloc` and `zrealloc` bracket the allocator with
+`queue_signals()` / `unqueue_signals()` (c:Src/mem.c:965-970, 996-1004), so a
+signal that arrives inside `malloc` is queued, never dispatched there.
+
+**Fix.** The `zshrs` binary installs `alloc_signal_guard::SignalGuardedAlloc`,
+which marks a thread as inside the allocator for each call; `zhandler` queues
+the signal while that mark is set, as it already did for a busy `paramtab` /
+`JOBTAB`. 0 hangs in 40000 runs, against 10 in 20000 before.
