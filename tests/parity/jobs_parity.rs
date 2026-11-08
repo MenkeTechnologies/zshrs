@@ -625,12 +625,18 @@ fn jobtext_for_nested() {
     );
 }
 
+// The select loops read a choice from `<<<1` so their body, the `sleep 5`,
+// runs and the job is still alive when `$jobtexts` is read. An asynchronous
+// job's stdin is /dev/null, and on EOF `select` ends without running the
+// body: the job then raced the read, and once SIGCHLD deleted it the
+// listing was `[]` (zshrs 5 runs in 300 at a load average of 20, zsh 0).
+// Redirected so the numbered menu the forked job prints cannot interleave
+// with the parent's own output.
 #[test]
 fn jobtext_select_with_list() {
-    // c:665-683 WC_SELECT. Redirected so the numbered menu the forked
-    // job prints cannot interleave with the parent's own output.
+    // c:665-683 WC_SELECT.
     assert_parity(
-        r#"select jt_s in a b; do sleep 5; done >/dev/null 2>&1 & print -r -- "[$jobtexts[1]]""#,
+        r#"select jt_s in a b; do sleep 5; done <<<1 >/dev/null 2>&1 & print -r -- "[$jobtexts[1]]"; kill %1"#,
     );
 }
 
@@ -638,7 +644,7 @@ fn jobtext_select_with_list() {
 fn jobtext_select_without_list() {
     // c:669-672 — no WC_SELECT_LIST, so no ` in ` clause.
     assert_parity(
-        r#"set -- a b; select jt_s; do sleep 5; done >/dev/null 2>&1 & print -r -- "[$jobtexts[1]]""#,
+        r#"set -- a b; select jt_s; do sleep 5; done <<<1 >/dev/null 2>&1 & print -r -- "[$jobtexts[1]]"; kill %1"#,
     );
 }
 
