@@ -66,7 +66,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # zsh is required by tests/zsh_zshrs_demo_equivalence.rs which
-      # compares system-zsh stdout vs `zshrs --zsh` stdout for every
+      # compares system-zsh stdout vs zshrs-as-`zsh` (argv[0]) stdout for every
       # demo under examples/demos/. macOS-runner ships zsh by default;
       # ubuntu-runner needs an explicit install. Without zsh the
       # equivalence tests silently skip — installing here makes the

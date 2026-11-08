@@ -1,8 +1,15 @@
 //! zsh ↔ zshrs output-equivalence harness for `examples/demos/*.zsh`.
 //!
-//! Each demo is run under BOTH the system `zsh` interpreter and the
-//! `zshrs --zsh` binary. Stdout is compared byte-for-byte; any
+//! Each demo is run under BOTH the system `zsh` interpreter and zshrs
+//! started as `zsh` (argv[0]). Stdout is compared byte-for-byte; any
 //! divergence fails the test. Exit codes are compared too.
+//!
+//! The reference is the installed release (zsh 5.9.2), and zshrs answers
+//! as that release only when it is the `zsh` drop-in: `--zsh` keeps the
+//! development tree's answers the cargo parity oracle checks
+//! (`emulating_592`, src/extensions/emulation_startup.rs). Prompt
+//! attributes are one split: `print -P '%s%s'` prints the standout reset
+//! twice in 5.9.2 and once in the development tree.
 //!
 //! This is the strongest possible "compatibility contract": if zshrs
 //! is a faithful zsh clone, every demo's output must be identical
@@ -121,12 +128,16 @@ fn demos_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/demos")
 }
 
-/// Run `bin <args...> <script>` with a wall-clock cap. Returns
+/// Run `bin <script>` with a wall-clock cap, as `arg0` when given. Returns
 /// (exit-code, stdout-bytes, stderr-bytes). Panics on spawn failure
 /// or timeout.
-fn run(bin: &Path, args: &[&str], script: &Path) -> (i32, Vec<u8>, Vec<u8>) {
-    let mut child = Command::new(bin)
-        .args(args)
+fn run(bin: &Path, arg0: Option<&str>, script: &Path) -> (i32, Vec<u8>, Vec<u8>) {
+    use std::os::unix::process::CommandExt;
+    let mut cmd = Command::new(bin);
+    if let Some(a) = arg0 {
+        cmd.arg0(a);
+    }
+    let mut child = cmd
         .arg(script)
         // Drop environment-derived noise so output isn't perturbed
         // by the host shell's settings.
@@ -208,8 +219,8 @@ fn assert_demo_zsh_zshrs_identical(script_name: &str) {
     let trimmed = zsh_portable_copy(&script, &trim_dir);
     let subject = trimmed.as_deref().unwrap_or(script.as_path());
 
-    let (zsh_code, zsh_out, zsh_err) = run(&zsh, &[], subject);
-    let (rs_code, rs_out, rs_err) = run(&zshrs, &["--zsh"], subject);
+    let (zsh_code, zsh_out, zsh_err) = run(&zsh, None, subject);
+    let (rs_code, rs_out, rs_err) = run(&zshrs, Some("zsh"), subject);
     let _ = std::fs::remove_dir_all(&trim_dir);
 
     if zsh_out != rs_out {
