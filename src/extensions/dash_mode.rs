@@ -784,6 +784,16 @@ pub fn mksh_has_trap_p() -> bool {
     cfg!(target_os = "linux")
 }
 
+/// Whether the mksh being emulated has R60's `asis` option, listed by
+/// `set -o` between `allexport` and `bgnice`. Ubuntu's `mksh 59c-43` is an
+/// upstream snapshot that has it (debian-changes: `FN("asis", FASIS, OF_ANY`);
+/// R59c does not.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn mksh_has_asis() -> bool {
+    cfg!(target_os = "linux")
+}
+
 /// mksh 59c-42 `trap -p [SIG...]` (funcs.c `c_trap` + `print_trap`, from
 /// Ubuntu's `debian-changes`). With no operand every slot is printed, set or
 /// not, in `sigtraps[]` order: EXIT, signals 1..NSIG-1 (the number for an

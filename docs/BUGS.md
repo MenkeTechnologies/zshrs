@@ -62509,3 +62509,31 @@ row failed.
 **Fix.** `dash_mode::mksh_trap_p` follows `c_trap -p`/`print_trap`, gated by
 `mksh_has_trap_p()` (Linux). macOS's mksh R59 still answers
 `trap: -p: unknown option`, and so does `--mksh` there.
+
+## #1218 — `--mksh` on Linux listed `kill -l` and `set -o` differently from Ubuntu's mksh — fixed
+
+**Status:** `fixed` 2026-11-08.
+
+Measured against Ubuntu 26.04's `mksh 59c-43`:
+
+- `kill -l` lists every slot from 1 to NSIG-1. A slot mksh has no name for
+  shows its number and `Signal N`. That covers 32 and 33, and the real-time
+  signals, which mksh does not call `RTMIN+n`. Signal 29 is `POLL`. zshrs
+  used zsh's signal list: it skipped 32 and 33, named the real-time signals
+  `RTMIN+n`/`RTMAX-n` with glibc's "Real-time signal" text, and called
+  29 `IO`.
+- `set -o` has R60's `asis` between `allexport` and `bgnice`. zshrs's table
+  had no such entry.
+
+Neither showed in CI: the job that runs `builtin_output_parity` does not
+install mksh, so its mksh legs skip on Linux.
+
+**C reference.** None (mksh, not zsh). Ubuntu mksh `59c-43`
+`debian/patches/debian-changes` (`FN("asis", FASIS, OF_ANY`).
+
+**Fix.** The mksh branch of `kill_list` walks the slots itself and keeps
+`POLL`. `asis` is listed where `dash_mode::mksh_has_asis()` holds (Linux),
+and `set -o asis` is accepted and remembered. What the option changes, that
+bytes above 0x7F are not treated as control characters when quoting, is
+not ported: like `keyword` or `gmacs`, it is a name with a state and no
+effect.

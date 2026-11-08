@@ -19414,12 +19414,13 @@ pub fn bin_trap(
     // error aborts a non-interactive shell:
     //   mksh -c 'trap -x; echo after'  -> "trap: -x: unknown option", rc 1, no `after`
     // (also `-l`, `-p`, clusters like `-ZZ`, which report the first letter).
+    // `-p` is an option where the reference has POSIX 2024's `trap -p`
+    // (dash_mode::mksh_has_trap_p).
     if crate::dash_mode::posix_faithful() && crate::dash_mode::pdksh_family() {
         if let Some(bad) = argv
             .first()
             .filter(|a| a.len() > 1 && a.starts_with('-') && *a != "--")
-            .filter(|a| !(*a == "-p" && crate::dash_mode::mksh_has_trap_p()
-                && crate::extensions::emulation_startup::personality() == crate::extensions::emulation_startup::Personality::Mksh))
+            .filter(|a| !(*a == "-p" && crate::dash_mode::mksh_has_trap_p()))
         {
             zerrnam(name, &format!("-{}: unknown option", bad.chars().nth(1).unwrap_or('-')));
             return 1;
@@ -19489,10 +19490,13 @@ pub fn bin_trap(
     // below). Measured: `ksh -c 'trap "print a" INT; trap -p'` lists the trap.
     // mksh has no listing option at all: `mksh -c 'trap -p'` -> "trap: -p: unknown option", 1.
     // The mksh Ubuntu ships from 59c-42 on has POSIX 2024's `trap -p`
-    // (dash_mode::mksh_trap_p).
+    // (dash_mode::mksh_trap_p); `--pdksh` takes mksh as its reference.
     if argv.first().is_some_and(|a| a == "-p")
-        && crate::extensions::emulation_startup::personality()
-            == crate::extensions::emulation_startup::Personality::Mksh
+        && matches!(
+            crate::extensions::emulation_startup::personality(),
+            crate::extensions::emulation_startup::Personality::Mksh
+                | crate::extensions::emulation_startup::Personality::Pdksh
+        )
         && crate::dash_mode::mksh_has_trap_p()
     {
         let operands = argv[1..].strip_prefix(&["--".to_string()][..]).unwrap_or(&argv[1..]);

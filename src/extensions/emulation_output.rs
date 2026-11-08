@@ -134,13 +134,13 @@ pub fn dash_kill_l_number(n: i32) -> Option<String> {
 /// | mksh | two columns of `%2d %6s %s` with the strsignal text |
 pub fn kill_list(sigs: &[(i32, String)]) -> Option<String> {
     let p = personality();
-    // zsh and ksh93u+m name Linux's signal 29 `POLL` (signames2.awk lets
+    // zsh, ksh93u+m and mksh name Linux's signal 29 `POLL` (signames2.awk lets
     // POLL replace IO); bash's and dash's mksignames write IO after POLL,
     // so IO wins there.
     let sigs: Vec<(i32, &str)> = sigs
         .iter()
         .map(|(num, name)| {
-            let io = name == "POLL" && p != Personality::Ksh93;
+            let io = name == "POLL" && !matches!(p, Personality::Ksh93 | Personality::Mksh | Personality::Pdksh);
             (*num, if io { "IO" } else { name.as_str() })
         })
         .collect();
@@ -201,17 +201,27 @@ pub fn kill_list(sigs: &[(i32, String)]) -> Option<String> {
         }
         // mksh: two side-by-side columns, the left half then the right,
         // each `%2d %6s %s` with the system's signal description. The
-        // split point is the midpoint, rounded up.
+        // split point is the midpoint, rounded up. Every slot 1..NSIG-1 is
+        // listed: one mksh has no name for (Linux's 32 and 33, and the
+        // real-time signals, which it does not name RTMIN+n) shows its
+        // number and `Signal N` (measured: Ubuntu mksh 59c-43).
         Personality::Mksh | Personality::Pdksh => {
-            let half = sigs.len().div_ceil(2);
+            let rows: Vec<(i32, String, String)> = (1..nsig)
+                .map(|slot| match sigs.iter().find(|(n, _)| *n == slot) {
+                    Some((_, name)) if slot <= crate::ported::signals_h::SIGCOUNT => {
+                        (slot, name.to_string(), signal_description(slot))
+                    }
+                    _ => (slot, slot.to_string(), format!("Signal {slot}")),
+                })
+                .collect();
+            let half = rows.len().div_ceil(2);
             let left_width = 40usize;
             for i in 0..half {
-                let (num, name) = &sigs[i];
-                let cell = format!("{num:2} {name:>6} {}", signal_description(*num));
-                match sigs.get(i + half) {
-                    Some((rnum, rname)) => out.push_str(&format!(
-                        "{cell:<left_width$}{rnum:2} {rname:>6} {}\n",
-                        signal_description(*rnum)
+                let (num, name, desc) = &rows[i];
+                let cell = format!("{num:2} {name:>6} {desc}");
+                match rows.get(i + half) {
+                    Some((rnum, rname, rdesc)) => out.push_str(&format!(
+                        "{cell:<left_width$}{rnum:2} {rname:>6} {rdesc}\n"
                     )),
                     None => {
                         out.push_str(cell.trim_end());
@@ -611,6 +621,13 @@ const fn computed(name: &'static str, startup_state: fn() -> bool) -> SetOpt {
         present: None,
     }
 }
+/// [`fixed`] for an option only some builds of the reference have.
+const fn fixed_if(name: &'static str, default_on: bool, present: fn() -> bool) -> SetOpt {
+    SetOpt {
+        present: Some(present),
+        ..fixed(name, default_on)
+    }
+}
 /// [`o`] for an option only some builds of the reference have.
 const fn o_if(name: &'static str, zsh: &'static str, present: fn() -> bool) -> SetOpt {
     SetOpt {
@@ -702,6 +719,9 @@ const KSH93_SET_O: &[SetOpt] = &[
 /// mksh's `set -o`, alphabetical, printed in four COLUMN-MAJOR columns.
 const MKSH_SET_O: &[SetOpt] = &[
     o("allexport", "allexport"),
+    // R60's `asis` (8-bit bytes are not control characters when quoting);
+    // accepted and listed, its quoting rule not ported. BUGS #1218.
+    fixed_if("asis", false, crate::dash_mode::mksh_has_asis),
     o("bgnice", "bgnice"),
     o("braceexpand", "braceexpand"),
     fixed("emacs", true),
@@ -763,7 +783,7 @@ pub fn korn_set_o(name: &str, on: bool) -> Option<i32> {
     if !crate::dash_mode::posix_faithful() {
         return None;
     }
-    let opt = korn_table()?.iter().find(|o| o.zsh.is_none() && o.name == name)?;
+    let opt = korn_table()?.iter().find(|o| o.zsh.is_none() && o.name == name && o.is_present())?;
     let mut st = KORN_FIXED_STATE.lock().unwrap_or_else(|e| e.into_inner());
     match st.iter_mut().find(|(n, _)| *n == opt.name) {
         Some(slot) => slot.1 = on,
@@ -777,7 +797,7 @@ pub fn korn_get_o(name: &str) -> Option<bool> {
     if !crate::dash_mode::posix_faithful() {
         return None;
     }
-    let opt = korn_table()?.iter().find(|o| o.zsh.is_none() && o.name == name)?;
+    let opt = korn_table()?.iter().find(|o| o.zsh.is_none() && o.name == name && o.is_present())?;
     Some(opt.state())
 }
 
