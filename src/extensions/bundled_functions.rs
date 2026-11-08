@@ -201,10 +201,31 @@ pub fn ensure_installed() -> Option<usize> {
         }
     });
     let n = written.into_inner();
+    prune_stale(&dir, &files);
     write_atomically(&dir, STAMP, stamp_value().as_bytes());
     tracing::info!(target: "bundled_functions", written = n, dir = %dir.display(),
                    "materialised bundled zsh functions");
     Some(n)
+}
+
+/// Remove the files an older bundle left that this one does not carry.
+///
+/// The directory sits at the front of `$fpath` as zshrs's stock tree, so a
+/// completer that left the bundle (renamed, or dropped upstream) kept
+/// claiming its `#compdef` commands after an upgrade: an old
+/// `_analyseplugin` held `analyseplugin` ahead of the bundle's `_ladspa`, and
+/// an old `_nameref` held `nameref` ahead of `_typeset`. Dot-files (the stamp,
+/// the lock, in-flight temporaries) are not part of the bundle and stay.
+fn prune_stale(dir: &Path, files: &[(&str, &[u8])]) {
+    let keep: std::collections::HashSet<&str> = files.iter().map(|&(n, _)| n).collect();
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for e in entries.flatten() {
+        let name = e.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if !name.starts_with('.') && !keep.contains(name) && e.file_type().is_ok_and(|t| t.is_file()) {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
 }
 
 #[cfg(test)]
@@ -272,6 +293,24 @@ mod tests {
             assert_eq!(std::fs::read(dir.path().join(n)).unwrap(), n.as_bytes());
         }
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), names.len());
+    }
+
+    /// An upgrade drops the completers the new bundle no longer carries, so a
+    /// stale one cannot keep its `#compdef` commands, and keeps the dot-files.
+    #[test]
+    fn an_upgrade_removes_files_the_bundle_dropped() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        for n in ["_analyseplugin", "_ladspa", STAMP] {
+            std::fs::write(dir.path().join(n), b"x").unwrap();
+        }
+        prune_stale(dir.path(), &[("_ladspa", b"#compdef analyseplugin\n")]);
+        let mut names: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(names, vec![STAMP.to_string(), "_ladspa".to_string()]);
     }
 
     #[test]

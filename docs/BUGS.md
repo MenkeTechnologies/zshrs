@@ -62437,3 +62437,33 @@ with Inpar/Outpar and sets the current and pending attribute sets to the
 result. The two earlier off-escape patches in `src/ported/prompt.rs` are
 gone. Fifteen escape sequences now match `/opt/homebrew/bin/zsh` byte for byte.
 `zshrs` and `zshrs --zsh` are unchanged.
+
+## #1215 — an upgrade left completers the new bundle dropped in `~/.zshrs/functions`, and they kept claiming their commands — fixed
+
+**Status:** `fixed` 2026-11-07.
+
+zshrs writes its bundled function tree to `~/.zshrs/functions` and puts that
+directory first on `$fpath` as its stock tree. When the bundle stamp changes,
+`ensure_installed` (`src/extensions/bundled_functions.rs`) rewrote every file
+in the new bundle but removed nothing. A completer that had left the bundle
+stayed, and `compinit` still read its `#compdef` line. On a developer machine
+the directory held 1365 files for a 1329-file bundle. An old `_analyseplugin`
+took `analyseplugin` from the bundle's `_ladspa`, and an old `_nameref` took
+`nameref` from `_typeset`:
+
+```text
+compinit; print $_comps[analyseplugin] $_comps[nameref]
+  zsh     _ladspa _typeset
+  zshrs   _analyseplugin _nameref
+```
+
+`completion_keys_parity::compinit_through_a_zwc_digest_registers_the_same_comps`
+failed on that machine and passed in CI, whose `$HOME` has no old bundle.
+
+**C reference.** None: zsh's `make install` writes a fresh
+`share/zsh/<version>/functions` for every version.
+
+**Fix.** After writing the bundle, the installer removes every file in the
+directory whose name the bundle does not contain. Dot-files (the stamp, the
+install lock, temporaries) stay. A directory whose stamp is already current is
+cleaned the next time the bundle changes.
