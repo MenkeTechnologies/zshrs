@@ -830,8 +830,8 @@ if [[ $all == *'command not found: _zzuntagged_action'* ]]; then print \"K=yes\"
 /// must still produce: the same `$_comps` as zsh and the same autoload stub.
 ///
 /// zshrs additionally registers the completers it bundles (the repo's
-/// `completions/` directory), so extras are allowed only when their value is
-/// one of those files.
+/// `completions/` directory and the optional sibling roots build.rs adds), so
+/// extras are allowed only when their value is one of those files.
 #[test]
 fn compinit_through_a_zwc_digest_registers_the_same_comps() {
     use std::process::Command;
@@ -908,10 +908,36 @@ fn compinit_through_a_zwc_digest_registers_the_same_comps() {
     }
     let missing: Vec<_> = z_pairs.difference(&r_pairs).collect();
     assert!(missing.is_empty(), "zshrs is missing zsh's _comps pairs: {missing:?}");
-    let bundled = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("completions");
+    // The zshrs-only roots build.rs bundles: the repo's `completions/` and the
+    // OPTIONAL sibling roots (`../arb/completions`, `../strykelang/completions`)
+    // it walks recursively when the checkout has them. zsh's own trees
+    // (`functions`, `vendor/zsh/functions`) are not here: an extra from them
+    // would be a real divergence.
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let roots = [
+        manifest.join("completions"),
+        manifest.join("../arb/completions"),
+        manifest.join("../strykelang/completions"),
+    ];
+    let is_bundled = |name: &str| {
+        roots.iter().any(|root| {
+            let mut stack = vec![root.clone()];
+            while let Some(dir) = stack.pop() {
+                for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+                    let p = e.path();
+                    if p.is_dir() {
+                        stack.push(p);
+                    } else if p.file_name().is_some_and(|f| f == name) {
+                        return true;
+                    }
+                }
+            }
+            false
+        })
+    };
     let unexplained: Vec<_> = r_pairs
         .difference(&z_pairs)
-        .filter(|(_, v)| !bundled.join(v).exists())
+        .filter(|(_, v)| !is_bundled(v))
         .collect();
     assert!(
         unexplained.is_empty(),
