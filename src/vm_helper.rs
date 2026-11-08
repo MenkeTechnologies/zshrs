@@ -5028,7 +5028,7 @@ impl ShellExecutor {
                         && crate::extensions::dash_mode::dash_faithful()
                         && !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE)
                     {
-                        std::process::exit(
+                        crate::atexit_teardown::exit(
                             crate::extensions::dash_mode::fatal_error_status().unwrap_or(2),
                         );
                     }

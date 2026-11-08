@@ -62543,3 +62543,29 @@ and `set -o asis` is accepted and remembered. What the option changes, that
 bytes above 0x7F are not treated as control characters when quoting, is
 not ported: like `keyword` or `gmacs`, it is a name with a state and no
 effect.
+
+## #1219 — on Linux a `-c` script with a killed background job could hang at exit, deadlocked on the malloc lock — fixed
+
+**Status:** `fixed` 2026-11-08.
+
+`zshrs --zsh -f -c 'sleep 5 & kill %1; echo rc=$?'` printed `rc=0` and then
+never exited, in about 1 run in 40 on Linux (ubuntu 26.04, aarch64): 7 of
+300. CI's `jobs_parity::kill_by_jobspec` hit its 30s deadline. In the main
+thread's stack, `std::process::exit` was inside glibc's own `free`, holding
+the malloc arena lock. The killed child's SIGCHLD landed there and ran
+`zhandler` → `update_bg_job` → `update_job` → `printjob` → `deletejob` →
+`freejob`, whose `free` waited on that lock for ever (glibc
+`__lll_lock_wait_private`).
+
+`alloc_signal_guard` (#1212) defers the handler while the Rust allocator
+is busy. libc's exit-time frees do not go through it.
+
+**C reference.** None for the mechanism: C's `zexit` ends in `exit(3)`
+(`Src/builtin.c`) with the same theoretical exposure. C's exit runs far
+less teardown that frees memory, so the window is far smaller.
+
+**Fix.** `atexit_teardown::exit` marks the shell as exiting, then calls
+`std::process::exit`, and every exit of a shell process goes through it.
+While the shell is exiting, `zhandler` queues a signal instead of
+dispatching it, as it already does for a busy allocator or job table.
+Measured in the same container afterwards: 0 hangs in 600 runs.

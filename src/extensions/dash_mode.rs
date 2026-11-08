@@ -737,7 +737,7 @@ pub fn die_of_sigfpe() -> ! {
         libc::signal(libc::SIGFPE, libc::SIG_DFL);
         libc::raise(libc::SIGFPE);
     }
-    std::process::exit(128 + libc::SIGFPE)
+    crate::atexit_teardown::exit(128 + libc::SIGFPE)
 }
 
 /// Whether dash's `echo`, printf FORMAT and `%b` decode `\e` to ESC. They

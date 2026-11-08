@@ -1302,7 +1302,7 @@ pub fn zshrs_main() {
                         if e != "__SILENCED__" {
                             eprintln!("zshrs: {}: {}", file.name, e);
                         }
-                        std::process::exit(1);
+                        zsh::atexit_teardown::exit(1);
                     }
                 };
                 // If a script called `exit N` (zsh's exit propagates via
@@ -1321,7 +1321,7 @@ pub fn zshrs_main() {
                     std::sync::atomic::Ordering::Relaxed,
                 );
             }
-            std::process::exit(last_status);
+            zsh::atexit_teardown::exit(last_status);
         }
     }
 
@@ -1391,7 +1391,7 @@ pub fn zshrs_main() {
         zsh::ported::lex::set_lineno(0);
         if args.get(emu_idx + 1).is_none() {
             zsh::ported::utils::zerr("--emulate: argument required"); // c:464
-            std::process::exit(1); // c:465
+            zsh::atexit_teardown::exit(1); // c:465
         }
         // `--zsh` / `--zsh-compat` select zshrs's own drop-in mode and are not
         // zsh options, so they do not count as preceding `--emulate`.
@@ -1401,7 +1401,7 @@ pub fn zshrs_main() {
             .count();
         if preceding != 0 {
             zsh::ported::utils::zerr("--emulate: must precede other options"); // c:468
-            std::process::exit(1); // c:469
+            zsh::atexit_teardown::exit(1); // c:469
         }
     }
     let has_zsh = args.iter().any(|a| a == "--zsh" || a == "--zsh-compat");
@@ -1591,7 +1591,7 @@ pub fn zshrs_main() {
                 "--rcfile" | "--init-file" => {
                     let Some(file) = args.get(ai + 1) else {
                         eprintln!("zshrs: {}: option requires an argument", args[ai]);
-                        std::process::exit(2);
+                        zsh::atexit_teardown::exit(2);
                     };
                     zsh::emulation_startup::set_rcfile(file);
                     ai += 1;
@@ -1741,7 +1741,7 @@ pub fn zshrs_main() {
     // checked BEFORE any thread spawns in this process — raw
     // libc::fork inside the loop requires the main thread is alone.
     if args.iter().any(|a| a == "--ztest-worker") {
-        std::process::exit(zsh::ztest::run_ztest_worker_loop());
+        zsh::atexit_teardown::exit(zsh::ztest::run_ztest_worker_loop());
     }
 
     // --ztest [paths...]: shell-level unit-test runner — worker-pool
@@ -1775,7 +1775,7 @@ pub fn zshrs_main() {
             }
             i += 1;
         }
-        std::process::exit(zsh::ztest::run_ztests_pool(
+        zsh::atexit_teardown::exit(zsh::ztest::run_ztests_pool(
             &targets,
             j_threads.as_deref(),
             quiet,
@@ -1791,7 +1791,7 @@ pub fn zshrs_main() {
             run_doctor(args.iter().any(|a| a == "--json"));
         } else {
             eprintln!("zshrs: --doctor is only available in zshrs mode (not --zsh or --posix)");
-            std::process::exit(1);
+            zsh::atexit_teardown::exit(1);
         }
         return;
     }
@@ -1804,7 +1804,7 @@ pub fn zshrs_main() {
             zsh::banner::print_banner(None);
         } else {
             eprintln!("zshrs: --banner is only available in zshrs mode (not --zsh or --posix)");
-            std::process::exit(1);
+            zsh::atexit_teardown::exit(1);
         }
         return;
     }
@@ -1837,7 +1837,7 @@ pub fn zshrs_main() {
                         _ => e.to_string(),
                     };
                     eprintln!("{path}: {why}.");
-                    std::process::exit(1);
+                    zsh::atexit_teardown::exit(1);
                 }
             },
         };
@@ -1845,10 +1845,10 @@ pub fn zshrs_main() {
             Ok(text) => print!("{text}"),
             Err(msg) => {
                 eprintln!("{msg}");
-                std::process::exit(1);
+                zsh::atexit_teardown::exit(1);
             }
         }
-        std::process::exit(0);
+        zsh::atexit_teardown::exit(0);
     }
 
     if args.len() >= 3 && args[1] == "--dump-zwc" {
@@ -1856,13 +1856,13 @@ pub fn zshrs_main() {
             // Dump specific function
             if let Err(e) = zwc::dump_zwc_function(&args[2], &args[3]) {
                 eprintln!("zshrs: {}: {}", args[2], e);
-                std::process::exit(1);
+                zsh::atexit_teardown::exit(1);
             }
         } else {
             // List all functions
             if let Err(e) = zwc::dump_zwc_info(&args[2]) {
                 eprintln!("zshrs: {}: {}", args[2], e);
-                std::process::exit(1);
+                zsh::atexit_teardown::exit(1);
             }
         }
         return;
@@ -1891,7 +1891,7 @@ pub fn zshrs_main() {
                 let mut buf = String::new();
                 if let Err(e) = io::stdin().read_to_string(&mut buf) {
                     eprintln!("zshrs: stdin: {}", e);
-                    std::process::exit(1);
+                    zsh::atexit_teardown::exit(1);
                 }
                 buf
             } else {
@@ -1899,7 +1899,7 @@ pub fn zshrs_main() {
                     Ok(s) => s,
                     Err(e) => {
                         eprintln!("zshrs: {}: {}", path, e);
-                        std::process::exit(1);
+                        zsh::atexit_teardown::exit(1);
                     }
                 }
             };
@@ -1929,7 +1929,7 @@ pub fn zshrs_main() {
                         j += 1;
                     } else {
                         eprintln!("zshrs: --fmt: -i requires a number");
-                        std::process::exit(1);
+                        zsh::atexit_teardown::exit(1);
                     }
                 }
                 f => files.push(f.to_string()),
@@ -1940,13 +1940,13 @@ pub fn zshrs_main() {
         if files.is_empty() {
             if write_in_place {
                 eprintln!("zshrs: --fmt: -w requires file arguments");
-                std::process::exit(1);
+                zsh::atexit_teardown::exit(1);
             }
             let mut src = String::new();
             use std::io::Read as _;
             if std::io::stdin().read_to_string(&mut src).is_err() {
                 eprintln!("zshrs: --fmt: stdin is not valid UTF-8");
-                std::process::exit(1);
+                zsh::atexit_teardown::exit(1);
             }
             print!("{}", zsh::fmt::format_source(&src, &opts));
         } else {
@@ -1972,7 +1972,7 @@ pub fn zshrs_main() {
                 }
             }
         }
-        std::process::exit(status);
+        zsh::atexit_teardown::exit(status);
     }
 
     // --prewarm-autoloads [DIR ...]: compile every `_*` completer on
@@ -2010,7 +2010,7 @@ pub fn zshrs_main() {
             stats.bytes,
             stats.elapsed_ms,
         );
-        std::process::exit(0);
+        zsh::atexit_teardown::exit(0);
     }
 
     // --lsp: start the Language Server Protocol server on stdio.
@@ -2018,7 +2018,7 @@ pub fn zshrs_main() {
     // client (Helix, Neovim, VS Code, etc.). Implementation lives in
     // src/extensions/lsp.rs.
     if args.iter().any(|a| a == "--lsp") {
-        std::process::exit(zsh::lsp::run_lsp());
+        zsh::atexit_teardown::exit(zsh::lsp::run_lsp());
     }
 
     // --dap [HOST:PORT]: serve the Debug Adapter Protocol.
@@ -2034,7 +2034,7 @@ pub fn zshrs_main() {
             .get(i + 1)
             .map(|s| s.as_str())
             .filter(|s| s.contains(':'));
-        std::process::exit(zsh::dap::run_dap(addr));
+        zsh::atexit_teardown::exit(zsh::dap::run_dap(addr));
     }
 
     // --tiers FILE: run the script, then report which fusevm execution tier
@@ -2044,20 +2044,20 @@ pub fn zshrs_main() {
     if let Some(i) = args.iter().position(|a| a == "--tiers") {
         let Some(path) = args.get(i + 1) else {
             eprintln!("zshrs: --tiers: requires a script path");
-            std::process::exit(1);
+            zsh::atexit_teardown::exit(1);
         };
         let src = match std::fs::read_to_string(path) {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("zshrs: --tiers: {path}: {e}");
-                std::process::exit(1);
+                zsh::atexit_teardown::exit(1);
             }
         };
         match zsh::tiers::report(&src) {
             Ok(r) => println!("{r}"),
             Err(e) => {
                 eprintln!("zshrs: --tiers: {e}");
-                std::process::exit(1);
+                zsh::atexit_teardown::exit(1);
             }
         }
         return;
@@ -2120,7 +2120,7 @@ pub fn zshrs_main() {
             .filter(|(j, _)| Some(*j) != color_at && Some(*j) != color_at.map(|c| c + 1))
             .map(|(_, a)| a.clone())
             .collect();
-        std::process::exit(zsh::docs_book::run(&rest, want_color));
+        zsh::atexit_teardown::exit(zsh::docs_book::run(&rest, want_color));
     }
 
     // --gen-docs [PATH] [--out DIR]: walk a directory, find every
@@ -2130,7 +2130,7 @@ pub fn zshrs_main() {
     // relative path under the output dir.
     if let Some(i) = args.iter().position(|a| a == "--gen-docs") {
         let rest: Vec<&str> = args.iter().skip(i + 1).map(String::as_str).collect();
-        std::process::exit(run_gen_docs_subcommand(&rest));
+        zsh::atexit_teardown::exit(run_gen_docs_subcommand(&rest));
     }
 
     // --names: emit every canonical name across builtins / keywords /
@@ -2203,7 +2203,7 @@ pub fn zshrs_main() {
         // zshrs's program prefix.
         fn bad_option(msg: String) -> ! {
             eprintln!("zshrs: {}", msg);
-            std::process::exit(1);
+            zsh::atexit_teardown::exit(1);
         }
 
         // zshrs-only long flags. These are NOT zsh options, so the
@@ -2828,7 +2828,7 @@ pub fn zshrs_main() {
             Ok(text) => executor.execute_cmdarg(&text),
             Err(msg) => {
                 eprintln!("{msg}");
-                std::process::exit(1);
+                zsh::atexit_teardown::exit(1);
             }
         };
         #[cfg(feature = "daemon")]
@@ -2864,7 +2864,7 @@ pub fn zshrs_main() {
             if e != "__SILENCED__" {
                 eprintln!("zshrs: {}", e);
             }
-            std::process::exit(zsh::extensions::dash_mode::fatal_error_status().unwrap_or(if zsh::extensions::dash_mode::bash_mode() { 2 } else { 1 })); // bash: a syntax error exits 2
+            zsh::atexit_teardown::exit(zsh::extensions::dash_mode::fatal_error_status().unwrap_or(if zsh::extensions::dash_mode::bash_mode() { 2 } else { 1 })); // bash: a syntax error exits 2
         }
         // !!! DASH-FAMILY GATE — see dash_mode::fatal_error_status !!!
         // The end of a `-c` script is the second place dash's
@@ -2878,17 +2878,17 @@ pub fn zshrs_main() {
             let fatal = zsh::ported::zsh_h::ERRFLAG_ERROR | zsh::ported::zsh_h::ERRFLAG_HARD;
             if ef & fatal != 0 {
                 if let Some(st) = zsh::extensions::dash_mode::fatal_error_status() {
-                    std::process::exit(st);
+                    zsh::atexit_teardown::exit(st);
                 }
                 // A zsh-STYLE leg stands in for `zsh -c 'emulate X -c "$script"'`: `emulate` is a
                 // builtin, and a builtin that leaves an error pending reports 1
                 // (c:Src/builtin.c bin_eval: `if (errflag && !lastval) lastval = errflag`) even though the script's own status was 0.
                 if deferred_zsh_style_emu.is_some() && executor.last_status() == 0 {
-                    std::process::exit(1);
+                    zsh::atexit_teardown::exit(1);
                 }
             }
         }
-        std::process::exit(executor.last_status());
+        zsh::atexit_teardown::exit(executor.last_status());
         #[allow(unreachable_code)]
         return;
     }
@@ -2994,7 +2994,7 @@ pub fn zshrs_main() {
                         .map_or_else(|| "zsh".to_string(), |a| a.to_string_lossy().into_owned()),
                     runscript
                 );
-                std::process::exit(127); // c:1398
+                zsh::atexit_teardown::exit(127); // c:1398
             }
         };
         executor.set_scalar("0".to_string(), args[1].clone());
@@ -3112,7 +3112,7 @@ pub fn zshrs_main() {
                     Ok(text) => executor.execute_script(&text),
                     Err(msg) => {
                         eprintln!("{msg}");
-                        std::process::exit(1);
+                        zsh::atexit_teardown::exit(1);
                     }
                 },
                 Err(e) => Err(e.to_string()),
@@ -3125,7 +3125,7 @@ pub fn zshrs_main() {
                 if e != "__SILENCED__" {
                     eprintln!("zshrs: {}: {}", args[1], e);
                 }
-                std::process::exit(zsh::extensions::dash_mode::fatal_error_status().unwrap_or(if zsh::extensions::dash_mode::bash_mode() { 2 } else { 1 })); // bash: a syntax error exits 2
+                zsh::atexit_teardown::exit(zsh::extensions::dash_mode::fatal_error_status().unwrap_or(if zsh::extensions::dash_mode::bash_mode() { 2 } else { 1 })); // bash: a syntax error exits 2
             }
             // c:Src/init.c:234 — loop() breaks on errflag in a
             // non-interactive shell and zsh_main exits with the
@@ -3134,7 +3134,7 @@ pub fn zshrs_main() {
             // here exited 0 even when the script aborted on a
             // readonly reassign (zsh 5.9 exits 1) — same driver bug
             // for any script whose final command fails.
-            Ok(status) => std::process::exit(status),
+            Ok(status) => zsh::atexit_teardown::exit(status),
         }
     }
 
@@ -3180,7 +3180,7 @@ pub fn zshrs_main() {
     zsh::ported::exec::install_session_executor(executor);
     let argv: Vec<String> = argv_strings();
     zsh::startup_trace::mark("entering zsh_main");
-    std::process::exit(zsh::ported::init::zsh_main(argv.len() as i32, &argv));
+    zsh::atexit_teardown::exit(zsh::ported::init::zsh_main(argv.len() as i32, &argv));
 }
 
 /// zshrs --doctor [--json]: full diagnostic report of shell health, caches, and performance.

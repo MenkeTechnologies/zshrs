@@ -13337,7 +13337,7 @@ pub fn execcmd_exec(
                     addvars(state, varspc.unwrap_or(0), addflags); // c:4293
                     if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
                         // c:4294
-                        std::process::exit(1); // c:4295
+                        crate::atexit_teardown::exit(1); // c:4295
                     }
                 }
                 closem(FDT_INTERNAL, 0); // c:4297
@@ -13447,7 +13447,7 @@ fn execcmd_exec_done_path(
                 if _forked_or_subsh != 0 {
                     unsafe { libc::_exit(1) }; // c:4381
                 } else {
-                    std::process::exit(1); // c:4383
+                    crate::atexit_teardown::exit(1); // c:4383
                 }
             }
             errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed); // c:4385

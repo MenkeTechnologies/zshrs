@@ -415,14 +415,14 @@ pub fn parseopts(
             // c:434
             println!("zshrs (C-port)"); // c:435-436
             if toplevel {
-                std::process::exit(0);
+                crate::atexit_teardown::exit(0);
             } // c:437
         }
         if arg == "--help" {
             // c:439
             printhelp(); // c:440
             if toplevel {
-                std::process::exit(0);
+                crate::atexit_teardown::exit(0);
             } // c:441
         }
         if arg == "-c" {
@@ -1523,7 +1523,7 @@ fn setupshin(runscript: Option<&str>) {
                 "can't open input file: {}",
                 script
             ));
-            std::process::exit(127); // c:1365
+            crate::atexit_teardown::exit(127); // c:1365
         }
     }
     // lineno = 1;                                                           // c:1394
@@ -1787,7 +1787,7 @@ pub fn init_misc(cmd: Option<&str>, zsh_name: &str) {
         // execstring(cmd, 0, 1, "cmdarg");                                  // c:1551
         let _ = cmdstr;
         // stopmsg = 1; zexit(...);                                          // c:1551-1537
-        std::process::exit(0);
+        crate::atexit_teardown::exit(0);
     }
 
     // c:1573-1574 — `if (interact && isset(RCS))

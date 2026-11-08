@@ -3937,7 +3937,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let dash_p = post.iter().take_while(|a| a.starts_with('-')).any(|a| a.contains('p'));
             let status = command_whence(post, dash_p);
             let _ = std::io::stdout().flush();
-            std::process::exit(status);
+            crate::atexit_teardown::exit(status);
         }
         if walk.is_empty_command {
             // `exec` with no command + no redirects = no-op success
@@ -4049,7 +4049,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 crate::ported::builtin::EXIT_PENDING.store(1, std::sync::atomic::Ordering::Relaxed);
                 return Value::Status(status);
             }
-            std::process::exit(status);
+            crate::atexit_teardown::exit(status);
         }
         // c:Src/exec.c — builtin path: `exec builtin` runs the
         // builtin in-process and exits.
@@ -4063,7 +4063,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 crate::ported::builtin::EXIT_PENDING.store(1, std::sync::atomic::Ordering::Relaxed);
                 return Value::Status(status);
             }
-            std::process::exit(status);
+            crate::atexit_teardown::exit(status);
         }
         // c:Src/exec.c — `exec` inside a subshell (`(exec cmd)`)
         // replaces ONLY the subshell child process; the parent shell
@@ -4186,7 +4186,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             if pdksh_exec_builtin {
                 let st = dispatch_builtin_raw(&cmd, rest.clone());
                 crate::ported::builtin::zexit(st, crate::ported::zsh_h::ZEXIT_NORMAL);
-                std::process::exit(st);
+                crate::atexit_teardown::exit(st);
             }
             let st = exec_execute(&args, walk.exec_argv0.clone(), login, use_defpath, true);
             // bash, dash, mksh and /bin/sh run the EXIT trap when the exec FAILS and
@@ -4203,7 +4203,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let st = if crate::dash_mode::sh_mode() && exit_trapped { 0 } else { st };
                 crate::ported::builtin::zexit(st, crate::ported::zsh_h::ZEXIT_NORMAL);
             }
-            std::process::exit(st);
+            crate::atexit_teardown::exit(st);
         }
         let mut command = std::process::Command::new(&prog);
         command.arg0(&display_argv0);
@@ -4242,7 +4242,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         } else {
             127
         };
-        std::process::exit(code);
+        crate::atexit_teardown::exit(code);
     });
 
     reg_passthru!(vm, BUILTIN_LET, "let");

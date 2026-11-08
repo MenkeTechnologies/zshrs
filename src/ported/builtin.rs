@@ -16062,7 +16062,7 @@ pub fn checkjobs() {
 ///     `exit((shell_exiting || exit_pending) ? exit_val : lastval);`
 pub fn realexit() -> ! {
     // c:5953
-    std::process::exit(
+    crate::atexit_teardown::exit(
         if SHELL_EXITING.load(Relaxed) != 0 || EXIT_PENDING.load(Relaxed) != 0 {
             EXIT_VAL.load(Relaxed)
         } else {

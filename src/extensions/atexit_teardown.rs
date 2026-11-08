@@ -69,3 +69,28 @@ pub fn mark() {
 pub fn active() -> bool {
     IN_ATEXIT.load(Ordering::SeqCst)
 }
+
+/// Set by [`exit`] before the process starts exiting. Never cleared.
+static EXITING: AtomicBool = AtomicBool::new(false);
+
+/// True once the shell has called [`exit`].
+///
+/// The signal handler queues instead of dispatching from then on. libc's
+/// `exit` frees memory of its own (run-time teardown, stdio) without going
+/// through the Rust allocator, so `alloc_signal_guard` cannot see it; a
+/// SIGCHLD landing inside that `free` ran `zhandler` -> `update_job` ->
+/// `deletejob`, whose `free` waited on the malloc lock the interrupted
+/// `free` held, and the shell never exited (Linux, `sleep 5 & kill %1` as a
+/// `-c` script, about 1 run in 40). Nothing the dispatch would do matters to
+/// a process that is exiting.
+pub fn exiting() -> bool {
+    EXITING.load(Ordering::SeqCst)
+}
+
+/// `exit(3)` for the shell: mark it exiting ([`exiting`]), then exit.
+/// Every exit of a shell process goes through here instead of calling
+/// `std::process::exit` directly.
+pub fn exit(code: i32) -> ! {
+    EXITING.store(true, Ordering::SeqCst);
+    std::process::exit(code)
+}
