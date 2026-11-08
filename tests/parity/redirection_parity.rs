@@ -920,8 +920,24 @@ mod multio_on_the_last_command_of_dash_c {
         let d = tdir();
         std::fs::write(d.path().join("o1"), "out1\n").unwrap();
         assert_parity_in(d.path(), "exec 3>&1; /bin/echo hi >a1 >&3");
-        assert_parity_in(d.path(), "exec 3>&1; /bin/echo hi >a1 >&3; print rc=$?");
         assert_parity_in(d.path(), "/bin/cat <o1 <<<x");
+        // Not the last command, so the shell goes on while the multios helper
+        // copies `hi` to fd 3: zsh prints `rc=0` first in some runs (8 in 300
+        // for the development tree, 38 in 300 for Homebrew's 5.9.2). The
+        // lines are compared as a set; the helper's output must still arrive.
+        if !zsh_available() {
+            return;
+        }
+        let s = "exec 3>&1; /bin/echo hi >a1 >&3; print rc=$?";
+        let sorted = |out: &str| {
+            let mut v: Vec<String> = out.lines().map(str::to_string).collect();
+            v.sort();
+            v
+        };
+        let z = run_zsh_in(d.path(), s);
+        let r = run_zshrs_in(d.path(), s);
+        assert_eq!(sorted(&z.stdout), sorted(&r.stdout), "stdout lines differ on:\n{s}");
+        assert_eq!(z.exit, r.exit);
     }
 }
 
