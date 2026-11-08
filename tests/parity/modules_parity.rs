@@ -1443,10 +1443,30 @@ mod cap_module {
     /// builtin is "command not found", 127. zsh 5.9.x instead built stub
     /// builtins that said "not available on this system" and returned 1.
     /// macOS only: a Linux zsh may be configured with `--enable-cap`.
+    ///
+    /// zsh's load failure ends in `dlerror()`'s text, which names its own
+    /// install directory; zshrs links its modules in and prints the prefix
+    /// alone (docs/BUGS.md #376, `zmodload_nonexistent_diagnostic` below).
+    /// That tail is cut from zsh's line; everything else is compared whole.
     #[test]
     #[cfg(target_os = "macos")]
     fn cap_stubs_use_bin_notavail_text() {
-        assert_parity_strict("zmodload zsh/cap; cap; echo $?; getcap /x; echo $?; setcap a /x; echo $?");
+        if !zsh_available() {
+            return;
+        }
+        let script = "zmodload zsh/cap; cap; echo $?; getcap /x; echo $?; setcap a /x; echo $?";
+        let z = run_zsh(script);
+        let r = run_zshrs(script);
+        let prefix = "zsh:1: failed to load module `zsh/cap'";
+        let z_err: String = z
+            .stderr
+            .lines()
+            .map(|l| if l.starts_with(prefix) { prefix } else { l })
+            .map(|l| format!("{l}\n"))
+            .collect();
+        assert_eq!(z.stdout, r.stdout, "stdout divergence on:\n{script}");
+        assert_eq!(z_err, r.stderr, "stderr divergence on:\n{script}");
+        assert_eq!(z.exit, r.exit, "exit divergence on:\n{script}");
     }
 }
 
