@@ -62463,10 +62463,16 @@ failed on that machine and passed in CI, whose `$HOME` has no old bundle.
 **C reference.** None: zsh's `make install` writes a fresh
 `share/zsh/<version>/functions` for every version.
 
-**Fix.** After writing the bundle, the installer removes every file in the
-directory whose name the bundle does not contain. Dot-files (the stamp, the
-install lock, temporaries) stay. A directory whose stamp is already current is
-cleaned the next time the bundle changes.
+**Fix.** Each install records its bundle's file list under
+`.zshrs-bundle-manifests/<bundle id>`. It then removes every file that no list
+written in the last 30 days names, and drops expired lists. The first version
+of this fix removed everything the installing bundle did not carry. Shells of
+different versions share the directory, though: the installed shell and the
+development builds tests start each rewrite it when they start. So that version
+also removed the other bundle's files, which a running shell of that version
+could still autoload. Dot-files (the stamp, the install lock, temporaries, the
+lists) stay. A directory whose stamp is already current is cleaned the next
+time a different bundle installs.
 
 ## #1216 — `--ash`, and `--dash` on Linux, rejected `set -o pipefail`, which their reference shells accept — fixed
 
