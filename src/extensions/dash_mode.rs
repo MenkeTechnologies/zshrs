@@ -751,6 +751,18 @@ pub fn dash_decodes_esc() -> bool {
     cfg!(target_os = "linux")
 }
 
+/// Whether dash has the `pipefail` option (`set -o pipefail`, listed between
+/// `nolog` and `debug`; a pipeline's status is its rightmost non-zero one).
+/// Upstream added it after 0.5.12 (jobs.c `getstatus`, options.c `optnames`),
+/// so the `ash` reference (0.5.13.5) has it. Ubuntu's 0.5.12-12ubuntu3, the
+/// `/bin/dash` of ubuntu-26.04, carries it as
+/// `0021-jobs-Implement-pipefail-option.patch`; Apple's `/bin/dash` does not.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn dash_has_pipefail() -> bool {
+    ASH_MODE.load(Ordering::Relaxed) || cfg!(target_os = "linux")
+}
+
 /// Whether the mksh being emulated has the `cat` builtin. mksh R59c
 /// registers `!cat` (funcs.c:101), used unless the command has flags; the
 /// 2025 upstream snapshot Debian ships as `mksh 59c-37` removes it
@@ -760,6 +772,60 @@ pub fn dash_decodes_esc() -> bool {
 /// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
 pub fn mksh_has_cat_builtin() -> bool {
     !cfg!(target_os = "linux")
+}
+
+/// Whether the mksh being emulated has POSIX 2024's `trap -p`. R59c's
+/// `c_trap` takes no options; the upstream snapshot Ubuntu ships as
+/// `mksh 59c-42` and later ("Add new POSIX 2024 option -p to trap builtin",
+/// debian/changelog) does, and that is the mksh of ubuntu-26.04.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn mksh_has_trap_p() -> bool {
+    cfg!(target_os = "linux")
+}
+
+/// mksh 59c-42 `trap -p [SIG...]` (funcs.c `c_trap` + `print_trap`, from
+/// Ubuntu's `debian-changes`). With no operand every slot is printed, set or
+/// not, in `sigtraps[]` order: EXIT, signals 1..NSIG-1 (the number for an
+/// unnamed one), ERR. An unset slot prints `-` when the signal was ignored at
+/// startup and `''` otherwise; EXIT and ERR are never ignored.
+///
+/// `lookup` maps a trap slot (0 = EXIT, `err` = ERR, else the signal number)
+/// to its action. Returns the status: 1 when an operand named no signal.
+///
+/// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
+pub fn mksh_trap_p(
+    operands: &[String],
+    slots: &[(i32, String)],
+    err: i32,
+    lookup: impl Fn(i32) -> Option<String>,
+    slot_of: impl Fn(&str) -> Option<i32>,
+) -> i32 {
+    let print_trap = |slot: i32, name: &str| {
+        let action = match lookup(slot) {
+            Some(body) => mksh_print_value_quoted(&body),
+            None if slot != 0 && slot != err && crate::startup_signals::ignored_on_entry(slot) => "-".to_string(),
+            None => "''".to_string(),
+        };
+        println!("trap -- {action} {name}");
+    };
+    if operands.is_empty() {
+        for (slot, name) in slots {
+            print_trap(*slot, name);
+        }
+        return 0;
+    }
+    let mut rc = 0;
+    for op in operands {
+        match slot_of(op).and_then(|slot| slots.iter().find(|(s, _)| *s == slot)) {
+            Some((slot, name)) => print_trap(*slot, name),
+            None => {
+                crate::ported::utils::zwarnnam("trap", &format!("bad signal: {op}"));
+                rc = 1;
+            }
+        }
+    }
+    rc
 }
 
 /// mksh's `utf8-mode` at startup. R59c decides it from the locale only for an

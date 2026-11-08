@@ -19418,6 +19418,8 @@ pub fn bin_trap(
         if let Some(bad) = argv
             .first()
             .filter(|a| a.len() > 1 && a.starts_with('-') && *a != "--")
+            .filter(|a| !(*a == "-p" && crate::dash_mode::mksh_has_trap_p()
+                && crate::extensions::emulation_startup::personality() == crate::extensions::emulation_startup::Personality::Mksh))
         {
             zerrnam(name, &format!("-{}: unknown option", bad.chars().nth(1).unwrap_or('-')));
             return 1;
@@ -19486,6 +19488,53 @@ pub fn bin_trap(
     // listing `trap -p`; zsh has no such option (it reaches the bare-body path
     // below). Measured: `ksh -c 'trap "print a" INT; trap -p'` lists the trap.
     // mksh has no listing option at all: `mksh -c 'trap -p'` -> "trap: -p: unknown option", 1.
+    // The mksh Ubuntu ships from 59c-42 on has POSIX 2024's `trap -p`
+    // (dash_mode::mksh_trap_p).
+    if argv.first().is_some_and(|a| a == "-p")
+        && crate::extensions::emulation_startup::personality()
+            == crate::extensions::emulation_startup::Personality::Mksh
+        && crate::dash_mode::mksh_has_trap_p()
+    {
+        let operands = argv[1..].strip_prefix(&["--".to_string()][..]).unwrap_or(&argv[1..]);
+        // Slots are mksh's `sigtraps[]` indices: 0 EXIT, the signal numbers,
+        // then ERR at ksh_NSIG. zsh's own table carries its pseudo-signals
+        // (ZERR, DEBUG) past SIGCOUNT, so names stop there and each slot is
+        // translated to zsh's index only to find the trap.
+        use crate::ported::signals_h::SIGCOUNT;
+        #[cfg(target_os = "linux")]
+        let nsig = libc::SIGRTMAX() + 1;
+        #[cfg(not(target_os = "linux"))]
+        let nsig = SIGCOUNT + 1;
+        let zerr = getsigidx("ZERR");
+        let mut slots = vec![(0, "EXIT".to_string())];
+        for sig in 1..nsig {
+            let name = (sig <= SIGCOUNT)
+                .then(|| crate::ported::signals_h::sigs_name(sig))
+                .flatten()
+                .map_or_else(|| sig.to_string(), str::to_string);
+            slots.push((sig, name));
+        }
+        slots.push((nsig, "ERR".to_string()));
+        let zsh_idx = |slot: i32| match slot {
+            s if s == nsig => zerr,
+            s if s <= SIGCOUNT => s,
+            s => getsigidx(&s.to_string()),
+        };
+        let traps = traps_table().lock().map(|t| t.clone()).unwrap_or_default();
+        let lookup = |slot: i32| {
+            let idx = zsh_idx(slot);
+            traps.iter().find(|(k, _)| getsigidx(k) == idx).map(|(_, v)| v.clone())
+        };
+        let slot_of = |op: &str| match op.parse::<i32>() {
+            Ok(n) => (0..nsig).contains(&n).then_some(n),
+            Err(_) => match getsigidx(op) {
+                i if i == zerr => Some(nsig),
+                i if (0..=SIGCOUNT).contains(&i) => Some(i),
+                _ => None,
+            },
+        };
+        return crate::dash_mode::mksh_trap_p(operands, &slots, nsig, lookup, slot_of);
+    }
     if argv.len() == 1
         && argv[0] == "-p"
         && matches!(

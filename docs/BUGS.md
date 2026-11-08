@@ -62467,3 +62467,45 @@ failed on that machine and passed in CI, whose `$HOME` has no old bundle.
 directory whose name the bundle does not contain. Dot-files (the stamp, the
 install lock, temporaries) stay. A directory whose stamp is already current is
 cleaned the next time the bundle changes.
+
+## #1216 — `--ash`, and `--dash` on Linux, rejected `set -o pipefail`, which their reference shells accept — fixed
+
+**Status:** `fixed` 2026-11-08.
+
+dash gained `pipefail` after 0.5.12. With it set, a pipeline's status is that
+of its rightmost failing command (`jobs.c` `getstatus`). It is listed by
+`set -o` between `nolog` and `debug` (`options.c` `optnames`). The `--ash`
+reference, dash 0.5.13.5, has it. Ubuntu 26.04's `/bin/dash`,
+`0.5.12-12ubuntu3`, carries it as
+`0021-jobs-Implement-pipefail-option.patch`. Apple's `/bin/dash` does not.
+zshrs's dash table had no such entry, so `set -o pipefail` was "Illegal
+option" in every dash mode. When GitHub moved `ubuntu-latest` to 26.04, the
+emulation matrix row `set -o pipefail 2>/dev/null; echo after` and the
+`set -o` / `set +o` listing tests failed for `--dash`.
+
+**C reference.** None (dash, not zsh). Ubuntu dash `0.5.12-12ubuntu3`
+`debian/patches/0021-jobs-Implement-pipefail-option.patch`.
+
+**Fix.** `dash_mode::dash_has_pipefail()` is true for `--ash` and on Linux.
+The dash `set -o` table lists `pipefail` only when it is true, and maps it to
+zsh's `PIPE_FAIL`, which has the same rule.
+
+## #1217 — `--mksh` on Linux rejected `trap -p`, which Ubuntu's mksh has — fixed
+
+**Status:** `fixed` 2026-11-08.
+
+mksh R59c's `trap` takes no options. The upstream snapshot Ubuntu ships from
+`59c-42` on adds POSIX 2024's `-p` ("Add new POSIX 2024 option -p to trap
+builtin", debian/changelog). With no operand, `trap -p` prints every slot,
+set or not: EXIT, signals 1 to NSIG-1 (numbered where unnamed), ERR. An unset
+slot prints as `''`, or `-` if the signal was ignored at startup. With
+operands it prints only those signals. On ubuntu-26.04 (`mksh 59c-43`)
+`pdksh_line_specifics_match_mksh` and the emulation matrix's `trap -p INT`
+row failed.
+
+**C reference.** None (mksh, not zsh). Ubuntu mksh `59c-43`
+`debian/patches/debian-changes`, `funcs.c` `c_trap` and `print_trap`.
+
+**Fix.** `dash_mode::mksh_trap_p` follows `c_trap -p`/`print_trap`, gated by
+`mksh_has_trap_p()` (Linux). macOS's mksh R59 still answers
+`trap: -p: unknown option`, and so does `--mksh` there.

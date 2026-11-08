@@ -566,6 +566,9 @@ struct SetOpt {
     /// Computes the fresh-shell state when it depends on the host or the
     /// environment (mksh's `utf8-mode`); overrides `default_on`.
     startup_state: Option<fn() -> bool>,
+    /// Whether the emulated build has the option at all, when that depends
+    /// on the reference's version or distro patches (dash's `pipefail`).
+    present: Option<fn() -> bool>,
 }
 
 const fn o(name: &'static str, zsh: &'static str) -> SetOpt {
@@ -575,6 +578,7 @@ const fn o(name: &'static str, zsh: &'static str) -> SetOpt {
         invert: false,
         default_on: false,
         startup_state: None,
+        present: None,
     }
 }
 const fn inv(name: &'static str, zsh: &'static str) -> SetOpt {
@@ -584,6 +588,7 @@ const fn inv(name: &'static str, zsh: &'static str) -> SetOpt {
         invert: true,
         default_on: false,
         startup_state: None,
+        present: None,
     }
 }
 const fn fixed(name: &'static str, default_on: bool) -> SetOpt {
@@ -593,6 +598,7 @@ const fn fixed(name: &'static str, default_on: bool) -> SetOpt {
         invert: false,
         default_on,
         startup_state: None,
+        present: None,
     }
 }
 const fn computed(name: &'static str, startup_state: fn() -> bool) -> SetOpt {
@@ -602,6 +608,14 @@ const fn computed(name: &'static str, startup_state: fn() -> bool) -> SetOpt {
         invert: false,
         default_on: false,
         startup_state: Some(startup_state),
+        present: None,
+    }
+}
+/// [`o`] for an option only some builds of the reference have.
+const fn o_if(name: &'static str, zsh: &'static str, present: fn() -> bool) -> SetOpt {
+    SetOpt {
+        present: Some(present),
+        ..o(name, zsh)
     }
 }
 
@@ -628,6 +642,7 @@ const DASH_SET_O: &[SetOpt] = &[
     #[cfg(target_os = "linux")]
     o("privileged", "privileged"),
     fixed("nolog", false),
+    o_if("pipefail", "pipefail", crate::dash_mode::dash_has_pipefail),
     fixed("debug", false),
 ];
 
@@ -637,7 +652,7 @@ const DASH_SET_O: &[SetOpt] = &[
 ///
 /// !!! RUST-ONLY EXTENSION — no zsh C counterpart !!!
 pub fn dash_knows_set_o(name: &str) -> bool {
-    DASH_SET_O.iter().any(|opt| opt.name == name)
+    DASH_SET_O.iter().any(|opt| opt.name == name && opt.is_present())
 }
 
 /// ksh93u+m's `set -o`, alphabetical. Note the POSITIVE spellings —
@@ -767,6 +782,10 @@ pub fn korn_get_o(name: &str) -> Option<bool> {
 }
 
 impl SetOpt {
+    fn is_present(&self) -> bool {
+        self.present.is_none_or(|present| present())
+    }
+
     fn state(&self) -> bool {
         if self.zsh.is_none() {
             let st = KORN_FIXED_STATE.lock().unwrap_or_else(|e| e.into_inner());
@@ -957,6 +976,7 @@ fn set_o_render(reusable: bool) -> Option<String> {
         Personality::Mksh | Personality::Pdksh => (MKSH_SET_O, 14),
         _ => return None,
     };
+    let table: Vec<&SetOpt> = table.iter().filter(|e| e.is_present()).collect();
     let on = |b: bool| if b { "on" } else { "off" };
     if reusable {
         // `set -o NAME` when the option is on, `set +o NAME` when off —
