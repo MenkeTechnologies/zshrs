@@ -26,13 +26,13 @@
 #![allow(non_snake_case)]
 #![allow(clippy::doc_lazy_continuation)]
 
-use crate::zpty_probe::{assert_same_dump, dump_widget, sq, DUMP_KEY, OPEN};
+use crate::zpty_probe::{assert_same_dump, dump_widget, sq, DUMP_KEY_PUMPED, OPEN_PUMPED};
 
 /// Type `keys` under `keymap`, then dump `expr`.
 ///
-/// Same two-second settle per keystroke as the buffer-state module, and
-/// the same mandatory drain before the file is read — see `zpty_probe`
-/// for why both are load-bearing rather than cautious.
+/// Same `pump` after every write as the buffer-state module's driver: the
+/// pty is read until it has been quiet, so a keystroke never lands mid-redraw
+/// and the dump is drawn before the file is read.
 fn driver(keymap: &str, expr: &str, keys: &[&str]) -> String {
     let widget = dump_widget(expr);
     let typed: String = keys
@@ -43,24 +43,16 @@ fn driver(keymap: &str, expr: &str, keys: &[&str]) -> String {
             } else {
                 sq(k)
             };
-            format!("zpty -w -n w {w}\nsleep 2\n")
+            format!("zpty -w -n w {w}; pump\n")
         })
         .collect();
     format!(
-        "{OPEN}
-zpty -w w 'unsetopt beep'
-zpty -w w 'PS2=\"C2> \"'
-zpty -w w 'bindkey {keymap}'
+        "{OPEN_PUMPED}
+zpty -w w 'PS2=\"C2> \"'; pump
+zpty -w w 'bindkey {keymap}'; pump
 {widget}
-sleep 2
-{typed}{DUMP_KEY}
-local out all=
-integer i=0
-while (( i++ < 50 )); do
-  if zpty -r -t w out 2>/dev/null; then all+=\"$out\"; else sleep 0.1; fi
-done
-zpty -d w 2>/dev/null
-"
+pump
+{typed}{DUMP_KEY_PUMPED}"
     )
 }
 

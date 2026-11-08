@@ -28,20 +28,18 @@
 #![allow(non_snake_case)]
 #![allow(clippy::doc_lazy_continuation)]
 
-use crate::zpty_probe::{assert_same_dump, sq, DUMP_KEY, DUMP_WIDGET, OPEN};
+use crate::zpty_probe::{assert_same_dump, sq, DUMP_KEY_PUMPED, DUMP_WIDGET, OPEN_PUMPED};
 
 /// Type `keys` under `keymap`, then dump `$BUFFER`/`$CURSOR`.
 ///
-/// The drain loop is spelled out here rather than reused from `DRAIN`
-/// because this driver reads a FILE afterwards instead of matching the
-/// transcript — but draining first is mandatory either way.
-///
-/// Two seconds per keystroke, not one. This box runs many builds at
-/// once and a keystroke written while the inner shell is still
-/// redrawing is simply dropped; at one second the module was
-/// intermittently flaky under `--test-threads=4`. The settle time is
-/// the honest fix — retrying a mismatch would convert a real divergence
-/// into a pass, which is exactly what a pin must never do.
+/// Every write is followed by `pump`, which reads the pty until it has been
+/// quiet for 1.8s. A keystroke written while the inner shell is still
+/// redrawing is dropped, and an undrained pty stops the shell writing. A
+/// fixed two-second sleep per key and a five-second read at the end were
+/// enough on an idle box, not at a load average of 30, where the reference
+/// zsh often had not drawn its dump yet. Waiting for quiet settles at
+/// least as long when the shell is idle and longer when it is slow; a
+/// mismatch is still never retried.
 fn driver(keymap: &str, keys: &[&str]) -> String {
     let typed: String = keys
         .iter()
@@ -51,23 +49,15 @@ fn driver(keymap: &str, keys: &[&str]) -> String {
             } else {
                 sq(k)
             };
-            format!("zpty -w -n w {w}\nsleep 2\n")
+            format!("zpty -w -n w {w}; pump\n")
         })
         .collect();
     format!(
-        "{OPEN}
-zpty -w w 'unsetopt beep'
-zpty -w w 'bindkey {keymap}'
+        "{OPEN_PUMPED}
+zpty -w w 'bindkey {keymap}'; pump
 {DUMP_WIDGET}
-sleep 2
-{typed}{DUMP_KEY}
-local out all=
-integer i=0
-while (( i++ < 50 )); do
-  if zpty -r -t w out 2>/dev/null; then all+=\"$out\"; else sleep 0.1; fi
-done
-zpty -d w 2>/dev/null
-"
+pump
+{typed}{DUMP_KEY_PUMPED}"
     )
 }
 
