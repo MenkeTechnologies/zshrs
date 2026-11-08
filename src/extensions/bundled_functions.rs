@@ -201,7 +201,7 @@ pub fn ensure_installed() -> Option<usize> {
         }
     });
     let n = written.into_inner();
-    prune_stale(&dir, &stamp_value(), &files);
+    prune_stale(&dir, &manifests_dir(&dir), &stamp_value(), &files);
     write_atomically(&dir, STAMP, stamp_value().as_bytes());
     tracing::info!(target: "bundled_functions", written = n, dir = %dir.display(),
                    "materialised bundled zsh functions");
@@ -209,8 +209,11 @@ pub fn ensure_installed() -> Option<usize> {
 }
 
 /// Records which files each recently installed bundle carries, one file per
-/// bundle id. A dot-directory, so the `_*` scan never opens it.
-const MANIFESTS: &str = ".zshrs-bundle-manifests";
+/// bundle id. A sibling of the functions directory (`~/.zshrs/function-bundles`),
+/// which stays flat like zsh's own install.
+fn manifests_dir(dir: &Path) -> PathBuf {
+    dir.parent().unwrap_or(dir).join("function-bundles")
+}
 
 /// How long a bundle's file list protects its files after its last install.
 /// Shells of different versions share this directory and each rewrites it when
@@ -228,18 +231,17 @@ const MANIFEST_TTL: std::time::Duration = std::time::Duration::from_secs(30 * 24
 ///
 /// Removing everything this bundle does not carry would also remove the
 /// files of another version installed alongside, which a shell of that
-/// version may still autoload from. So this bundle's list is recorded under
-/// [`MANIFESTS`], and a file goes only when no list written within
-/// [`MANIFEST_TTL`] names it; older lists are dropped. Dot-files (the stamp,
-/// the lock, in-flight temporaries, the lists) stay.
-fn prune_stale(dir: &Path, id: &str, files: &[(&str, &[u8])]) {
-    let manifests = dir.join(MANIFESTS);
-    let _ = std::fs::create_dir_all(&manifests);
+/// version may still autoload from. So this bundle's list is recorded in
+/// `manifests` ([`manifests_dir`]), and a file goes only when no list written
+/// within [`MANIFEST_TTL`] names it; older lists are dropped. Dot-files (the
+/// stamp, the lock, in-flight temporaries) stay.
+fn prune_stale(dir: &Path, manifests: &Path, id: &str, files: &[(&str, &[u8])]) {
+    let _ = std::fs::create_dir_all(manifests);
     let list: String = files.iter().map(|&(n, _)| format!("{n}\n")).collect();
-    write_atomically(&manifests, id, list.as_bytes());
+    write_atomically(manifests, id, list.as_bytes());
 
     let mut keep: std::collections::HashSet<String> = files.iter().map(|&(n, _)| n.to_string()).collect();
-    for e in std::fs::read_dir(&manifests).into_iter().flatten().flatten() {
+    for e in std::fs::read_dir(manifests).into_iter().flatten().flatten() {
         let fresh = e
             .metadata()
             .and_then(|m| m.modified())
@@ -341,46 +343,56 @@ mod tests {
         names
     }
 
-    /// A file no recent bundle carries goes; dot-files stay.
+    /// A functions directory and its sibling manifests directory.
+    fn dirs() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let home = tempfile::tempdir().expect("tempdir");
+        let dir = home.path().join("functions");
+        std::fs::create_dir_all(&dir).unwrap();
+        let manifests = manifests_dir(&dir);
+        (home, dir, manifests)
+    }
+
+    /// A file no recent bundle carries goes; dot-files stay, and the
+    /// functions directory stays flat.
     #[test]
     fn an_upgrade_removes_files_no_recent_bundle_carries() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let (_home, dir, manifests) = dirs();
         for n in ["_analyseplugin", "_ladspa", STAMP] {
-            std::fs::write(dir.path().join(n), b"x").unwrap();
+            std::fs::write(dir.join(n), b"x").unwrap();
         }
-        prune_stale(dir.path(), "new", &[("_ladspa", b"#compdef analyseplugin\n")]);
-        assert_eq!(listing(dir.path()), vec![MANIFESTS.to_string(), STAMP.to_string(), "_ladspa".to_string()]);
+        prune_stale(&dir, &manifests, "new", &[("_ladspa", b"#compdef analyseplugin\n")]);
+        assert_eq!(listing(&dir), vec![STAMP.to_string(), "_ladspa".to_string()]);
     }
 
     /// Two versions installing alternately keep each other's files: a shell of
     /// the other version may still be running and autoload from here.
     #[test]
     fn alternating_versions_keep_each_others_files() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let (_home, dir, manifests) = dirs();
         // Each install writes its own files, then prunes.
         for n in ["_old_only", "_shared"] {
-            std::fs::write(dir.path().join(n), b"x").unwrap();
+            std::fs::write(dir.join(n), b"x").unwrap();
         }
-        prune_stale(dir.path(), "old", &[("_old_only", b""), ("_shared", b"")]);
-        std::fs::write(dir.path().join("_new_only"), b"x").unwrap();
-        prune_stale(dir.path(), "new", &[("_shared", b""), ("_new_only", b"")]);
-        prune_stale(dir.path(), "old", &[("_old_only", b""), ("_shared", b"")]);
-        assert!(dir.path().join("_old_only").exists(), "the other version's file was removed");
-        assert!(dir.path().join("_new_only").exists());
+        prune_stale(&dir, &manifests, "old", &[("_old_only", b""), ("_shared", b"")]);
+        std::fs::write(dir.join("_new_only"), b"x").unwrap();
+        prune_stale(&dir, &manifests, "new", &[("_shared", b""), ("_new_only", b"")]);
+        prune_stale(&dir, &manifests, "old", &[("_old_only", b""), ("_shared", b"")]);
+        assert!(dir.join("_old_only").exists(), "the other version's file was removed");
+        assert!(dir.join("_new_only").exists());
     }
 
     /// A bundle's list stops protecting its files once it has not been
     /// installed for MANIFEST_TTL, and the expired list itself is dropped.
     #[test]
     fn an_expired_bundle_list_protects_nothing() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        std::fs::write(dir.path().join("_gone"), b"x").unwrap();
-        prune_stale(dir.path(), "old", &[("_gone", b"")]);
-        let old = dir.path().join(MANIFESTS).join("old");
+        let (_home, dir, manifests) = dirs();
+        std::fs::write(dir.join("_gone"), b"x").unwrap();
+        prune_stale(&dir, &manifests, "old", &[("_gone", b"")]);
+        let old = manifests.join("old");
         let past = std::time::SystemTime::now() - MANIFEST_TTL - std::time::Duration::from_secs(60);
         std::fs::File::options().write(true).open(&old).unwrap().set_modified(past).unwrap();
-        prune_stale(dir.path(), "new", &[("_kept", b"")]);
-        assert!(!dir.path().join("_gone").exists());
+        prune_stale(&dir, &manifests, "new", &[("_kept", b"")]);
+        assert!(!dir.join("_gone").exists());
         assert!(!old.exists());
     }
 
