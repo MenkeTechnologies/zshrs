@@ -1224,6 +1224,38 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     bv.bp += 1;
                 }
             };
+            // !!! RUST-ONLY — the `zsh` drop-in prints zsh 5.9.2's escapes for
+            // `%S %s %B %b %U %u %F %f %K %k`, one capability per escape plus
+            // the re-asserts after a clearing one (src/extensions/prompt_attrs_592.rs),
+            // each bracketed as 5.9.2's tsetcap does. Current and pending then
+            // both hold the result, so the port's diff adds nothing after it.
+            let putpromptattrs_592 = |bv: &mut buf_vars, xc: u8, atr: zattr, valid: bool| {
+                let mask = *current_attrs_lock().lock().expect("current_attrs poisoned");
+                let (caps, mask) = crate::extensions::prompt_attrs_592::attr_escapes(xc, atr, valid, mask);
+                *current_attrs_lock().lock().expect("current_attrs poisoned") = mask;
+                *pending_attrs_lock().lock().expect("pending_attrs poisoned") = mask;
+                for cap in caps {
+                    if bv.dontcount == 0 {
+                        addbufspc(bv, 1);
+                        bv.buf[bv.bp] = Inpar as u8;
+                        bv.bp += 1;
+                    }
+                    for &b in cap.seq.as_bytes() {
+                        pputc(bv, b);
+                    }
+                    if bv.dontcount == 0 {
+                        for _ in 0..=cap.glitch {
+                            addbufspc(bv, 1);
+                        }
+                        for _ in 0..cap.glitch {
+                            bv.buf[bv.bp] = Nularg as u8;
+                            bv.bp += 1;
+                        }
+                        bv.buf[bv.bp] = Outpar as u8;
+                        bv.bp += 1;
+                    }
+                }
+            };
             match xc {
                 // c:540-542 — `%~`: pwd, home/named-dir tilde, optional N
                 // components. Routed through the faithful `promptpath`
@@ -1308,21 +1340,16 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                         b'B' => TXTBOLDFACE,
                         _ => TXTUNDERLINE,
                     };
-                    if xc.is_ascii_uppercase() {
-                        let _ = tsetattrs(atr);
+                    if crate::extensions::emulation_startup::emulating_592() {
+                        putpromptattrs_592(bv, xc, 0, false);
                     } else {
-// zsh 5.9.2's unset escapes (`%f %k %b %u %s`) record the attribute as CHANGED
-// whether or not it was on (`txtchangeset`, Src/prompt.c:551-600 at the
-// zsh-5.9.2 tag), so `%f%f`, or `%f` after an invalid `%F{300}`, prints the
-// reset every time. The development tree's current/pending diff prints nothing
-// for an attribute already off. A drop-in `zsh` marks it ON first so the diff
-// emits the reset a lone escape would.
-                        if crate::extensions::emulation_startup::emulating_592() {
-                            *current_attrs_lock().lock().expect("current_attrs poisoned") |= atr;
+                        if xc.is_ascii_uppercase() {
+                            let _ = tsetattrs(atr);
+                        } else {
+                            let _ = tunsetattrs(atr);
                         }
-                        let _ = tunsetattrs(atr);
+                        putpromptattrs(bv);
                     }
-                    putpromptattrs(bv);
                 }
                 // c:621-644 — `%F`/`%K` (colour) fall through to `%f`/`%k`
                 // when parsecolorchar yields 0 (`%F{default}`) or TXT_ERROR:
@@ -1344,21 +1371,17 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                             TXT_ERROR
                         };
                     }
-                    if atr != 0 && atr != TXT_ERROR {
-                        let _ = tsetattrs(atr); // c:624
+                    if crate::extensions::emulation_startup::emulating_592() {
+                        putpromptattrs_592(bv, xc, atr, atr != 0 && atr != TXT_ERROR);
                     } else {
-                        let off = if is_fg { TXTFGCOLOUR } else { TXTBGCOLOUR };
-                        if crate::extensions::emulation_startup::emulating_592() {
-                            // Mark the COLOUR (lowest bit of its field), not the
-                            // on-flag: that flag is one of `TXT_ATTR_ALL`, and
-                            // counting it as an attribute to switch off makes
-                            // `applytextattributes` clear everything (`\e[0m`).
-                            let field = if is_fg { TXT_ATTR_FG_COL_MASK } else { TXT_ATTR_BG_COL_MASK };
-                            *current_attrs_lock().lock().expect("current_attrs poisoned") |= field & field.wrapping_neg();
+                        if atr != 0 && atr != TXT_ERROR {
+                            let _ = tsetattrs(atr); // c:624
+                        } else {
+                            let off = if is_fg { TXTFGCOLOUR } else { TXTBGCOLOUR };
+                            let _ = tunsetattrs(off); // c:630/642
                         }
-                        let _ = tunsetattrs(off); // c:630/642
+                        putpromptattrs(bv);
                     }
-                    putpromptattrs(bv);
                 }
                 // c:645-656 — `%H` / `%H{group}`: replace every attribute
                 // with those of a `.zle.hlgroups` entry, or none.

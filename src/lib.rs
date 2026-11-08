@@ -328,6 +328,9 @@ pub mod bash_arrays;
 /// `bash_prompt` submodule — bash `$PS1` backslash escapes (Rust-only).
 #[path = "extensions/bash_prompt.rs"]
 pub mod bash_prompt;
+/// `prompt_attrs_592` submodule — zsh 5.9.2 prompt attribute escapes for the `zsh` drop-in (Rust-only).
+#[path = "extensions/prompt_attrs_592.rs"]
+pub mod prompt_attrs_592;
 /// `emulation_output` submodule — per-shell builtin output formats (Rust-only).
 #[path = "extensions/emulation_output.rs"]
 pub mod emulation_output;

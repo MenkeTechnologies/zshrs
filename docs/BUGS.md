@@ -62405,3 +62405,35 @@ no cache to go stale.
 **Fix.** A miss records the generation before reading the map and, after
 storing, resets the slot again if the generation moved. The test above passed
 in 10 runs under the same load.
+
+## #1214 — the `zsh` drop-in printed a repeated prompt attribute once and did not switch attributes back on after one cleared them — fixed
+
+**Status:** `fixed` 2026-11-07.
+
+Started as `zsh` (argv[0]), zshrs prints zsh 5.9.2's prompt escapes. 5.9.2
+prints a capability for every `%S %s %B %b %U %u %F %f %K %k` as it reads it
+(`git show zsh-5.9.2:Src/prompt.c`, lines 521-574). After one that may have
+cleared other attributes it switches back on every attribute still set
+(`tsetcap`'s `TSC_DIRTY`, lines 1048-1060). The port follows the development
+tree, which prints only what changed between the current and pending
+attribute sets; the drop-in patched that for off escapes only. With
+`TERM=xterm-256color`:
+
+| prompt | zsh 5.9.2 | drop-in before |
+|---|---|---|
+| `%B%Bx` | `\e[1m\e[1mx` | `\e[1mx` |
+| `%F{red}%F{red}x` | `\e[31m\e[31mx` | `\e[31mx` |
+| `%B%S%Bx` | `\e[1m\e[7m\e[1m\e[7mx` | `\e[1m\e[7mx` |
+| `%S%Bx%s` | `\e[7m\e[1m\e[7mx\e[27m\e[1m` | `\e[7m\e[1mx\e[27m` |
+
+**C reference.** `zsh-5.9.2:Src/prompt.c:521-574` (the escape cases) and
+`:1014-1062` (`tsetcap`). The development tree replaced both with
+`tsetattrs`/`applytextattributes`.
+
+**Fix.** Under the drop-in, the ten escapes go through
+`src/extensions/prompt_attrs_592.rs`, which follows the 5.9.2 cases and
+`tsetcap` and returns one capability per call. The prompt code brackets each
+with Inpar/Outpar and sets the current and pending attribute sets to the
+result. The two earlier off-escape patches in `src/ported/prompt.rs` are
+gone. Fifteen escape sequences now match `/opt/homebrew/bin/zsh` byte for byte.
+`zshrs` and `zshrs --zsh` are unchanged.

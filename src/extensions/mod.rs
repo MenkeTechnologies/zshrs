@@ -57,6 +57,7 @@ pub use crate::p10k;
 pub use crate::pkg;
 pub use crate::plugin_cache;
 pub use crate::plugin_host;
+pub use crate::prompt_attrs_592;
 pub use crate::provenance;
 pub use crate::regex_mod;
 pub use crate::script_cache;

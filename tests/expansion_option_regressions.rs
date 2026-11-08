@@ -304,6 +304,34 @@ fn a_drop_in_zsh_prompt_repeats_resets_and_ends_attributes_individually() {
     }
 }
 
+/// zsh 5.9.2 prints a capability for every attribute escape, on as well as off
+/// (`tsetcap` per case, Src/prompt.c:521-574 at the zsh-5.9.2 tag), and after
+/// one that may have cleared others (`TSC_DIRTY`, c:1048-1060) it switches the
+/// remaining ones back on. A drop-in `zsh` repeats `%B%B` and re-asserts
+/// standout after a later `%B` or `%s`.
+#[test]
+fn a_drop_in_zsh_prompt_repeats_set_escapes_and_reasserts_after_a_clear() {
+    use std::os::unix::process::CommandExt;
+    let cases = [
+        ("%B%Bx", "\x1b[1m\x1b[1mx"),
+        ("%Sa%Sb%s%s", "\x1b[7ma\x1b[7mb\x1b[27m\x1b[27m"),
+        ("%F{red}%F{red}x", "\x1b[31m\x1b[31mx"),
+        ("%B%S%Bx", "\x1b[1m\x1b[7m\x1b[1m\x1b[7mx"),
+        ("%S%Bx%s", "\x1b[7m\x1b[1m\x1b[7mx\x1b[27m\x1b[1m"),
+        ("%Bx%Sy%b", "\x1b[1mx\x1b[7my\x1b[0m\x1b[7m"),
+    ];
+    for (fmt, want) in cases {
+        let out = Command::new(zshrs_bin())
+            .arg0("zsh")
+            .args(["-f", "-c", &format!("print -Pn -- '{fmt}'")])
+            .env_remove("ZSHRS_CACHE")
+            .env("TERM", "xterm-256color")
+            .output()
+            .expect("spawn zshrs");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), want, "{fmt}");
+    }
+}
+
 /// c:Src/subst.c:3777-3880 — positive `(q)` quoting runs before the `mods` stage,
 /// whose `(D)` is `substnamedir`: it backslash-quotes every string it returns. So
 /// `${(Dq)empty}` is the quoted `''` quoted again (`\'\'`); zshrs contracted first
