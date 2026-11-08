@@ -165,9 +165,15 @@ fn ksh93_function_keyword_scopes_exit_trap() {
 
 /// mksh's `trap` takes no options, and a usage error in a special builtin
 /// aborts the non-interactive shell (status 1, nothing after it runs).
+/// R59c rejects `-p` too; the mksh Linux distributions ship from 59c-42 on
+/// has POSIX 2024's `trap -p` (BUGS #1217), so there it is no usage error.
 #[test]
 fn mksh_trap_usage_error_aborts_the_script() {
-    for script in ["trap -x; print after", "trap -l; print after", "trap -p; print after", "trap -ZZ INT; print after"] {
+    let mut scripts = vec!["trap -x; print after", "trap -l; print after", "trap -ZZ INT; print after"];
+    if !cfg!(target_os = "linux") {
+        scripts.push("trap -p; print after");
+    }
+    for script in scripts {
         for flag in ["--mksh", "--pdksh"] {
             let (out, code) = run_flag(flag, script);
             assert_eq!(out, b"", "{flag} {script}");
