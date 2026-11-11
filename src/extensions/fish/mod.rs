@@ -66,6 +66,19 @@ pub fn preamble(exe: &str) -> String {
 /// `OLDPWD`) and leaves `USER` unexported, where fish exports exactly `HOME PATH PWD SHLVL
 /// TERM USER` on top of what it inherited. A variable the process did not inherit is
 /// taken out of the environment its children see.
+/// The login name of the real user, from the passwd database.
+fn passwd_user() -> Option<String> {
+    // SAFETY: getpwuid returns a pointer to static storage (or null); the name is copied
+    // out before anything else can call into the passwd database.
+    unsafe {
+        let pw = libc::getpwuid(libc::getuid());
+        if pw.is_null() {
+            return None;
+        }
+        Some(std::ffi::CStr::from_ptr((*pw).pw_name).to_string_lossy().into_owned())
+    }
+}
+
 fn env_fixups() -> String {
     let inherited = |name: &str| {
         crate::ported::params::environ
@@ -82,6 +95,13 @@ fn env_fixups() -> String {
         for n in &extras {
             out.push_str(&format!("typeset +x {n} 2>/dev/null\n"));
         }
+    }
+    // fish sets USER from the passwd entry when the environment has none
+    if let Some(user) = passwd_user() {
+        out.push_str(&format!(
+            "[[ -n ${{USER-}}  ]] || USER='{}'\n",
+            user.replace('\'', "'\\''")
+        ));
     }
     out.push_str("[[ -n ${USER-} ]] && typeset -gx USER\n:\n"); // (ends with status 0)
     out
