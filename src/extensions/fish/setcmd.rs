@@ -205,15 +205,23 @@ impl Emitter {
         if matches!(name, "PATH" | "CDPATH" | "MANPATH") {
             return format!("{z}=({list})");
         }
+        // A scalar cannot replace an array under `typeset -g`, and an export is a scalar.
+        let drop_array = if decl == "typeset -gx" {
+            format!("[[ ${{(t){z}}} == array* ]] && unset {z}; ")
+        } else {
+            String::new()
+        };
         if values.is_empty() {
-            // export the existing value
-            return format!("{decl} {z}=\"${{(j.{sep}.){z}}}\"");
+            // export the existing value; an array has to be joined before it is replaced
+            return format!(
+                "{{ _fish_x=(\"${{(@)${{(@P)z}}}}\"); {drop_array}{decl} {z}=\"${{(j.{sep}.)_fish_x}}\"; }}"
+            );
         }
         let plain_single = values.len() == 1 && values[0].text().is_some();
         if plain_single {
-            return format!("{decl} {z}={}", self.word_scalar(&values[0]));
+            return format!("{{ {drop_array}{decl} {z}={}; }}", self.word_scalar(&values[0]));
         }
-        format!("_fish_x=({list}); {decl} {z}=\"${{(j.{sep}.)_fish_x}}\"")
+        format!("{{ _fish_x=({list}); {drop_array}{decl} {z}=\"${{(j.{sep}.)_fish_x}}\"; }}")
     }
 
     pub(super) fn read_cmd(&mut self, args: &[Word]) -> String {
