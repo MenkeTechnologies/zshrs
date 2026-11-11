@@ -42,6 +42,8 @@ struct Opts {
     flags: Vec<char>,
     vals: HashMap<char, String>,
     rest: Vec<String>,
+    /// An explicit `--` ended the options: every operand after it is literal.
+    ended: bool,
 }
 
 impl Opts {
@@ -65,6 +67,7 @@ fn parse_opts(args: &[String], valued: &str, long: &[(&str, char)]) -> Result<Op
         let a = &args[i];
         if a == "--" {
             i += 1;
+            o.ended = true;
             break;
         }
         if let Some(l) = a.strip_prefix("--") {
@@ -310,7 +313,9 @@ fn without_dashdash(o: &Opts) -> Opts {
     Opts {
         flags: o.flags.clone(),
         vals: o.vals.clone(),
-        rest: o.rest.iter().filter(|a| a.as_str() != "--").cloned().collect(),
+        // after an explicit terminator a `--` is just an operand
+        rest: o.rest.iter().filter(|a| o.ended || a.as_str() != "--").cloned().collect(),
+        ended: o.ended,
     }
 }
 
