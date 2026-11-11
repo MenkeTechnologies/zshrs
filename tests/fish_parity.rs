@@ -451,3 +451,41 @@ fn a_failing_first_path_match_is_not_retried_further_down_path() {
     assert!(!want.contains("ran-second"), "fish: {want}");
     assert_eq!(got, want);
 }
+
+/// `functions NAME`, `type NAME`, `functions --details`, `funcsave` and `status line-number`
+/// show a function as written, with the file and line it was defined at. Both shells run
+/// the same script from the same directory with their own configuration directory.
+#[test]
+fn function_definitions_are_shown_as_written() {
+    let Some(reference) = fish() else { return };
+    let dir = scratch("fndef");
+    std::fs::write(
+        dir.join("fn.fish"),
+        "function f --description \"d\"\n    echo hi\n  if true\n  echo   x\n  end\nend\nfunctions f\ntype f\nfunctions --details f\nfuncsave f\nstatus line-number\n\necho (status line-number)\nfunction g\n    status line-number\nend\ng\n",
+    )
+    .unwrap();
+    let run_in = |bin: &Path, args: &[&str], cfg: &Path| {
+        let out = Command::new(bin)
+            .args(args)
+            .arg("fn.fish")
+            .env_clear()
+            .env("HOME", &dir)
+            .env("XDG_CONFIG_HOME", cfg)
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .current_dir(&dir)
+            .stdin(Stdio::null())
+            .output()
+            .expect("spawn shell");
+        String::from_utf8_lossy(&out.stdout).replace(&*cfg.to_string_lossy(), "CFG")
+    };
+    let (cfg_a, cfg_b) = (dir.join("cfg-a"), dir.join("cfg-b"));
+    let want = run_in(&reference, &["--no-config"], &cfg_a);
+    let got = run_in(Path::new(env!("CARGO_BIN_EXE_zshrs")), &["--fish", "-f"], &cfg_b);
+    assert_eq!(got, want);
+    assert_eq!(
+        std::fs::read_to_string(cfg_a.join("fish/functions/f.fish")).unwrap(),
+        std::fs::read_to_string(cfg_b.join("fish/functions/f.fish")).unwrap(),
+        "funcsave wrote different files"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

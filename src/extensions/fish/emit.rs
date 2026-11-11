@@ -52,6 +52,8 @@ pub struct Emitter {
     /// True while emitting a statement that only runs if the one before it succeeded or
     /// failed (`a; or set -l x …`).
     pub(super) guarded: bool,
+    /// Source line of the statement being emitted (for `status line-number`).
+    pub(super) cur_line: usize,
     /// The script names variables at run time or uses `eval`: top-level locals keep their names.
     pub(super) plain_top: bool,
     /// Lines a guarded declaration needs ahead of the whole `and`/`or` chain.
@@ -226,6 +228,7 @@ impl Emitter {
         let mut out = String::new();
         let mut chain_start = 0;
         for (n, st) in script.iter().enumerate() {
+            self.cur_line = st.job.line;
             self.guarded = st.conn != Conn::Seq;
             let job = self.job(&st.job);
             self.guarded = false;
@@ -371,7 +374,7 @@ impl Emitter {
                 out.push_str(&self.redirs(redirs));
                 out
             }
-            Cmd::Function { header, body } => self.function(header, body),
+            Cmd::Function { header, body, src, line } => self.function(header, body, src, *line),
             Cmd::WithEnv { assigns, inner } => {
                 // the assignments live for the duration of the compound command
                 let vars: Vec<String> = assigns.iter().filter_map(|w| self.assignment(w)).collect();
@@ -406,7 +409,7 @@ impl Emitter {
         }
     }
 
-    fn function(&mut self, header: &[Word], body: &Script) -> String {
+    fn function(&mut self, header: &[Word], body: &Script, src: &str, line: usize) -> String {
         let mut name = None;
         let mut argnames: Vec<String> = Vec::new();
         let mut events: Vec<String> = Vec::new();
@@ -459,6 +462,22 @@ impl Emitter {
         inner.push_str(if text.trim().is_empty() { ":" } else { &text });
         self.fn_depth -= 1;
         let mut out = format!("function {} {{\n{inner}\n}}", quote_lit(&name));
+        // what `functions NAME`, `type` and `funcsave` show: the definition as written, with
+        // the header line in fish's canonical spelling
+        let mut head = String::from("function");
+        for w in header {
+            head.push(' ');
+            head.push_str(&fish_escape(&w.text().unwrap_or_default()));
+        }
+        let shown = match src.split_once('\n') {
+            Some((_, rest)) => format!("{head}\n{rest}"),
+            None => src.to_string(),
+        };
+        out.push_str(&format!(
+            "\n__fish_fnsrc[{q}]={}; __fish_fnline[{q}]={line}; __fish_fnfile[{q}]=\"${{(%):-%x}}\"",
+            squote(&shown),
+            q = quote_lit(&name)
+        ));
         for e in &events {
             out.push_str(&format!("\n__fish_on_event {} {}", squote(e), quote_lit(&name)));
         }
@@ -486,6 +505,14 @@ impl Emitter {
             Some("exit") if super::source_mode() && self.fn_depth == 0 => {
                 let tail: Vec<String> = rest[1..].iter().map(|w| self.word_list(w)).collect();
                 format!("return {}", tail.join(" "))
+            }
+            Some("status")
+                if matches!(
+                    rest.get(1).and_then(|w| w.bare()),
+                    Some("line-number" | "current-line-number" | "-n")
+                ) =>
+            {
+                format!("print -r -- {}", self.cur_line)
             }
             Some("set") => self.set_cmd(&rest[1..]),
             Some("read") => self.read_cmd(&rest[1..]),
@@ -1093,4 +1120,14 @@ fn expand_braces(parts: &[Part]) -> Vec<Vec<Part>> {
             .collect();
     }
     acc
+}
+
+/// A word as fish prints it back: bare when plain, single-quoted otherwise.
+fn fish_escape(s: &str) -> String {
+    let plain = !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || "_./:@%+,=-".contains(c));
+    if plain {
+        s.to_string()
+    } else {
+        format!("'{}'", s.replace('\\', "\\\\").replace('\'', "\\'"))
+    }
 }

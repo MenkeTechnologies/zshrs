@@ -117,6 +117,10 @@ pub enum Cmd {
         /// Name and options exactly as written.
         header: Vec<Word>,
         body: Script,
+        /// The definition as written, `function` through `end`.
+        src: String,
+        /// Line the definition starts on.
+        line: usize,
     },
     Begin {
         body: Script,
@@ -152,6 +156,8 @@ pub enum Pipe {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Job {
+    /// Source line the job starts on (1-based, within the file or `eval` string).
+    pub line: usize,
     pub negate: bool,
     /// Each command and the pipe that follows it (the last one's is unused).
     pub cmds: Vec<(Cmd, Pipe)>,
@@ -171,21 +177,31 @@ type PResult<T> = Result<T, String>;
 pub struct Parser {
     s: Vec<char>,
     i: usize,
+    /// Positions of the newlines, for line numbers.
+    nl: Vec<usize>,
+    /// Line number of the first line (a command substitution starts partway down).
+    base: usize,
     /// Open `{ … }` blocks; a `}` at statement start closes one.
     braces: usize,
 }
 
 /// Parse a whole fish script.
 pub fn parse(src: &str) -> PResult<Script> {
+    parse_at(src, 1)
+}
+
+/// [`parse`] for text that starts on line `first` of its file.
+pub fn parse_at(src: &str, first: usize) -> PResult<Script> {
+    let s: Vec<char> = src.chars().collect();
+    let nl = s.iter().enumerate().filter(|(_, &c)| c == '\n').map(|(i, _)| i).collect();
     let mut p = Parser {
-        s: src.chars().collect(),
+        s,
         i: 0,
+        nl,
+        base: first - 1,
         braces: 0,
     };
-    let script = p.script(&[]).map_err(|e| {
-        let line = p.s[..p.i.min(p.s.len())].iter().filter(|&&c| c == '\n').count() + 1;
-        format!("{e} (line {line})")
-    })?;
+    let script = p.script(&[]).map_err(|e| format!("{e} (line {})", p.line_at(p.i)))?;
     match p.peek_kw() {
         Some(kw) => Err(format!("fish: '{kw}' outside of a block")),
         None if p.i < p.s.len() => Err("fish: Expected a command, but found ')'".to_string()),
@@ -196,6 +212,10 @@ pub fn parse(src: &str) -> PResult<Script> {
 const WORD_END: &[char] = &[' ', '\t', '\n', ';', '|', '&', '<', '>', ')'];
 
 impl Parser {
+    fn line_at(&self, i: usize) -> usize {
+        self.base + self.nl.partition_point(|&p| p < i) + 1
+    }
+
     fn peek(&self) -> Option<char> {
         self.s.get(self.i).copied()
     }
@@ -400,6 +420,8 @@ impl Parser {
     }
 
     fn job(&mut self) -> PResult<Job> {
+        self.skip_blank();
+        let line = self.line_at(self.i);
         let mut negate = false;
         loop {
             self.skip_blank();
@@ -451,7 +473,7 @@ impl Parser {
                 }
             }
         }
-        Ok(Job { negate, cmds, bg })
+        Ok(Job { line, negate, cmds, bg })
     }
 
     /// `|`, `&|` (both streams) or `2>|` (stderr only), consumed.
@@ -509,11 +531,19 @@ impl Parser {
             Some("for") => self.cmd_for(),
             Some("switch") => self.cmd_switch(),
             Some("function") => {
+                let start = self.i;
+                let line = self.line_at(start);
                 self.eat_kw("function");
                 let header = self.words_to_eol()?;
                 let body = self.script(&["end"])?;
                 self.expect_end()?;
-                Ok(Cmd::Function { header, body })
+                let src: String = self.s[start..self.i].iter().collect();
+                Ok(Cmd::Function {
+                    header,
+                    body,
+                    src,
+                    line,
+                })
             }
             Some("begin") => {
                 self.eat_kw("begin");
@@ -1138,6 +1168,7 @@ impl Parser {
         self.i -= 1; // back onto the `)`
         let inner: String = self.s[start..self.i].iter().collect();
         self.i += 1;
+        // (fish numbers the lines of a substitution from 1)
         let script = parse(&inner)?;
         let index = self.index_suffix(false)?;
         Ok(Part::Cmd(script, index))

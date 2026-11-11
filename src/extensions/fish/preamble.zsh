@@ -128,7 +128,7 @@ __fish_set_show() {
   for (( i = 1; i <= ${#vals}; i++ )); do print -r -- "\$${n}[$i]: |${vals[i]}|"; done
   return 0
 }
-typeset -gA __fish_abbrs
+typeset -gA __fish_abbrs __fish_fnsrc __fish_fnline __fish_fnfile
 typeset -ga __fish_abbr_order
 __fish_abbr() {
   local op=show pos=command a name exp
@@ -232,7 +232,13 @@ type() {
          [[ -n $k && $k != none ]] || { r=1; [[ -n $q ]] || print -u2 -r -- "type: Could not find '$n'"; continue }
          [[ -n $q ]] && continue
          case $k in
-           function) [[ -n $t ]] && print -r -- function || print -r -- "$n is a function" ;;
+           function)
+             if [[ -n $t ]]; then print -r -- function
+             elif [[ -n ${__fish_fnsrc[$n]+x} ]]; then
+               print -r -- "$n is a function with definition"
+               print -r -- "# Defined in ${__fish_fnfile[$n]} @ line ${__fish_fnline[$n]}"
+               print -r -- ${__fish_fnsrc[$n]}
+             else print -r -- "$n is a function"; fi ;;
            builtin) [[ -n $t ]] && print -r -- builtin || print -r -- "$n is a builtin" ;;
            command) [[ -n $t ]] && print -r -- file || print -r -- "$n is ${$(whence -p -- $n)}" ;;
            *) [[ -n $t ]] && print -r -- $k || print -r -- "$n is a $k" ;;
@@ -242,11 +248,12 @@ type() {
   return $r
 }
 functions() {
-  local a n=() q= e= listnames= alln=
+  local a n=() q= e= listnames= alln= details=
   for a; do
     case $a in
       -q|--query) q=1 ;;
       -e|--erase) e=1 ;;
+      -D|--details) details=1 ;;
       -n|--names) listnames=1 ;;
       -a|--all) alln=1 ;;
       -*) ;;
@@ -262,7 +269,23 @@ functions() {
   if (( ! ${#n} )); then print -rl -- ${(ko)functions}; return 0; fi
   for a in $n; do
     (( $+functions[$a] )) || { print -u2 -r -- "functions: Unknown function '$a'"; return 1 }
-    builtin functions -- $a
+    if [[ -n ${__fish_fnsrc[$a]+x} ]]; then
+      if [[ -n $details ]]; then print -r -- ${__fish_fnfile[$a]}; continue; fi
+      print -r -- "# Defined in ${__fish_fnfile[$a]} @ line ${__fish_fnline[$a]}"
+      print -r -- ${__fish_fnsrc[$a]}
+    else
+      builtin functions -- $a
+    fi
+  done
+}
+funcsave() {
+  local a dir=${XDG_CONFIG_HOME:-$HOME/.config}/fish/functions
+  (( $# )) || { print -u2 -r -- 'funcsave: Expected exactly one function name'; return 1 }
+  for a; do
+    [[ -n ${__fish_fnsrc[$a]+x} ]] || { print -u2 -r -- "funcsave: Unknown function '$a'"; return 1 }
+    [[ -d $dir ]] || mkdir -p $dir
+    print -r -- ${__fish_fnsrc[$a]} > $dir/$a.fish
+    print -r -- "funcsave: wrote $dir/$a.fish"
   done
 }
 set_color() {
