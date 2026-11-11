@@ -146,6 +146,19 @@ fn inputs(operands: &[String], null_sep: bool) -> Vec<String> {
     out
 }
 
+/// `path` reads its operands from stdin when it has none, and takes NUL as the separator
+/// when asked (`-z`) or when the input contains a NUL, newline otherwise.
+fn inputs_detecting_nul(forced: bool) -> Vec<String> {
+    let mut buf = Vec::new();
+    let _ = std::io::stdin().lock().read_to_end(&mut buf);
+    let sep = if forced || buf.contains(&0) { 0u8 } else { b'\n' };
+    let mut items: Vec<&[u8]> = buf.split(|&b| b == sep).collect();
+    if items.last().is_some_and(|l| l.is_empty()) {
+        items.pop();
+    }
+    items.iter().map(|i| String::from_utf8_lossy(i).into_owned()).collect()
+}
+
 struct Out {
     quiet: bool,
     buf: Vec<u8>,
@@ -1358,7 +1371,7 @@ fn path(args: &[String]) -> i32 {
         Err(e) => return err(&format!("path {sub}"), &e),
     };
     let mut out = Out::new(o.has('q'), o.has('Z'));
-    let items = inputs(&o.rest, o.has('z'));
+    let items = if o.rest.is_empty() { inputs_detecting_nul(o.has('z')) } else { o.rest.clone() };
     let status = match sub.as_str() {
         "basename" | "dirname" | "extension" | "normalize" | "resolve" => {
             let mut any = false;
