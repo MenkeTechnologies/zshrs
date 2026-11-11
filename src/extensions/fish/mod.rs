@@ -42,7 +42,9 @@ pub fn source_mode() -> bool {
 /// Translate a whole fish script to zsh.
 pub fn translate(src: &str) -> Result<String, String> {
     let script = parse::parse(src)?;
-    let mut text = emit::Emitter::default().script(&script);
+    let mut emitter = emit::Emitter::default();
+    emitter.plain_top = emit::uses_dynamic_names(&script);
+    let mut text = emitter.script(&script);
     text.push('\n');
     Ok(text)
 }
@@ -85,8 +87,9 @@ mod tests {
     fn scopes_map_to_typeset() {
         assert_eq!(t("set -g y a"), "y=(a)");
         assert_eq!(t("function f\nset -l z 1\nset -g w 2\nend"), "function f {\nlocal -a _fl1_z=(1)\ntypeset -ga w=(2)\n}");
-        assert_eq!(t("set -gx E vim"), "{ [[ ${(t)E} == array* ]] && unset E; typeset -gx E=vim; }");
-        assert_eq!(t("set -x GOPATH a b"), "{ _fish_x=(a b); [[ ${(t)GOPATH} == array* ]] && unset GOPATH; typeset -gx GOPATH=\"${(j.:.)_fish_x}\"; }");
+        // an exported list stays a list: the exported scalar is tied to the array __fx_NAME
+        assert_eq!(t("set -gx E vim"), "{ _fish_x=(vim); if (( ! ${+__fx_E} )); then unset E 2>/dev/null; typeset -gxT E __fx_E ' '; fi; __fx_E=(\"${_fish_x[@]}\"); }");
+        assert_eq!(t("set -x GOPATH a b"), "{ _fish_x=(a b); if (( ! ${+__fx_GOPATH} )); then unset GOPATH 2>/dev/null; typeset -gxT GOPATH __fx_GOPATH ':'; fi; __fx_GOPATH=(\"${_fish_x[@]}\"); }");
     }
 
     #[test]
@@ -114,7 +117,9 @@ mod tests {
     fn literals_that_zsh_would_glob_are_quoted() {
         assert_eq!(t("echo ?x [a]"), "echo '?x' '[a]'");
         assert_eq!(t("echo ~/a"), "echo ~/a");
-        assert_eq!(t("echo {a,b}c"), "echo {a,b}c");
+        // brace groups are expanded by the translator, the first group varying fastest
+        assert_eq!(t("echo {a,b}c"), "echo ac bc");
+        assert_eq!(t("echo {+,-}{a,b}"), "echo +a -a +b -b");
     }
 
     #[test]

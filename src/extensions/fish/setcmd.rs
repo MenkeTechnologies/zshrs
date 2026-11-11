@@ -266,23 +266,30 @@ impl Emitter {
                 format!("{z}=({items})")
             };
         }
-        // A scalar cannot replace an array under `typeset -g`, and an export is a scalar.
-        let drop_array = if decl == "typeset -gx" {
-            format!("[[ ${{(t){z}}} == array* ]] && unset {z}; ")
-        } else {
-            String::new()
+        // The list stays a list: `NAME` (exported, joined with `sep` for the child) is tied
+        // to the array `__fx_NAME`, which is what the translator reads and writes.
+        let tied = format!("__fx_{name}");
+        let old = format!("${{{z}+\"${{{z}[@]}}\"}}");
+        let items = match (append, prepend) {
+            (true, _) => format!("{old} {list}"),
+            (_, true) => format!("{list} {old}"),
+            _ if values.is_empty() => old,
+            _ => list.to_string(),
         };
-        if values.is_empty() {
-            // export the existing value; an array has to be joined before it is replaced
-            return format!(
-                "{{ _fish_x=(\"${{(@)${{(@P)z}}}}\"); {drop_array}{decl} {z}=\"${{(j.{sep}.)_fish_x}}\"; }}"
-            );
+        if local && self.fn_depth > 0 {
+            let already = self.is_mapped(name, &tied);
+            let decl = if already {
+                String::new()
+            } else {
+                format!("local -xT {name} {tied} '{sep}'; ")
+            };
+            self.map_local(name, &tied);
+            return format!("{{ _fish_x=({items}); {decl}{tied}=(\"${{_fish_x[@]}}\"); }}");
         }
-        let plain_single = values.len() == 1 && values[0].text().is_some();
-        if plain_single {
-            return format!("{{ {drop_array}{decl} {z}={}; }}", self.word_scalar(&values[0]));
-        }
-        format!("{{ _fish_x=({list}); {drop_array}{decl} {z}=\"${{(j.{sep}.)_fish_x}}\"; }}")
+        super::emit::note_exported(name);
+        format!(
+            "{{ _fish_x=({items}); if (( ! ${{+{tied}}} )); then unset {name} 2>/dev/null; typeset -gxT {name} {tied} '{sep}'; fi; {tied}=(\"${{_fish_x[@]}}\"); }}"
+        )
     }
 
     pub(super) fn read_cmd(&mut self, args: &[Word]) -> String {
@@ -290,6 +297,7 @@ impl Emitter {
         let mut flags = String::from("-r");
         let mut prompt = None;
         let mut as_list = false;
+        let mut by_line = false;
         let mut names: Vec<String> = Vec::new();
         let mut i = 0;
         while i < args.len() {
@@ -305,6 +313,7 @@ impl Emitter {
                 "-g" | "--global" | "-x" | "--export" | "-U" | "--universal" => {}
                 "-s" | "--silent" => flags.push('s'),
                 "-a" | "--list" => as_list = true,
+                "-L" | "--line" => by_line = true,
                 "-z" | "--null" => flags.push_str(" -d ''"),
                 "-P" | "--prompt-str" => prompt = arg(self),
                 "-n" | "--nchars" => {
@@ -338,6 +347,11 @@ impl Emitter {
                     format!("local {n}=; ")
                 });
             }
+        }
+        if by_line {
+            // one line per variable
+            let reads: Vec<String> = names.iter().map(|n| format!("IFS= builtin read {flags} {n}")).collect();
+            return format!("{pre}{{ {}; }}", reads.join(" && "));
         }
         let first = match &prompt {
             Some(p) => format!("{}?{}", names[0], p.trim_matches('\'')),

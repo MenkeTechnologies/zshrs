@@ -213,7 +213,25 @@ impl Parser {
         loop {
             match self.peek() {
                 Some(' ' | '\t') => self.i += 1,
-                Some('\\') if self.at(1) == Some('\n') => self.i += 2,
+                Some('\\') if self.at(1) == Some('\n') => {
+                    self.i += 2;
+                    // comment lines (and blank ones) inside a continuation are skipped
+                    // and the command goes on after them
+                    loop {
+                        let mut j = self.i;
+                        while matches!(self.s.get(j), Some(' ' | '\t')) {
+                            j += 1;
+                        }
+                        if self.s.get(j) == Some(&'#') {
+                            while !matches!(self.s.get(j), None | Some('\n')) {
+                                j += 1;
+                            }
+                            self.i = (j + 1).min(self.s.len());
+                        } else {
+                            break;
+                        }
+                    }
+                }
                 _ => break,
             }
         }
@@ -836,6 +854,18 @@ impl Parser {
         while let Some(&c) = self.s.get(j) {
             match c {
                 '\\' => j += 1,
+                // a quoted part may hold spaces and commas that are not the group's
+                '\'' | '"' => {
+                    j += 1;
+                    while let Some(&q) = self.s.get(j) {
+                        if q == '\\' {
+                            j += 1;
+                        } else if q == c {
+                            break;
+                        }
+                        j += 1;
+                    }
+                }
                 '{' => depth += 1,
                 '}' => {
                     depth -= 1;

@@ -109,7 +109,7 @@ __fish_set_show() {
   [[ ${+parameters[$z]} == 1 ]] || return 1
   t=${(Pt)z}
   [[ $z == _fl* ]] && kind=local
-  [[ $t == *export* ]] && exp=exported
+  [[ $t == *export* || $z == __fx_* ]] && exp=exported
   if [[ $t == array* ]]; then vals=("${(@P)z}")
   elif [[ $exp == exported ]]; then
     # an exported list is one joined string in the environment
@@ -635,11 +635,12 @@ source() {
   __t=$('@ZSHRS@' --fish-translate --source -- "$__f") || return
   () { builtin eval "$__t" } "$@"
 }
-eval() {
+__fish_eval() {
   local __t
   __t=$(print -r -- "$*" | '@ZSHRS@' --fish-translate -) || return
   builtin eval "$__t"
 }
+eval() { __fish_eval "$@" }
 __fish_uvar_file=${HOME}/.zshrs/fish_universal.zsh
 __fish_uvar_save() {
   local n=$1 f=$__fish_uvar_file line

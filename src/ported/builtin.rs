@@ -6161,7 +6161,10 @@ pub fn bin_typeset(
         apm.node.flags = ((PM_ARRAY | PM_TIED) | (tie_attr & !PM_EXPORTED)) as i32;
         apm.u_arr = Some(if assign_initial { Vec::new() } else { init_arr.clone() }); // c:2984
         apm.ename = Some(sname.to_string());
-        apm.level = locallevel.load(Relaxed) as i32;
+        // `typeset -gT` inside a function ties at the global level (no PM_LOCAL), so the
+        // pair outlives the function; a local tie (`local -T`) belongs to this call.
+        let tie_level = if (on as u32 & PM_LOCAL) != 0 { locallevel.load(Relaxed) as i32 } else { 0 };
+        apm.level = tie_level;
         // c:2982-2989 — `tdp = (Tieddata) zalloc(sizeof *tdp);
         // tdp->joinchar = joinchar;` — the tieddata rides on the
         // SCALAR side's pm->u.data (c:2566 `tdp->joinchar = joinchar`).
@@ -6179,7 +6182,7 @@ pub fn bin_typeset(
         spm.ename = Some(aname.to_string());
         spm.u_str = Some(if assign_initial { String::new() } else { init_arr.join(&joinsep) });
         spm.u_tied = Some(Box::new(tdp));
-        spm.level = locallevel.load(Relaxed) as i32;
+        spm.level = tie_level;
         // c:Src/builtin.c:1956 — `static const struct gsu_scalar
         // tiedarr_gsu = { tiedarrgetfn, tiedarrsetfn, tiedarrunsetfn };`
         // The scalar side of a tied pair routes its reads/writes

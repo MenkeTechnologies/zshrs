@@ -52,6 +52,8 @@ pub struct Emitter {
     /// True while emitting a statement that only runs if the one before it succeeded or
     /// failed (`a; or set -l x …`).
     pub(super) guarded: bool,
+    /// The script names variables at run time or uses `eval`: top-level locals keep their names.
+    pub(super) plain_top: bool,
     /// Lines a guarded declaration needs ahead of the whole `and`/`or` chain.
     pub(super) pre_chain: Vec<String>,
 }
@@ -77,6 +79,19 @@ thread_local! {
     /// has its own.
     static TOP_LOCALS: std::cell::RefCell<std::collections::HashSet<String>> =
         std::cell::RefCell::new(std::collections::HashSet::new());
+}
+
+thread_local! {
+    /// Names exported with `set -x` outside functions. They are kept as a zsh array
+    /// (`__fx_NAME`) tied to the exported scalar, because fish exports a list but a zsh
+    /// array cannot be exported. Kept across translations like [`TOP_LOCALS`].
+    static TOP_EXPORTED: std::cell::RefCell<std::collections::HashSet<String>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+}
+
+/// Remember that `name` is an exported list from now on.
+pub fn note_exported(name: &str) {
+    TOP_EXPORTED.with(|t| t.borrow_mut().insert(name.to_string()));
 }
 
 /// The zsh parameter that holds a fish variable.
@@ -153,6 +168,9 @@ impl Emitter {
         if TOP_LOCALS.with(|t| t.borrow().contains(name)) {
             return format!("_fl_top_{name}");
         }
+        if TOP_EXPORTED.with(|t| t.borrow().contains(name)) {
+            return format!("__fx_{name}");
+        }
         zname(name)
     }
 
@@ -162,8 +180,23 @@ impl Emitter {
         if self.block_level() > 0 || self.fn_depth > 0 {
             return self.declare_block_local(name);
         }
+        if self.plain_top {
+            return zname(name);
+        }
         TOP_LOCALS.with(|t| t.borrow_mut().insert(name.to_string()));
         format!("_fl_top_{name}")
+    }
+
+    /// Does the innermost scope already map `name` to `to`?
+    pub(super) fn is_mapped(&self, name: &str, to: &str) -> bool {
+        self.scopes.last().is_some_and(|f| f.vars.get(name).is_some_and(|m| m == to))
+    }
+
+    /// Make `name` refer to the zsh parameter `to` in the innermost scope.
+    pub(super) fn map_local(&mut self, name: &str, to: &str) {
+        if let Some(f) = self.scopes.last_mut() {
+            f.vars.insert(name.to_string(), to.to_string());
+        }
     }
 
     /// Blocks open since the enclosing function (or the script) began.
@@ -264,8 +297,13 @@ impl Emitter {
         if mine.is_empty() {
             return text;
         }
+        // (only an assignment: `set -q`, `-e` and `-S` report their own status)
         let sets_variable = matches!(c, Cmd::Simple { words, .. }
-            if words.first().and_then(Word::bare) == Some("set"));
+            if words.first().and_then(Word::bare) == Some("set")
+                && !words[1..].iter().any(|w| w.bare().is_some_and(|t| {
+                    t == "--query" || t == "--erase" || t == "--show"
+                        || (t.starts_with('-') && !t.starts_with("--") && t[1..].contains(['q', 'e', 'S', 'n']))
+                })));
         // `set x (cmd)` leaves the status of `cmd`
         if sets_variable {
             format!("{{ {}; __fish_cs=$?; {text}; __fish_ret $__fish_cs; }}", mine.join("; "))
@@ -477,7 +515,7 @@ impl Emitter {
                 let flagged = rest
                     .get(1)
                     .and_then(|w| w.bare())
-                    .is_some_and(|t| t.len() > 1 && t.starts_with('-'));
+                    .is_some_and(|t| t.starts_with('-'));
                 if name.as_deref() == Some("echo") && flagged {
                     all[0] = "__fish_echo".into();
                 }
@@ -505,7 +543,7 @@ impl Emitter {
                     all[0] = "__fish_printf".into();
                 }
                 // zshrs resolves these names before a function of the same name
-                if let Some(n @ ("bind" | "commandline" | "complete")) = name.as_deref() {
+                if let Some(n @ ("bind" | "commandline" | "complete" | "eval")) = name.as_deref() {
                     all[0] = format!("__fish_{n}");
                 }
                 all.join(" ")
@@ -587,6 +625,15 @@ impl Emitter {
     }
 
     fn word_list_inner(&mut self, w: &Word) -> String {
+        // Brace groups are expanded here, not by zsh: fish varies the FIRST group fastest
+        // (`{+,-}{a,b}` is `+a -a +b -b`), zsh the last.
+        if w.parts.iter().any(|p| matches!(p, Part::Raw(r) if r == "{")) {
+            let words: Vec<String> = expand_braces(&w.parts)
+                .into_iter()
+                .map(|parts| self.word_list_inner(&Word { parts }))
+                .collect();
+            return words.join(" ");
+        }
         match w.parts.as_slice() {
             [] => "''".into(),
             [Part::Var(v)] => self.var_list(v),
@@ -788,7 +835,7 @@ impl Emitter {
         if let Some(idx) = &v.index {
             return self.index_words(&z, idx);
         }
-        if is_colon_scalar(n) {
+        if is_colon_scalar(n) && !z.starts_with("__fx_") {
             return format!("${{{z}:+\"${{(@s.:.){z}}}\"}}");
         }
         format!("${{{z}+\"${{{z}[@]}}\"}}")
@@ -807,7 +854,7 @@ impl Emitter {
         if v.deref || v.index.is_some() {
             return format!("\"{}\"", self.var_join(v));
         }
-        if is_colon_scalar(n) {
+        if is_colon_scalar(n) && !z.starts_with("__fx_") {
             return format!("${{^${{(@s.:.){z}}}}}");
         }
         format!("${{^{z}}}")
@@ -840,7 +887,7 @@ impl Emitter {
                 .collect();
             return parts.join(" ");
         }
-        if is_colon_scalar(n) {
+        if is_colon_scalar(n) && !z.starts_with("__fx_") {
             return format!("${{{z}}}");
         }
         format!("${{(j: :){z}}}")
@@ -945,7 +992,7 @@ fn ends_in_string_collect(s: &Script) -> bool {
 
 /// Does the script name a variable at run time (`set $name …`, `read $name`, `$$name`)?
 /// Such a function keeps its locals under their own names so the run-time name finds them.
-fn uses_dynamic_names(script: &Script) -> bool {
+pub(super) fn uses_dynamic_names(script: &Script) -> bool {
     fn word_dynamic(w: &Word) -> bool {
         w.parts.iter().any(|p| match p {
             Part::Var(v) => v.deref,
@@ -962,7 +1009,8 @@ fn uses_dynamic_names(script: &Script) -> bool {
                         .iter()
                         .find(|w| !w.bare().is_some_and(|t| t.starts_with('-')))
                         .is_some_and(|w| w.text().is_none() && !matches!(w.parts.first(), Some(Part::Raw(_))));
-                named || words.iter().any(word_dynamic)
+                // `eval` runs code that names the caller's locals
+                named || words.first().and_then(Word::bare) == Some("eval") || words.iter().any(word_dynamic)
             }
             Cmd::If { arms, els, .. } => {
                 arms.iter().any(|(c, b)| script_dynamic(c) || uses_dynamic_names(b))
@@ -980,4 +1028,69 @@ fn uses_dynamic_names(script: &Script) -> bool {
         stmts.iter().any(|st| st.job.cmds.iter().any(|(c, _)| cmd_dynamic(c)))
     }
     script_dynamic(script)
+}
+
+/// Expand the brace groups of a word (`Raw("{")` … `Raw(",")` … `Raw("}")`) into the words
+/// they stand for, the first group varying fastest.
+fn expand_braces(parts: &[Part]) -> Vec<Vec<Part>> {
+    let is = |p: &Part, t: &str| matches!(p, Part::Raw(r) if r == t);
+    // each segment is a list of alternatives; plain text is a segment with one
+    let mut segments: Vec<Vec<Vec<Part>>> = Vec::new();
+    let mut plain: Vec<Part> = Vec::new();
+    let mut i = 0;
+    while i < parts.len() {
+        if !is(&parts[i], "{") {
+            plain.push(parts[i].clone());
+            i += 1;
+            continue;
+        }
+        // find the matching `}` and the top-level commas
+        let (mut depth, mut j) = (0usize, i);
+        let mut cuts = vec![i];
+        while j < parts.len() {
+            if is(&parts[j], "{") {
+                depth += 1;
+            } else if is(&parts[j], "}") {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            } else if depth == 1 && is(&parts[j], ",") {
+                cuts.push(j);
+            }
+            j += 1;
+        }
+        if j >= parts.len() {
+            // unbalanced: leave the rest as it is
+            plain.extend_from_slice(&parts[i..]);
+            break;
+        }
+        cuts.push(j);
+        if !plain.is_empty() {
+            segments.push(vec![std::mem::take(&mut plain)]);
+        }
+        let mut options: Vec<Vec<Part>> = Vec::new();
+        for pair in cuts.windows(2) {
+            options.extend(expand_braces(&parts[pair[0] + 1..pair[1]]));
+        }
+        segments.push(options);
+        i = j + 1;
+    }
+    if !plain.is_empty() || segments.is_empty() {
+        segments.push(vec![plain]);
+    }
+    let mut acc: Vec<Vec<Part>> = vec![Vec::new()];
+    for seg in segments.iter().rev() {
+        acc = acc
+            .iter()
+            .flat_map(|later| {
+                seg.iter().map(move |opt| {
+                    let mut w = opt.clone();
+                    w.extend(later.iter().cloned());
+                    w
+                })
+            })
+            .collect();
+    }
+    acc
 }

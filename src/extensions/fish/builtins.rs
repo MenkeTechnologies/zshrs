@@ -435,10 +435,26 @@ fn str_split(o: &Opts, out: &mut Out, nul: bool) -> i32 {
             parts.retain(|p| !p.is_empty());
         }
         splits |= parts.len() > 1;
-        all.extend(match o.num('f') {
-            Some(f) if f >= 1 => parts.get(f as usize - 1).cloned().into_iter().collect(),
-            _ => parts,
-        });
+        match o.val('f') {
+            Some(spec) => {
+                // `-f 1,4` / `-f 2-3`: the chosen fields; a line that lacks one of them
+                // prints nothing at all
+                let mut wanted: Vec<usize> = Vec::new();
+                for item in spec.split(',') {
+                    match item.split_once('-') {
+                        Some((a, b)) => {
+                            let (a, b) = (a.parse::<usize>().unwrap_or(1), b.parse::<usize>().unwrap_or(0));
+                            wanted.extend(a..=b);
+                        }
+                        None => wanted.extend(item.parse::<usize>().ok()),
+                    }
+                }
+                if !wanted.is_empty() && wanted.iter().all(|&n| n >= 1 && n <= parts.len()) {
+                    all.extend(wanted.iter().map(|&n| parts[n - 1].clone()));
+                }
+            }
+            None => all.extend(parts),
+        }
     }
     for p in &all {
         out.line(p);
@@ -1176,7 +1192,7 @@ fn path(args: &[String]) -> i32 {
     let Some(sub) = args.first() else {
         return err("path", "missing subcommand");
     };
-    let long = [("quiet", 'q'), ("invert", 'v'), ("reverse", 'r'), ("null-in", 'z'), ("null-out", 'Z'), ("type", 't'), ("perm", 'p'), ("key", 'k')];
+    let long = [("quiet", 'q'), ("invert", 'v'), ("reverse", 'r'), ("null-in", 'z'), ("null-out", 'Z'), ("type", 't'), ("perm", 'p'), ("key", 'k'), ("relative", 'R')];
     let o = match parse_opts(&args[1..], "tpk", &long) {
         Ok(o) => o,
         Err(e) => return err(&format!("path {sub}"), &e),
@@ -1198,6 +1214,21 @@ fn path(args: &[String]) -> i32 {
                 };
                 any |= sub != "extension" || !r.is_empty();
                 out.line(&r);
+            }
+            i32::from(!any)
+        }
+        "mtime" => {
+            use std::os::unix::fs::MetadataExt;
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs() as i64);
+            let mut any = false;
+            for p in &items {
+                if let Ok(m) = std::fs::metadata(p) {
+                    let t = m.mtime();
+                    out.line(&(if o.has('R') { now - t } else { t }).to_string());
+                    any = true;
+                }
             }
             i32::from(!any)
         }
