@@ -519,44 +519,124 @@ fn str_match(o: &Opts, out: &mut Out) -> i32 {
     i32::from(matched == 0)
 }
 
-/// `$1`/`${1}` in a replacement (regex mode) as the capture text.
-fn expand_replacement(rep: &str, caps: &fancy_regex::Captures) -> String {
+/// The replacement string of `string replace -r`, as PCRE2's extended substitution reads
+/// it: `$1`, `${1}`, `${name}`, `$$`, `\n \t \r \e \a \f \xHH \x{H..}`, `\\` and the case
+/// operators `\U \L \u \l \E`. A backslash before any other letter or digit, or at the end,
+/// is an error.
+fn expand_replacement(rep: &str, caps: &fancy_regex::Captures) -> Result<String, String> {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Case {
+        None,
+        Upper,
+        Lower,
+    }
     let mut out = String::new();
+    let mut mode = Case::None;
+    let mut once: Option<Case> = None;
+    let mut push = |out: &mut String, text: &str, mode: Case, once: &mut Option<Case>| {
+        for c in text.chars() {
+            let m = once.take().unwrap_or(mode);
+            match m {
+                Case::Upper => out.extend(c.to_uppercase()),
+                Case::Lower => out.extend(c.to_lowercase()),
+                Case::None => out.push(c),
+            }
+        }
+    };
+    let bad = || "Regular expression substitute error: bad escape sequence in replacement string".to_string();
     let chars: Vec<char> = rep.chars().collect();
     let mut i = 0;
     while i < chars.len() {
-        if chars[i] == '$' {
-            let (name, next) = if chars.get(i + 1) == Some(&'{') {
-                let close = chars[i + 2..].iter().position(|&c| c == '}').map(|p| p + i + 2);
-                match close {
-                    Some(c) => (chars[i + 2..c].iter().collect::<String>(), c + 1),
-                    None => (String::new(), i),
+        match chars[i] {
+            '$' => {
+                if chars.get(i + 1) == Some(&'$') {
+                    push(&mut out, "$", mode, &mut once);
+                    i += 2;
+                    continue;
                 }
-            } else {
-                let mut j = i + 1;
-                while j < chars.len() && (chars[j].is_alphanumeric() || chars[j] == '_') {
-                    j += 1;
+                let (name, next) = if chars.get(i + 1) == Some(&'{') {
+                    match chars[i + 2..].iter().position(|&c| c == '}') {
+                        Some(p) => (chars[i + 2..i + 2 + p].iter().collect::<String>(), i + 3 + p),
+                        None => (String::new(), i),
+                    }
+                } else {
+                    let mut j = i + 1;
+                    while j < chars.len() && (chars[j].is_alphanumeric() || chars[j] == '_') {
+                        j += 1;
+                    }
+                    (chars[i + 1..j].iter().collect(), j)
+                };
+                if name.is_empty() {
+                    push(&mut out, "$", mode, &mut once);
+                    i += 1;
+                    continue;
                 }
-                (chars[i + 1..j].iter().collect(), j)
-            };
-            if !name.is_empty() {
-                let m = name
-                    .parse::<usize>()
-                    .ok()
-                    .and_then(|n| caps.get(n))
-                    .or_else(|| caps.name(&name));
-                out.push_str(m.map_or("", |m| m.as_str()));
+                let m = name.parse::<usize>().ok().and_then(|n| caps.get(n)).or_else(|| caps.name(&name));
+                push(&mut out, m.map_or("", |m| m.as_str()), mode, &mut once);
                 i = next;
-                continue;
+            }
+            '\\' => {
+                let Some(&e) = chars.get(i + 1) else { return Err(bad()) };
+                i += 2;
+                let lit = match e {
+                    'n' => '\n',
+                    't' => '\t',
+                    'r' => '\r',
+                    'e' => '\x1b',
+                    'a' => '\x07',
+                    'f' => '\x0c',
+                    'U' => {
+                        mode = Case::Upper;
+                        continue;
+                    }
+                    'L' => {
+                        mode = Case::Lower;
+                        continue;
+                    }
+                    'E' => {
+                        mode = Case::None;
+                        continue;
+                    }
+                    'u' => {
+                        once = Some(Case::Upper);
+                        continue;
+                    }
+                    'l' => {
+                        once = Some(Case::Lower);
+                        continue;
+                    }
+                    'x' => {
+                        let (digits, next) = if chars.get(i) == Some(&'{') {
+                            match chars[i + 1..].iter().position(|&c| c == '}') {
+                                Some(p) => (chars[i + 1..i + 1 + p].iter().collect::<String>(), i + 2 + p),
+                                None => return Err(bad()),
+                            }
+                        } else {
+                            let mut j = i;
+                            while j < chars.len() && j < i + 2 && chars[j].is_ascii_hexdigit() {
+                                j += 1;
+                            }
+                            (chars[i..j].iter().collect(), j)
+                        };
+                        i = next;
+                        match u32::from_str_radix(&digits, 16).ok().and_then(char::from_u32) {
+                            Some(c) => c,
+                            None if digits.is_empty() => '\0',
+                            None => return Err(bad()),
+                        }
+                    }
+                    c if c.is_ascii_alphanumeric() => return Err(bad()),
+                    c => c,
+                };
+                push(&mut out, &lit.to_string(), mode, &mut once);
+            }
+            c => {
+                push(&mut out, &c.to_string(), mode, &mut once);
+                i += 1;
             }
         }
-        if chars[i] == '\\' && i + 1 < chars.len() {
-            i += 1;
-        }
-        out.push(chars[i]);
-        i += 1;
     }
-    out
+    Ok(out)
 }
 
 fn str_replace(o: &Opts, out: &mut Out) -> i32 {
@@ -599,7 +679,10 @@ fn str_replace(o: &Opts, out: &mut Out) -> i32 {
             any = true;
             result.push_str(&s[last..m.start()]);
             if regex {
-                result.push_str(&expand_replacement(rep, &caps));
+                match expand_replacement(rep, &caps) {
+                    Ok(t) => result.push_str(&t),
+                    Err(e) => return err("string replace", &e),
+                }
             } else {
                 result.push_str(rep);
             }
@@ -963,15 +1046,15 @@ fn parse_opts_math(args: &[String]) -> Result<Opts, String> {
             args.get(*i).cloned().ok_or(format!("{a}: option requires an argument"))
         };
         match a {
-            "-s" => {
+            "-s" | "--scale" => {
                 let v = take(&mut i)?;
                 o.vals.insert('s', v);
             }
-            "-b" => {
+            "-b" | "--base" => {
                 let v = take(&mut i)?;
                 o.vals.insert('b', v);
             }
-            "-m" => {
+            "-m" | "--scale-mode" => {
                 let _ = take(&mut i)?;
             }
             "--" => {

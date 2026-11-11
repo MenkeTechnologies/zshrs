@@ -72,7 +72,7 @@ mod tests {
         assert_eq!(t("echo $x"), "echo ${x+\"${x[@]}\"}");
         assert_eq!(t("echo \"$x\""), "echo \"${(j: :)x}\"");
         assert_eq!(t("echo $x[2]"), "echo \"${(@)x[2,2]}\"");
-        assert_eq!(t("echo $x[2..3]"), "echo \"${(@)x[2,3]}\"");
+        assert_eq!(t("echo $x[2..3]"), "{ __fish_slice __fc1 x 2 3; echo \"${__fc1[@]}\"; }");
         // a list inside a word is a loop, so an unset variable leaves no word at all
         assert_eq!(
             t("echo $x.txt"),

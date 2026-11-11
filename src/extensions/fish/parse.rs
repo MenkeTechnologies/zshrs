@@ -396,6 +396,15 @@ impl Parser {
         let mut cmds = Vec::new();
         let bg;
         loop {
+            // `x | not y`: the status of the pipeline is the negated status of its last stage
+            self.skip_blank();
+            if !cmds.is_empty() {
+                if let Some("not" | "!") = self.peek_word_text().as_deref() {
+                    negate = !negate;
+                    self.i += if self.peek() == Some('!') { 1 } else { 3 };
+                    self.skip_blank();
+                }
+            }
             let cmd = self.command()?;
             self.skip_blank();
             let mut pipe = self.pipe_operator();

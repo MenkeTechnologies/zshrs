@@ -39,10 +39,13 @@ __fish_slice() {
   local n=$#src a=$3 b=$4 i
   (( a < 0 )) && a=$(( n + a + 1 ))
   (( b < 0 )) && b=$(( n + b + 1 ))
-  if (( a <= b )); then
-    for (( i = a; i <= b; i++ )); do (( i >= 1 && i <= n )) && r+=("${src[i]}"); done
-  else
-    for (( i = a; i >= b; i-- )); do (( i >= 1 && i <= n )) && r+=("${src[i]}"); done
+  if (( a >= 1 && b >= 1 && a <= n )); then
+    (( b > n )) && b=n
+    if (( a <= b )); then
+      for (( i = a; i <= b; i++ )); do r+=("${src[i]}"); done
+    else
+      for (( i = a; i >= b; i-- )); do r+=("${src[i]}"); done
+    fi
   fi
   typeset -ga $1
   builtin eval "$1=(\"\${(@)r}\")"
@@ -550,8 +553,9 @@ command_not_found_handler() {
 }
 __fish_cl_words() { (( $# )) && print -rl -- "$@"; return 0 }
 source() {
-  local __f=$1 __t
-  shift
+  # no file: fish reads the script from stdin (`cmd completion fish | source`)
+  local __f=${1:--} __t
+  (( $# )) && shift
   __t=$('@ZSHRS@' --fish-translate --source -- "$__f") || return
   () { builtin eval "$__t" } "$@"
 }

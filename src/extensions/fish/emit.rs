@@ -836,10 +836,8 @@ fn special_scalar(name: &str) -> Option<&'static str> {
 /// descending range of plain numbers is returned with `true` so the caller reverses it.
 fn range_of(t: &str) -> (String, bool) {
     match t.split_once("..") {
-        // `$x[2..]` runs to the last element, `$x[..3]` starts at the first
-        Some((a, "")) => (format!("{a},-1"), false),
-        Some(("", b)) => (format!("1,{b}"), false),
         Some((a, b)) => match (a.parse::<i64>(), b.parse::<i64>()) {
+            _ if a.is_empty() || b.is_empty() => (format!("{},{}", if a.is_empty() { "1" } else { a }, if b.is_empty() { "-1" } else { b }), false),
             (Ok(x), Ok(y)) if x > y && (x < 0) == (y < 0) => (format!("{y},{x}"), true),
             _ => (format!("{a},{b}"), false),
         },
@@ -847,17 +845,17 @@ fn range_of(t: &str) -> (String, bool) {
     }
 }
 
-/// `a..b` whose direction cannot be known when translating: a bound that is not a
-/// number, or numbers of opposite sign (`-1..1`).
+/// An `a..b` index that `__fish_slice` has to resolve at run time: fish counts negative
+/// indices from the end, reverses a range whose start is after its end, and returns nothing
+/// when either end falls before the first element or the start is past the last. Only a
+/// range goes through the helper.
 fn dyn_range(t: &str) -> Option<(&str, &str)> {
     let (a, b) = t.split_once("..")?;
-    if a.is_empty() || b.is_empty() {
-        return None;
-    }
-    match (a.parse::<i64>(), b.parse::<i64>()) {
-        (Ok(x), Ok(y)) if (x < 0) == (y < 0) => None,
-        _ => Some((a, b)),
-    }
+    let a = if a.is_empty() { "1" } else { a };
+    let b = if b.is_empty() { "-1" } else { b };
+    // (zsh's own `x[4,5]` on a three-element list is one empty word, not none, so even a
+    // plain ascending range goes through the helper)
+    Some((a, b))
 }
 
 /// Variables every shell session has, so `$HOME/x` need not pay for a loop.

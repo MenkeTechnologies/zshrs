@@ -202,7 +202,7 @@ impl Emitter {
             return format!("typeset -g +x {z}");
         }
         if f.export {
-            return self.set_export(&name, &z, values, &list, f.local);
+            return self.set_export(&name, &z, values, &list, (f.local, f.append, f.prepend));
         }
         if f.append {
             return format!("{z}+=({list})");
@@ -232,12 +232,25 @@ impl Emitter {
 
     /// `set -x NAME value…`: zsh exports scalars, so the list is joined the way fish
     /// writes it into the environment.
-    fn set_export(&mut self, name: &str, z: &str, values: &[Word], list: &str, local: bool) -> String {
+    fn set_export(&mut self, name: &str, z: &str, values: &[Word], list: &str, scope: (bool, bool, bool)) -> String {
+        let (local, append, prepend) = scope;
         let decl = if local && self.fn_depth > 0 { "local -x" } else { "typeset -gx" };
         let sep = if name.ends_with("PATH") { ':' } else { ' ' };
         // `path`, `cdpath`, `manpath` are tied to their exported scalars already
         if matches!(name, "PATH" | "CDPATH" | "MANPATH") {
-            return format!("{z}=({list})");
+            let old = format!("\"${{{z}[@]}}\"");
+            let items = match (append, prepend) {
+                (true, _) => format!("{old} {list}"),
+                (_, true) => format!("{list} {old}"),
+                _ => list.to_string(),
+            };
+            // in a function `-l` hides the global until the function returns; the list is
+            // evaluated before the declaration, so it can still read the old value
+            return if local && self.fn_depth > 0 {
+                format!("local -a {z}=({items})")
+            } else {
+                format!("{z}=({items})")
+            };
         }
         // A scalar cannot replace an array under `typeset -g`, and an export is a scalar.
         let drop_array = if decl == "typeset -gx" {
