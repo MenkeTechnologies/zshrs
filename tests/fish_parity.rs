@@ -413,3 +413,41 @@ fn universal_variables_share_fish_variables_with_fish() {
         let _ = std::fs::remove_dir_all(d);
     }
 }
+
+/// fish runs the FIRST file on $PATH with the command's name; when that file
+/// cannot be executed (its `#!` names a missing interpreter) the command
+/// fails there, where zsh goes on to the next directory. Both the plain and
+/// the redirected (forked) exec paths are checked.
+#[test]
+fn a_failing_first_path_match_is_not_retried_further_down_path() {
+    use std::os::unix::fs::PermissionsExt;
+    let Some(reference) = fish() else { return };
+    let home = scratch("exec");
+    let (broken, good) = (home.join("a"), home.join("b"));
+    for (dir, body) in [(&broken, "#!/nonexistent/zz-interp\n"), (&good, "#!/bin/sh\necho ran-second\n")] {
+        std::fs::create_dir_all(dir).unwrap();
+        let f = dir.join("zzexe");
+        std::fs::write(&f, body).unwrap();
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let path = format!("{}:{}:/usr/bin:/bin", broken.display(), good.display());
+    let script = home.join("exec.fish");
+    std::fs::write(&script, "zzexe; echo st=$status\nzzexe >/dev/null; echo st=$status\n").unwrap();
+    let go = |bin: &std::path::Path, args: &[&str]| {
+        let out = Command::new(bin)
+            .args(args)
+            .arg(&script)
+            .env_clear()
+            .env("HOME", &home)
+            .env("PATH", &path)
+            .stdin(Stdio::null())
+            .output()
+            .expect("spawn shell");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let want = go(&reference, &["--no-config"]);
+    let got = go(Path::new(env!("CARGO_BIN_EXE_zshrs")), &["--fish", "-f"]);
+    let _ = std::fs::remove_dir_all(&home);
+    assert!(!want.contains("ran-second"), "fish: {want}");
+    assert_eq!(got, want);
+}

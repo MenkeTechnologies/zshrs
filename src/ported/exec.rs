@@ -4423,9 +4423,20 @@ pub fn execute(args: &mut Vec<String>, flags: u32, defpath: i32) {
                 })
             })
         };
+        // !!! FISH GATE (no C counterpart) !!! fish runs the FIRST file on
+        // $PATH with the command's name and reports its failure; it does not
+        // go on to later directories. Same gate as vm_helper::execute_spawn.
+        let first_file_only =
+            crate::emulation_startup::personality() == crate::emulation_startup::Personality::Fish;
+        let failed_file = |p: &str, ee: i32| first_file_only && ee != 0 && std::path::Path::new(p).is_file();
+        let mut stop = false;
         if let Some(nn) = hashed_path {
             // c:848 — `ee = zexecve(nn, argv, newenvp);`
             ee = zexecve(&nn, &argv, newenvp);
+            if failed_file(&nn, ee) {
+                eno = ee;
+                stop = true;
+            }
             let dir = nn.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
             if isgooderr(ee, if dir.is_empty() { "/" } else { dir }) {
                 eno = ee;
@@ -4442,11 +4453,18 @@ pub fn execute(args: &mut Vec<String>, flags: u32, defpath: i32) {
         // exec failed with a non-"good" error).
         let path_str = getsparam("PATH").unwrap_or_default();
         for pp in path_str.split(':') {
+            if stop {
+                break;
+            }
             if pp.is_empty() || pp == "." {
                 // c:856
                 ee = zexecve(&arg0, &argv, newenvp); // c:857
                 if isgooderr(ee, pp) {
                     eno = ee;
+                }
+                if failed_file(&arg0, ee) {
+                    eno = ee;
+                    stop = true;
                 }
             } else {
                 // c:860
@@ -4454,6 +4472,10 @@ pub fn execute(args: &mut Vec<String>, flags: u32, defpath: i32) {
                 ee = zexecve(&candidate, &argv, newenvp); // c:865
                 if isgooderr(ee, pp) {
                     eno = ee;
+                }
+                if failed_file(&candidate, ee) {
+                    eno = ee;
+                    stop = true;
                 }
             }
         }

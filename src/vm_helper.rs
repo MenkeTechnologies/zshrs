@@ -1562,12 +1562,23 @@ pub(crate) fn execute_spawn(
         }
     }
     let mut eno = 0;
+    // !!! FISH GATE (no C counterpart) !!! fish runs the FIRST file on $PATH
+    // with the command's name and reports its failure; it does not go on to
+    // later directories the way zsh's walk does (a `#!` naming a missing
+    // interpreter made zshrs --fish run the next `pip` on $PATH where fish
+    // fails with "The file specified the interpreter …").
+    let first_file_only = crate::emulation_startup::personality() == crate::emulation_startup::Personality::Fish;
+    let stop = std::cell::Cell::new(false);
     let mut attempt = |pth: &str, dir: &str| -> Option<libc::pid_t> {
         match zexecve_spawn(pth, argv, drop_argv0, in_place) {
             Ok(pid) => Some(pid),
             Err(ee) => {
                 if isgooderr(ee, dir) {
                     eno = ee;
+                }
+                if first_file_only && std::path::Path::new(pth).is_file() {
+                    eno = ee;
+                    stop.set(true);
                 }
                 None
             }
@@ -1593,6 +1604,9 @@ pub(crate) fn execute_spawn(
         if let Some(pid) = attempt(nn, &dir_of(nn)) {
             return Ok(pid);
         }
+        if stop.get() {
+            return Err(eno);
+        }
     }
     // c:877 `execute_skip_exec:` — `for (pp = path; *pp; pp++)`.
     let mut path = crate::ported::params::getaparam("path").unwrap_or_default();
@@ -1613,6 +1627,9 @@ pub(crate) fn execute_spawn(
         }
         if let Some(pid) = attempt(&pth, pp) {
             return Ok(pid); // c:890 `ee = zexecve(buf, argv, newenvp);`
+        }
+        if stop.get() {
+            break;
         }
     }
     Err(eno)
