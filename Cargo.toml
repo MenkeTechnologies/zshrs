@@ -62,6 +62,18 @@ exclude = [
     # and ignores a target whose source is excluded, the same way it
     # already does for `tests/ztst_runner.rs`.
     "/bins/parity-fuzz.rs",
+    # Dropped from the PUBLISHED crate only -- 0.13.62 packaged at
+    # 10,498,245 bytes against crates.io's 10,485,760 ceiling. Git and
+    # Homebrew builds keep all three.
+    #   canonical.json: codegen input for scripts/*.py; no build step or
+    #     include_str! reads it.
+    #   bench-autoload.rs: a development benchmark binary.
+    #   zshrs-recorder.rs: the `recorder`-feature binary. A crates.io
+    #     install with `--features recorder` no longer gets it (Cargo
+    #     warns and skips the target); `brew install zshrs-all` ships it.
+    "/data/grammar/canonical.json",
+    "/bins/bench-autoload.rs",
+    "/bins/zshrs-recorder.rs",
     "/zshrs_dump.*",
     "/tmux",
     "/zterm_columns",
