@@ -1522,9 +1522,11 @@ pub fn run_program(src: &str, input: &str) -> Result<String, String>
 ```
 
 - Each call forks a child that runs `src` like `zsh -f -c src`: not
-  interactive, no ZLE, no job control, and no startup file read (`zsh -f`
-  still reads `/etc/zshenv`; this does not). Every call starts from a
-  clean shell; nothing it sets survives into the next call.
+  interactive, no ZLE, no job control, and no startup file read, not even
+  `/etc/zshenv` (which `zsh -f` still reads). `$0` is `zshrs` and
+  `$ZSH_EXEPATH` is unset, since the running executable is the host's.
+  Every call starts from a clean shell (unless the host runs zshrs
+  in-process; see below); nothing it sets survives into the next call.
 - `input` is the program's stdin (fd 0); `read` and external commands see it.
 - Returns everything written to stdout (fd 1) by builtins and external
   commands alike. Nothing reaches the host's terminal.
@@ -1537,10 +1539,41 @@ pub fn run_program(src: &str, input: &str) -> Result<String, String>
 - The call returns once every process holding the program's stdout or
   stderr has closed it, as `$(…)` does: a background job that keeps them
   open delays the return.
-- The child is a fork of the host without `exec`. Do not call
-  `std::env::set_var` concurrently with `run_program`, and a custom global
-  allocator must be fork-safe. `src/embed.rs` lists the fork-safety
-  measures.
+- Unix only: it is built on `fork()`.
+
+**Fork safety.** The child is a fork of the host without `exec`, and
+`fork()` copies only the calling thread: a lock another host thread held at
+that instant stays locked in the child, and the child hangs if it takes it.
+`src/embed.rs` lists what `run_program` does about each lock it can reach.
+What remains is up to the host:
+
+- **`std::env::set_var` on another thread.** Rust's environment functions
+  share one process-wide lock, which `set_var` holds for writing. The child
+  reads variables with `std::env::var` while starting up, so a fork taken
+  during a concurrent `set_var` hangs the child on that lock. The parent's
+  own snapshot of the environment, taken as the call starts, races the same
+  write. Do not modify the environment while a call can be starting.
+- **A custom `#[global_allocator]`.** The system allocators (macOS
+  libmalloc, glibc malloc) reset their locks across `fork()`; the child
+  allocates from its first line on, so an allocator that does not do the
+  same can hang it.
+- **More than one `tracing` dispatcher.** The child installs a no-op
+  dispatcher, so no event reaches the host's subscriber. But once the host
+  has registered more than one dispatcher, registering a new callsite takes
+  tracing-core's dispatcher-list lock, which another host thread may have
+  held at fork time.
+- **The panic hook and NSS.** The child replaces the panic hook with
+  `std::panic::set_hook`, which takes the hook lock for writing; a host
+  thread that was panicking at fork time held it. Shell startup
+  (`ShellExecutor::new`) looks up the home directory through `getpwuid`,
+  whose NSS / libinfo internals have their own locks; a host thread
+  inside `getpwuid` or `getpwnam` at fork time can hang the child there.
+- **A host that also runs zshrs in-process.** zshrs keeps parameters,
+  options, aliases and functions in process-wide tables. `run_program`
+  isolates calls only because the host never touches those tables; a host
+  that runs zshrs code itself hands its state to every child (which then
+  no longer starts from a clean shell), and a lock on those tables held by
+  another host thread at fork time can hang the child.
 
 ```rust
 let out = zsh::run_program(r#"read name; print "hello, $name""#, "world\n")?;

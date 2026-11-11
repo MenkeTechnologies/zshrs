@@ -1,4 +1,5 @@
-//! Run a shell program from a Rust host and collect what it printed.
+//! Run a shell program from a Rust host and collect what it printed. Unix
+//! only (`fork()`); the module is `#[cfg(unix)]`.
 //!
 //! !!! RUST-ONLY — no C counterpart !!! The model is C zsh's `getoutput`
 //! (Src/exec.c:4816): fork, point the child's fds at pipes, run the program
@@ -8,15 +9,18 @@
 //! Every call forks, so each program starts from a clean shell: zshrs keeps
 //! parameters, options, aliases and functions in process-wide tables
 //! (`paramtab`, `OPTS_LIVE`, `aliastab`, `shfunctab`) with no reset path, and
-//! a separate process is what isolates one call from the next. The host
-//! process never touches those tables, so nothing it does can leak in either.
+//! a separate process is what isolates one call from the next. That holds
+//! only while the host process never touches those tables. A host that also
+//! runs zshrs in-process forks its own state into every child, so the child
+//! no longer starts clean, and a lock on those tables that another host
+//! thread held at fork time hangs the child.
 //!
 //! # Fork safety
 //!
 //! `fork()` copies only the calling thread. A lock that another host thread
 //! held at that instant stays locked forever in the child, so the child must
 //! not take any lock the host may hold. What `run_program` does about each
-//! one it can reach:
+//! one it can reach, and what remains up to the host:
 //!
 //! - Rust's stdout/stderr locks: held by the forking thread across `fork()`
 //!   (stdout flushed first, so the child inherits an empty buffer). The child
@@ -25,16 +29,29 @@
 //! - `tracing`: the child installs a no-op thread default dispatcher before
 //!   any shell code runs, so no event reaches the host's subscriber and its
 //!   writer lock. Registering a new callsite still read-locks tracing-core's
-//!   dispatcher list when the host has registered more than one dispatcher.
+//!   dispatcher list when the host has registered more than one dispatcher;
+//!   if another host thread held that lock for writing at fork time (while
+//!   registering a dispatcher), the child hangs.
 //! - The environment: read in the parent, before `fork()`, and handed to the
 //!   child, which still reads single variables with `std::env::var` while
-//!   starting up. A host must not call `std::env::set_var` concurrently with
-//!   `run_program` (already unsound in a threaded program).
+//!   starting up. Rust's environment functions share one process-wide
+//!   `RwLock` that `std::env::set_var` holds for writing: a fork taken while
+//!   another host thread is inside `set_var` leaves it locked and the child
+//!   hangs in `std::env::var`, and the parent's snapshot races the same
+//!   write. A host must not call `std::env::set_var` concurrently with
+//!   `run_program`.
+//! - The panic hook: the child installs its own with `std::panic::set_hook`,
+//!   which takes the hook lock for writing. A host thread that was panicking
+//!   at fork time held it for reading, and the child hangs.
+//! - NSS: `ShellExecutor::new` looks up the home directory with `getpwuid`.
+//!   glibc NSS and macOS libinfo take internal locks there; a host thread
+//!   inside `getpwuid`/`getpwnam` at fork time can hang the child.
 //! - Thread-locals: the fork happens on a thread spawned for this call, so the
 //!   child's only thread has never run shell code.
 //! - The rayon pool: `fork_safe_pool::pool` builds a new pool per pid.
 //! - The allocator: the system allocators (macOS libmalloc, glibc) reset
-//!   their locks across `fork()`. A custom global allocator must do the same.
+//!   their locks across `fork()`. A custom `#[global_allocator]` must do the
+//!   same, or the child can hang on its first allocation.
 //!
 //! Children of the child (pipelines, `$(…)`, externals) go through the
 //! shell's ordinary `zfork` path.
@@ -50,10 +67,11 @@ const CHILD_STACK_BYTES: usize = 16 * 1024 * 1024;
 /// Run `src` as a complete program with `input` as its stdin and return
 /// everything it wrote to stdout.
 ///
-/// The program runs in a forked child as `zsh -f -c src` would: no startup
-/// files, not interactive, no ZLE, no job control. Its fds 0, 1 and 2 are
-/// pipes, so builtins and external commands alike read `input` and have
-/// their output captured; nothing reaches the host's terminal.
+/// The program runs in a forked child as `zsh -f -c src` would, except that
+/// no startup file is read, not even `/etc/zshenv`: not interactive, no ZLE,
+/// no job control. `$0` is `zshrs` and `$ZSH_EXEPATH` is unset. Its fds 0,
+/// 1 and 2 are pipes, so builtins and external commands alike read `input`
+/// and have their output captured; nothing reaches the host's terminal.
 ///
 /// Returns `Ok(stdout)` when the program exits 0, including through an
 /// explicit `exit 0`. A nonzero exit status (a parse error, a failed last
