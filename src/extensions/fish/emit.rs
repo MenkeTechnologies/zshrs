@@ -430,6 +430,10 @@ impl Emitter {
         let lenient_glob = matches!(name.as_deref(), Some("set" | "count"));
         self.null_glob = lenient_glob;
         let mut out = match name.as_deref() {
+            Some("exit") if super::source_mode() && self.fn_depth == 0 => {
+                let tail: Vec<String> = rest[1..].iter().map(|w| self.word_list(w)).collect();
+                format!("return {}", tail.join(" "))
+            }
             Some("set") => self.set_cmd(&rest[1..]),
             Some("read") => self.read_cmd(&rest[1..]),
             Some("alias") => self.alias_cmd(&rest[1..]),
@@ -458,6 +462,14 @@ impl Emitter {
                     .is_some_and(|t| t.len() > 1 && t.starts_with('-'));
                 if name.as_deref() == Some("echo") && flagged {
                     all[0] = "__fish_echo".into();
+                }
+                // `command -s NAME` / `-q` / `-v` / `-a` look commands up; zsh's `command` has no -s
+                if name.as_deref() == Some("command")
+                    && rest.get(1).and_then(|w| w.bare()).is_some_and(|t| {
+                        t.len() > 1 && t.starts_with('-') && !t.starts_with("--") && t[1..].chars().all(|c| "sqva".contains(c))
+                    })
+                {
+                    all[0] = "__fish_command_query".into();
                 }
                 // zshrs resolves these names before a function of the same name
                 if let Some(n @ ("bind" | "commandline" | "complete")) = name.as_deref() {

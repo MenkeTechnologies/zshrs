@@ -403,7 +403,21 @@ fn str_split(o: &Opts, out: &mut Out, nul: bool) -> i32 {
     let mut all: Vec<String> = Vec::new();
     for s in items {
         let mut parts: Vec<String> = if sep.is_empty() {
-            s.chars().map(String::from).collect()
+            // an empty separator splits between characters; `-m N` stops after N of them
+            let chars: Vec<char> = s.chars().collect();
+            let cut = max.min(chars.len());
+            let mut v: Vec<String> = if o.has('r') {
+                let keep = chars.len() - cut;
+                let mut v = vec![chars[..keep].iter().collect::<String>()];
+                v.extend(chars[keep..].iter().map(|c| c.to_string()));
+                v
+            } else {
+                let mut v: Vec<String> = chars[..cut].iter().map(|c| c.to_string()).collect();
+                v.push(chars[cut..].iter().collect());
+                v
+            };
+            v.retain(|p| !p.is_empty() || chars.is_empty());
+            v
         } else if o.has('r') {
             let mut v: Vec<String> = s.rsplitn(max.saturating_add(1), sep.as_str()).map(str::to_string).collect();
             v.reverse();

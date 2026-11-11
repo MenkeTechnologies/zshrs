@@ -3,7 +3,7 @@
 //! construct with the same effect on the caller's scope.
 
 use super::emit::{quote_lit, squote, Emitter};
-use super::parse::Word;
+use super::parse::{Part, Word};
 
 /// Options of `set`, after the combined short flags (`-gx`) are split.
 #[derive(Default)]
@@ -80,15 +80,40 @@ impl Emitter {
     }
 
     /// `name` or `name[idx…]` from the first operand: the zsh parameter and the raw subscript.
-    fn set_target(w: &Word) -> Option<(String, Option<String>)> {
-        let t = w.text()?;
-        match t.split_once('[') {
-            Some((n, rest)) => {
-                let idx = rest.strip_suffix(']')?;
-                Some((n.to_string(), Some(idx.to_string())))
-            }
-            None => Some((t, None)),
+    fn set_target(&self, w: &Word) -> Option<(String, Option<String>)> {
+        if let Some(t) = w.text() {
+            return match t.split_once('[') {
+                Some((n, rest)) => {
+                    let idx = rest.strip_suffix(']')?;
+                    Some((n.to_string(), Some(idx.to_string())))
+                }
+                None => Some((t, None)),
+            };
         }
+        // `name[$i]`: the index is built from variables
+        let (Some(Part::Lit(first)), Some(Part::Lit(last))) = (w.parts.first(), w.parts.last()) else {
+            return None;
+        };
+        let (name, head) = first.split_once('[')?;
+        let tail = last.strip_suffix(']')?;
+        if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            return None;
+        }
+        let mut idx = head.to_string();
+        let middle = &w.parts[1..w.parts.len() - 1];
+        for p in middle {
+            match p {
+                Part::Lit(t) => idx.push_str(t),
+                Part::Var(v) if v.index.is_none() && !v.deref => {
+                    idx.push_str(&format!("${{(j.:.){}}}", self.zn(&v.name)))
+                }
+                _ => return None,
+            }
+        }
+        if w.parts.len() > 1 {
+            idx.push_str(tail);
+        }
+        Some((name.to_string(), Some(idx)))
     }
 
     /// A fish index token as the zsh subscript it names (first token of the list).
@@ -109,7 +134,7 @@ impl Emitter {
         }
         let names: Vec<String> = args[at..]
             .iter()
-            .filter_map(Self::set_target)
+            .filter_map(|w| self.set_target(w))
             .take(if f.erase { usize::MAX } else { 1 })
             .map(|(n, _)| self.zn(&n))
             .collect();
@@ -121,7 +146,7 @@ impl Emitter {
     fn set_inner(&mut self, args: &[Word]) -> String {
         let (f, at) = self.set_flags(args);
         let operands = &args[at..];
-        let Some((name, idx)) = operands.first().and_then(Self::set_target) else {
+        let Some((name, idx)) = operands.first().and_then(|w| self.set_target(w)) else {
             if operands.is_empty() {
                 let flags: Vec<String> = args[..at].iter().map(|w| self.word_scalar(w)).collect();
                 return format!("__fish_set_list {}", flags.join(" "));
@@ -140,7 +165,7 @@ impl Emitter {
         if f.erase {
             return operands
                 .iter()
-                .filter_map(Self::set_target)
+                .filter_map(|w| self.set_target(w))
                 .map(|(n, i)| match i {
                     Some(i) => format!("{}[{}]=()", self.zn(&n), Self::subscript(&i)),
                     None => format!("unset {}", self.zn(&n)),
@@ -151,7 +176,7 @@ impl Emitter {
         if f.query {
             let tests: Vec<String> = operands
                 .iter()
-                .filter_map(Self::set_target)
+                .filter_map(|w| self.set_target(w))
                 .map(|(n, i)| {
                     let zn = self.zn(&n);
                     match (n.as_str(), i) {

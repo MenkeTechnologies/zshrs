@@ -1799,7 +1799,12 @@ pub fn zshrs_main() {
     // `--fish-translate [--] FILE|-`: print the zsh translation of a fish script.
     // Used by the `source` / `eval` functions the fish preamble defines.
     if args.len() >= 3 && args[1] == "--fish-translate" {
-        let operand = args[2..].iter().find(|a| a.as_str() != "--");
+        // `--source`: the text is a file `source` runs, so its top-level `exit` only
+        // ends that file
+        if args[2..].iter().any(|a| a == "--source") {
+            zsh::fish::set_source_mode(true);
+        }
+        let operand = args[2..].iter().find(|a| a.as_str() != "--" && a.as_str() != "--source");
         let src = match operand.map(String::as_str) {
             Some("-") | None => {
                 let mut s = String::new();

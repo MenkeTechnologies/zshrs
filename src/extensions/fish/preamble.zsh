@@ -18,6 +18,22 @@ __fish_echo() {
 }
 __fish_ret() { return $1 }
 _() { print -r -- "$*" }
+__fish_command_query() {
+  local quiet= all= n r=0 a ch
+  local -a hits
+  while [[ ${1-} == -* && ${1-} != -- ]]; do
+    a=$1; shift
+    for ch in ${(s::)a#-}; do case $ch in q) quiet=1 ;; a) all=1 ;; esac; done
+  done
+  [[ ${1-} == -- ]] && shift
+  for n; do
+    hits=(${(f)"$(whence -p ${all:+-a} -- $n 2>/dev/null)"})
+    (( ${#hits} )) || { r=127; continue }
+    [[ -n $quiet ]] && continue
+    if [[ -n $all ]]; then print -rl -- $hits; else print -r -- $hits[1]; fi
+  done
+  return $r
+}
 __fish_slice() {
   local -a src=("${(@P)2}") r
   local n=$#src a=$3 b=$4 i
@@ -84,14 +100,20 @@ __fish_set_list() {
 }
 __fish_set_dynamic() {
   local exp= erase= query= app= pre= n sep=' '
+  local o ch
   while [[ ${1-} == -* ]]; do
-    case $1 in
-      -x|--export) exp=1 ;;
-      -e|--erase) erase=1 ;;
-      -q|--query) query=1 ;;
-      -a|--append) app=1 ;;
-      -p|--prepend) pre=1 ;;
+    o=$1
+    case $o in
+      --export) exp=1 ;;
+      --erase) erase=1 ;;
+      --query) query=1 ;;
+      --append) app=1 ;;
+      --prepend) pre=1 ;;
       --) shift; break ;;
+      --*) ;;
+      *) for ch in ${(s::)o#-}; do
+           case $ch in x) exp=1 ;; e) erase=1 ;; q) query=1 ;; a) app=1 ;; p) pre=1 ;; esac
+         done ;;
     esac
     shift
   done
@@ -107,7 +129,7 @@ __fish_set_dynamic() {
   if [[ -n $exp ]]; then
     local -a __v=("$@")
     [[ ${(Pt)n} == array* ]] && unset "$n"
-    typeset -gx "$n=${(j:$sep:)__v}"
+    typeset -gx "$n=${(pj:$sep:)__v}"
     return 0
   fi
   [[ -n ${parameters[$n]} && ${(Pt)n} != array* ]] && unset "$n"
@@ -375,9 +397,9 @@ emit() {
   return 0
 }
 __fish_argparse() {
-  local name=argparse ign= stop= mu= amp= consumed= spec s sfx short long id a o val k i c us=$'\x1f'
+  local name=argparse ign= stop= mu= amp= consumed= skipshort= spec s sfx short long id a o val k i c us=$'\x1f'
   local -a vals opts=()
-  local -A kind=() alias=() acc=() noopt=()
+  local -A kind=() alias=() acc=() noopt=() valid=()
   local -a specs=() rest=() ids=()
   while (( $# )); do
     case $1 in
@@ -401,14 +423,17 @@ __fish_argparse() {
       *'=+') sfx=m; s=${s%=+} ;;
       *=) sfx=r; s=${s%=} ;;
     esac
+    skipshort=
     if [[ $s == */* ]]; then short=${s%%/*}; long=${s#*/}
+    elif [[ ${s[2]-} == - && ${#s} > 2 ]]; then short=${s[1]}; long=${s[3,-1]}; skipshort=1   # `m-min`: --min, variable also _flag_m
     elif (( ${#s} > 1 )); then long=$s
     else short=$s; fi
     id=${long:-$short}
     ids+=($id)
     [[ -n $amp ]] && noopt[$id]=1
+    [[ $spec == *'!'* ]] && valid[$id]=${spec#*!}
     kind[$id]=$sfx
-    [[ -n $short ]] && alias[-$short]=$id
+    [[ -n $short && -z $skipshort ]] && alias[-$short]=$id
     [[ -n $long ]] && alias[--$long]=$id
     alias[ids:$id]="$short $long"
     for a in $short $long; do unset "_flag_${a//-/_}"; done
@@ -431,6 +456,10 @@ __fish_argparse() {
           elif (( $# )); then val=$1; consumed=1; shift
           else print -u2 -r -- "$name: Expected argument for option $o"; return 2; fi
         fi
+        if [[ -n $valid[$k] ]]; then
+          _flag_name=${o#--} _flag_value=$val _argparse_cmd=$name
+          builtin eval "$valid[$k]" || return 1
+        fi
         acc[$k]+="${acc[$k]+$us}$val"
       else
         acc[$k]+="${acc[$k]+$us}$o"
@@ -452,6 +481,10 @@ __fish_argparse() {
             if [[ $kind[$k] == o ]]; then val=
             elif (( $# )); then val=$1; consumed=1; shift
             else print -u2 -r -- "$name: Expected argument for option -$c"; return 2; fi
+          fi
+          if [[ -n $valid[$k] ]]; then
+            _flag_name=$c _flag_value=$val _argparse_cmd=$name
+            builtin eval "$valid[$k]" || return 1
           fi
           acc[$k]+="${acc[$k]+$us}$val"
           if [[ -z $noopt[$k] ]]; then opts+=(-$c); [[ -n $consumed ]] && opts+=($val); fi
@@ -495,7 +528,7 @@ __fish_cl_words() { (( $# )) && print -rl -- "$@"; return 0 }
 source() {
   local __f=$1 __t
   shift
-  __t=$('@ZSHRS@' --fish-translate -- "$__f") || return
+  __t=$('@ZSHRS@' --fish-translate --source -- "$__f") || return
   () { builtin eval "$__t" } "$@"
 }
 eval() {
@@ -539,6 +572,7 @@ if [[ -o interactive ]]; then
   precmd_functions+=(__fish_uvar_sync)
   zshexit_functions+=(__fish_uvar_cleanup)
 fi
+umask=(${(l:4::0:)$(builtin umask)})
 FISH_VERSION=4.9.3
 version=(4.9.3)
 fish_prompt() { print -rn -- "${USER}@${HOST%%.*} ${PWD/#$HOME/~}> " }

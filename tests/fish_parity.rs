@@ -280,3 +280,57 @@ fn command_substitution_ends_when_the_body_returns_from_a_redirected_group() {
         assert_eq!(String::from_utf8_lossy(&out.stdout), want, "{body}");
     }
 }
+
+/// fish's own functions, sourced from the files fish ships and run by both shells. They
+/// exercise the translator on real code (dynamic variable names, `argparse` validators,
+/// `{ }` blocks, `string` corner cases) rather than on scripts written for this suite.
+/// `@FN@` in a script stands for the directory the needed function files are extracted to.
+#[test]
+fn fish_own_functions_behave_like_fish() {
+    let Some(reference) = fish() else { return };
+    let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/fish_functions");
+    let functions = scratch("functions");
+    let home = scratch("fn-home");
+    let cwd = scratch("fn-cwd");
+    let mut bad = Vec::new();
+    let mut scripts: Vec<PathBuf> = std::fs::read_dir(&corpus)
+        .expect("corpus directory")
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "fish"))
+        .collect();
+    scripts.sort();
+    for script in &scripts {
+        let text = std::fs::read_to_string(script).unwrap();
+        for line in text.lines() {
+            let Some(rest) = line.strip_prefix("source @FN@/") else { continue };
+            let file = rest.trim();
+            let out = Command::new(&reference)
+                .args(["--no-config", "-c", &format!("status get-file functions/{file}")])
+                .output()
+                .expect("spawn fish");
+            if out.stdout.is_empty() {
+                continue; // this fish does not embed that function
+            }
+            std::fs::write(functions.join(file), &out.stdout).unwrap();
+        }
+        let resolved = functions.join(format!("case-{}", script.file_name().unwrap().to_string_lossy()));
+        std::fs::write(&resolved, text.replace("@FN@", &functions.to_string_lossy())).unwrap();
+        let want = run(&reference, &["--no-config"], &resolved, &home, &cwd);
+        let got = run(Path::new(env!("CARGO_BIN_EXE_zshrs")), &["--fish", "-f"], &resolved, &home, &cwd);
+        if want.stdout != got.stdout || want.status != got.status {
+            bad.push(format!(
+                "{}\n  fish : {:?} {:?}\n  zshrs: {:?} {:?}",
+                script.file_name().unwrap().to_string_lossy(),
+                want.status,
+                want.stdout,
+                got.status,
+                got.stdout
+            ));
+        }
+    }
+    for d in [&functions, &home, &cwd] {
+        let _ = std::fs::remove_dir_all(d);
+    }
+    assert!(bad.is_empty(), "fish function divergences:\n{}", bad.join("\n"));
+}
