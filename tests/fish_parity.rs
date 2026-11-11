@@ -143,3 +143,35 @@ fn stdin_input_is_translated() {
     let _ = std::fs::remove_dir_all(&home);
     assert_eq!(String::from_utf8_lossy(&out.stdout), "two\n");
 }
+
+/// Every function and completion script fish itself ships must parse and translate
+/// (the files are read out of the installed fish with `status get-file`). A construct the
+/// translator rejects here is a gap in the grammar, not in the script.
+#[test]
+fn fish_own_scripts_translate() {
+    let Some(reference) = fish() else { return };
+    let listing = Command::new(&reference)
+        .args(["--no-config", "-c", "status list-files"])
+        .output()
+        .expect("spawn fish");
+    let names: Vec<String> = String::from_utf8_lossy(&listing.stdout)
+        .lines()
+        .filter(|l| (l.starts_with("functions/") || l.starts_with("completions/")) && l.ends_with(".fish"))
+        .map(str::to_string)
+        .collect();
+    if names.is_empty() {
+        return; // a fish built without embedded files
+    }
+    let mut bad = Vec::new();
+    for name in &names {
+        let out = Command::new(&reference)
+            .args(["--no-config", "-c", &format!("status get-file {name}")])
+            .output()
+            .expect("spawn fish");
+        let src = String::from_utf8_lossy(&out.stdout);
+        if let Err(e) = zsh::fish::translate(&src) {
+            bad.push(format!("{name}: {e}"));
+        }
+    }
+    assert!(bad.is_empty(), "{} of {} fish scripts do not translate:\n{}", bad.len(), names.len(), bad.join("\n"));
+}

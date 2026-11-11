@@ -122,6 +122,11 @@ pub enum Cmd {
         body: Script,
         redirs: Vec<Redir>,
     },
+    /// `NAME=value … if …`: environment assignments in front of a compound command.
+    WithEnv {
+        assigns: Vec<Word>,
+        inner: Box<Cmd>,
+    },
 }
 
 /// How a job is joined to the one before it.
@@ -141,6 +146,8 @@ pub enum Pipe {
     Out,
     /// `&|`
     Both,
+    /// `2>|`: standard error only.
+    Err,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -172,7 +179,10 @@ pub fn parse(src: &str) -> PResult<Script> {
         s: src.chars().collect(),
         i: 0,
     };
-    let script = p.script(&[])?;
+    let script = p.script(&[]).map_err(|e| {
+        let line = p.s[..p.i.min(p.s.len())].iter().filter(|&&c| c == '\n').count() + 1;
+        format!("{e} (line {line})")
+    })?;
     match p.peek_kw() {
         Some(kw) => Err(format!("fish: '{kw}' outside of a block")),
         None if p.i < p.s.len() => Err("fish: Expected a command, but found ')'".to_string()),
@@ -363,15 +373,16 @@ impl Parser {
         loop {
             let cmd = self.command()?;
             self.skip_blank();
-            let pipe = if self.starts_with("&|") {
-                self.i += 2;
-                Some(Pipe::Both)
-            } else if self.peek() == Some('|') && self.at(1) != Some('|') {
-                self.i += 1;
-                Some(Pipe::Out)
-            } else {
-                None
-            };
+            let mut pipe = self.pipe_operator();
+            if pipe.is_none() {
+                // a pipe may start the next line, with comment lines between
+                let save = self.i;
+                self.skip_blank_nl();
+                pipe = self.pipe_operator();
+                if pipe.is_none() {
+                    self.i = save;
+                }
+            }
             match pipe {
                 Some(p) => {
                     cmds.push((cmd, p));
@@ -391,8 +402,27 @@ impl Parser {
         Ok(Job { negate, cmds, bg })
     }
 
+    /// `|`, `&|` (both streams) or `2>|` (stderr only), consumed.
+    fn pipe_operator(&mut self) -> Option<Pipe> {
+        if self.starts_with("&|") {
+            self.i += 2;
+            Some(Pipe::Both)
+        } else if self.starts_with("2>|") {
+            self.i += 3;
+            Some(Pipe::Err)
+        } else if self.peek() == Some('|') && self.at(1) != Some('|') {
+            self.i += 1;
+            Some(Pipe::Out)
+        } else {
+            None
+        }
+    }
+
     fn command(&mut self) -> PResult<Cmd> {
         self.skip_blank();
+        if let Some(c) = self.env_prefixed_compound()? {
+            return Ok(c);
+        }
         let kw = self.peek_kw();
         match kw.as_deref() {
             Some("if") => self.cmd_if(),
@@ -428,6 +458,33 @@ impl Parser {
             Some(other) => Err(format!("fish: '{other}' outside of a block")),
             None => self.simple(),
         }
+    }
+
+    /// `NAME=value … if|while|for|switch|begin|function …`.
+    fn env_prefixed_compound(&mut self) -> PResult<Option<Cmd>> {
+        let save = self.i;
+        let mut assigns = Vec::new();
+        loop {
+            self.skip_blank();
+            let before = self.i;
+            let is_assign = self.s[before..]
+                .iter()
+                .take_while(|c| c.is_ascii_alphanumeric() || **c == '_')
+                .count();
+            if is_assign == 0 || self.s.get(before + is_assign) != Some(&'=') {
+                break;
+            }
+            match self.word()? {
+                Some(w) => assigns.push(w),
+                None => break,
+            }
+        }
+        if !assigns.is_empty() && self.peek_kw().is_some() {
+            let inner = Box::new(self.command()?);
+            return Ok(Some(Cmd::WithEnv { assigns, inner }));
+        }
+        self.i = save;
+        Ok(None)
     }
 
     fn expect_end(&mut self) -> PResult<()> {
@@ -553,6 +610,7 @@ impl Parser {
             self.skip_blank();
             match self.peek() {
                 None | Some('\n' | ';' | ')') => break,
+                Some('2') if self.starts_with("2>|") => break,
                 Some('#') if words.is_empty() || self.at_word_start() => {
                     self.skip_comment();
                     break;
@@ -936,35 +994,66 @@ impl Parser {
         Ok(None)
     }
 
+    /// Skip to just past the `)` that closes the substitution whose `(` was consumed:
+    /// quotes, nested substitutions (also inside double quotes) and comments are skipped
+    /// whole.
+    fn scan_close(&mut self) -> bool {
+        while let Some(c) = self.peek() {
+            match c {
+                '\\' => self.i += 2,
+                '\'' => {
+                    self.i += 1;
+                    while let Some(q) = self.peek() {
+                        self.i += if q == '\\' { 2 } else { 1 };
+                        if q == '\'' {
+                            break;
+                        }
+                    }
+                }
+                '"' => {
+                    self.i += 1;
+                    while let Some(q) = self.peek() {
+                        if q == '\\' {
+                            self.i += 2;
+                        } else if q == '"' {
+                            self.i += 1;
+                            break;
+                        } else if q == '$' && self.at(1) == Some('(') {
+                            self.i += 2;
+                            if !self.scan_close() {
+                                return false;
+                            }
+                        } else {
+                            self.i += 1;
+                        }
+                    }
+                }
+                '(' => {
+                    self.i += 1;
+                    if !self.scan_close() {
+                        return false;
+                    }
+                }
+                ')' => {
+                    self.i += 1;
+                    return true;
+                }
+                '#' if self.i == 0 || matches!(self.s[self.i - 1], ' ' | '\t' | '\n' | '(') => {
+                    self.skip_comment();
+                }
+                _ => self.i += 1,
+            }
+        }
+        false
+    }
+
     /// After `(`: the substitution up to its matching `)`.
     fn cmd_subst(&mut self) -> PResult<Part> {
         let start = self.i;
-        let mut depth = 1usize;
-        let mut quote: Option<char> = None;
-        while let Some(c) = self.peek() {
-            match (quote, c) {
-                (_, '\\') => self.i += 1,
-                (None, '\'' | '"') => quote = Some(c),
-                (Some(q), _) if c == q => quote = None,
-                (Some('"'), '$') if self.at(1) == Some('(') => {
-                    depth += 1;
-                    self.i += 1;
-                }
-                (None, '(') => depth += 1,
-                (None, ')') => {
-                    depth -= 1;
-                    if depth == 0 {
-                        break;
-                    }
-                }
-                (Some('"'), '(') => {}
-                _ => {}
-            }
-            self.i += 1;
-        }
-        if self.peek() != Some(')') {
+        if !self.scan_close() {
             return Err("fish: Unexpected end of string, parentheses do not match".to_string());
         }
+        self.i -= 1; // back onto the `)`
         let inner: String = self.s[start..self.i].iter().collect();
         self.i += 1;
         let script = parse(&inner)?;

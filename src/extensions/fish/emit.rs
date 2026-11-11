@@ -46,6 +46,9 @@ pub struct Emitter {
     /// Lexical scopes, innermost last; see [`Frame`].
     scopes: Vec<Frame>,
     local_id: usize,
+    /// Set while emitting the words of `set` and `count`, where a wildcard with no
+    /// match is an empty list rather than an error.
+    null_glob: bool,
 }
 
 /// One lexical scope. fish scopes `set -l` to the enclosing block (`if`, `while`,
@@ -218,6 +221,7 @@ impl Emitter {
                 out.push_str(match pipe {
                     Pipe::Out => " | ",
                     Pipe::Both => " |& ",
+                    Pipe::Err => " 2>&1 >/dev/null | ",
                 });
             }
         }
@@ -307,6 +311,16 @@ impl Emitter {
                 out
             }
             Cmd::Function { header, body } => self.function(header, body),
+            Cmd::WithEnv { assigns, inner } => {
+                // the assignments live for the duration of the compound command
+                let vars: Vec<String> = assigns.iter().filter_map(|w| self.assignment(w)).collect();
+                self.fn_depth += 1;
+                self.scopes.push(Frame::default());
+                let text = self.cmd(inner);
+                self.scopes.pop();
+                self.fn_depth -= 1;
+                format!("() {{\nlocal -x {}\n{text}\n}} \"$@\"", vars.join(" "))
+            }
             Cmd::Begin { body, redirs } => {
                 format!("{{\n{}\n}}{}", self.body(body), self.redirs(redirs))
             }
@@ -404,6 +418,8 @@ impl Emitter {
         }
         let rest = &words[k..];
         let name = rest.first().and_then(|w| w.bare()).map(str::to_string);
+        let lenient_glob = matches!(name.as_deref(), Some("set" | "count"));
+        self.null_glob = lenient_glob;
         let mut out = match name.as_deref() {
             Some("set") => self.set_cmd(&rest[1..]),
             Some("read") => self.read_cmd(&rest[1..]),
@@ -441,13 +457,14 @@ impl Emitter {
                 all.join(" ")
             }
         };
+        self.null_glob = false;
         if !prefix.is_empty() {
             out = format!("{} {out}", prefix.join(" "));
         }
         out.push_str(&self.redirs(redirs));
         // A wildcard with no match is an error in both shells, but zsh ends the whole
         // script on it and fish only skips the command. `eval` confines the abort.
-        if has_glob(&rest[1.min(rest.len())..]) {
+        if !lenient_glob && has_glob(&rest[1.min(rest.len())..]) {
             out = isolate_glob(&out);
         }
         out
@@ -507,6 +524,15 @@ impl Emitter {
 
     /// The word as zsh text that expands to zero or more words.
     pub(super) fn word_list(&mut self, w: &Word) -> String {
+        let text = self.word_list_inner(w);
+        if self.null_glob && has_glob(std::slice::from_ref(w)) && !text.starts_with('"') {
+            format!("{text}(N)")
+        } else {
+            text
+        }
+    }
+
+    fn word_list_inner(&mut self, w: &Word) -> String {
         match w.parts.as_slice() {
             [] => "''".into(),
             [Part::Var(v)] => self.var_list(v),
@@ -539,6 +565,9 @@ impl Emitter {
             } else {
                 word.push_str(&self.part(p, false));
             }
+        }
+        if self.null_glob && parts.iter().any(|p| matches!(p, Part::Raw(r) if r.starts_with('*'))) {
+            word.push_str("(N)");
         }
         let v = format!("__fc{id}");
         let mut text = format!("{v}=(); ");
