@@ -49,6 +49,11 @@ pub struct Emitter {
     /// Set while emitting the words of `set` and `count`, where a wildcard with no
     /// match is an empty list rather than an error.
     null_glob: bool,
+    /// True while emitting a statement that only runs if the one before it succeeded or
+    /// failed (`a; or set -l x …`).
+    pub(super) guarded: bool,
+    /// Lines a guarded declaration needs ahead of the whole `and`/`or` chain.
+    pub(super) pre_chain: Vec<String>,
 }
 
 /// One lexical scope. fish scopes `set -l` to the enclosing block (`if`, `while`,
@@ -186,17 +191,27 @@ impl Emitter {
 
     pub fn script(&mut self, script: &Script) -> String {
         let mut out = String::new();
+        let mut chain_start = 0;
         for (n, st) in script.iter().enumerate() {
+            self.guarded = st.conn != Conn::Seq;
             let job = self.job(&st.job);
+            self.guarded = false;
             match (n, st.conn) {
                 (0, Conn::And) => out.push_str("(( ! $? )) && "),
                 (0, Conn::Or) => out.push_str("(( $? )) && "),
                 (0, _) => {}
-                (_, Conn::Seq) => out.push('\n'),
+                (_, Conn::Seq) => {
+                    out.push('\n');
+                    chain_start = out.len();
+                }
                 (_, Conn::And) => out.push_str(" && "),
                 (_, Conn::Or) => out.push_str(" || "),
             }
             out.push_str(&job);
+            if !self.pre_chain.is_empty() {
+                let pre = std::mem::take(&mut self.pre_chain).join("\n") + "\n";
+                out.insert_str(chain_start, &pre);
+            }
         }
         out
     }
@@ -821,6 +836,9 @@ fn special_scalar(name: &str) -> Option<&'static str> {
 /// descending range of plain numbers is returned with `true` so the caller reverses it.
 fn range_of(t: &str) -> (String, bool) {
     match t.split_once("..") {
+        // `$x[2..]` runs to the last element, `$x[..3]` starts at the first
+        Some((a, "")) => (format!("{a},-1"), false),
+        Some(("", b)) => (format!("1,{b}"), false),
         Some((a, b)) => match (a.parse::<i64>(), b.parse::<i64>()) {
             (Ok(x), Ok(y)) if x > y && (x < 0) == (y < 0) => (format!("{y},{x}"), true),
             _ => (format!("{a},{b}"), false),
@@ -833,6 +851,9 @@ fn range_of(t: &str) -> (String, bool) {
 /// number, or numbers of opposite sign (`-1..1`).
 fn dyn_range(t: &str) -> Option<(&str, &str)> {
     let (a, b) = t.split_once("..")?;
+    if a.is_empty() || b.is_empty() {
+        return None;
+    }
     match (a.parse::<i64>(), b.parse::<i64>()) {
         (Ok(x), Ok(y)) if (x < 0) == (y < 0) => None,
         _ => Some((a, b)),

@@ -213,8 +213,15 @@ impl Emitter {
         // A fish local is invisible to the functions it calls, which zsh's dynamically
         // scoped `local` is not, so it lives under a name no other code refers to.
         if f.local {
+            let outer = self.zn(&name);
             z = self.declare_local(&name);
             let decl = if self.fn_depth > 0 { "local -a" } else { "typeset -ga" };
+            // `set -q x; or set -l x 1`: when the declaration is skipped the later reads of
+            // `$x` must still find the variable that is visible, so the local starts as a
+            // copy of it
+            if self.guarded && z != outer {
+                self.pre_chain.push(format!("(( ${{+{outer}}} )) && {decl} {z}=(${{{outer}+\"${{{outer}[@]}}\"}})"));
+            }
             return format!("{decl} {z}=({list})");
         }
         if f.global && self.fn_depth > 0 {
