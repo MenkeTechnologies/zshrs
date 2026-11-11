@@ -14416,6 +14416,22 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // var_isset (v) && nameref_p (v)` — the reference itself, not the
     // variable it names, so `declare -n r=nope` is still true and a
     // `declare -n r` with no value is false.
+    // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!! One segment of a program
+    // too large for a single chunk's constant pool, run in place: the same
+    // shell, the caller's `$?` going in, its own last status coming out.
+    // `return` / `exit` / errflag inside it stay set for the caller's
+    // between-segment test, which stops the program as C's list loop would.
+    vm.register_builtin(BUILTIN_RUN_SEGMENT, |vm, _argc| {
+        let idx = vm.pop().to_int();
+        let Some(chunk) = usize::try_from(idx).ok().and_then(|i| vm.chunk.sub_chunks.get(i).cloned()) else {
+            return Value::Status(1);
+        };
+        crate::fusevm_disasm::maybe_print_stdout("segment", &chunk);
+        let mut seg = crate::vm_pool::acquire(chunk);
+        seg.last_status = vm.last_status;
+        let _ = seg.run();
+        Value::Status(seg.last_status)
+    });
     vm.register_builtin(BUILTIN_COND_NAMEREF, |vm, _argc| {
         let name = vm.pop().to_str();
         let is_set_ref = crate::ported::params::paramtab()
@@ -20100,6 +20116,10 @@ pub const BUILTIN_COND_SOFT2_CLEAR: u16 = 831;
 /// bash `[[ -R name ]]` (compiled under --bash only). Pops \[name\] → Bool:
 /// `name` is a name reference that has a value.
 pub const BUILTIN_COND_NAMEREF: u16 = 832;
+/// Run one segment of a program compiled in segments
+/// (`compile_zsh::ZshCompiler::compile_segmented`). Pops \[sub_chunk index\]
+/// → Status (the segment's last status).
+pub const BUILTIN_RUN_SEGMENT: u16 = 833;
 /// `[[ ]]` unknown condition. Pops \[op_name\], emits `zerr("unknown
 /// condition: %s")` and sets ERRFLAG_ERROR so the next BUILTIN_ERREXIT_CHECK
 /// (trigger 4) aborts the input — matching zsh's COND_MODI "unknown condition"

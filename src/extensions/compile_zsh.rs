@@ -425,6 +425,12 @@ pub struct ZshCompiler {
     pub argv_word_text_globs: bool,
 }
 
+/// Top-level lists per segment once a program is split (see
+/// [`ZshCompiler::compile_segmented`]): far below the u16 constant pool for
+/// any realistic list, and above what hand-written scripts reach, which keep
+/// compiling as one chunk.
+const SEGMENT_LISTS: usize = 512;
+
 impl Default for ZshCompiler {
     fn default() -> Self {
         Self::new()
@@ -963,7 +969,11 @@ impl ZshCompiler {
     /// Compile a parsed `ZshProgram` to a runnable Chunk.
     pub fn compile(mut self, program: &ZshProgram) -> fusevm::Chunk {
         self.compile_program(program);
+        self.finish()
+    }
 
+    /// Close the chunk: land the return/exit jumps and build it.
+    fn finish(mut self) -> fusevm::Chunk {
         // Patch return/exit jumps to past chunk end.
         let end_pos = self.builder.current_pos();
         for patch in std::mem::take(&mut self.return_patches) {
@@ -1012,13 +1022,68 @@ impl ZshCompiler {
         //   zsh: A T      zshrs: A T B
         // The fatal-abort form is the right one: C's gate keys off the FLAGS,
         // not off a non-zero status, which is what the full errexit check adds.
+        if program.lists.len() > SEGMENT_LISTS {
+            self.compile_segmented(&program.lists);
+            return;
+        }
+        self.compile_lists(&program.lists);
+    }
+
+    /// The top-level lists, each behind the c:Src/exec.c:1390 flag test.
+    fn compile_lists(&mut self, lists: &[ZshList]) {
         let mut first = true;
-        for list in &program.lists {
+        for list in lists {
             if !first {
                 self.emit_fatal_abort_check();
             }
             first = false;
             self.compile_list(list);
+        }
+    }
+
+    /// !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+    /// A program with very many top-level lists is compiled as segments of
+    /// [`SEGMENT_LISTS`] lists, each its own sub-chunk run in place by
+    /// `BUILTIN_RUN_SEGMENT`. A fusevm chunk addresses its constant pool with
+    /// a u16, so one chunk holds at most 65536 constants; a generated script
+    /// such as `uv --generate-shell-completion fish` (thousands of
+    /// `complete …` lines) needs more, and compiling it whole panicked. C has
+    /// no such limit — its list loop runs one list at a time
+    /// (c:Src/exec.c:1390) — and the segments keep that loop's shape: between
+    /// two segments the same errflag test as between two lists, plus the
+    /// retflag test the list loop also makes, since a `return` / `exit` in a
+    /// segment only ends that segment's chunk. The segments ride in this
+    /// chunk's `sub_chunks`, so the bytecode cache stores them unchanged.
+    fn compile_segmented(&mut self, lists: &[ZshList]) {
+        for (k, group) in lists.chunks(SEGMENT_LISTS).enumerate() {
+            if k > 0 {
+                self.emit_fatal_abort_check();
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_RETFLAG_CHECK, 0),
+                    0,
+                );
+                let go_on = self.builder.emit(Op::JumpIfFalse(0), 0);
+                let j = self.builder.emit(Op::Jump(0), 0);
+                self.return_patches.push(j);
+                self.builder.patch_jump(go_on, self.builder.current_pos());
+            }
+            let mut seg = self.sub_compiler();
+            // what this compile already knows carries into the segment: the
+            // functions defined so far (call routing), the `-c` exiting tail
+            seg.defined_functions = self.defined_functions.clone();
+            seg.forked_tail_list = self.forked_tail_list;
+            seg.exiting_tail_mode = self.exiting_tail_mode;
+            seg.current_sublist_line = self.current_sublist_line;
+            seg.compile_lists(group);
+            self.defined_functions.extend(std::mem::take(&mut seg.defined_functions));
+            self.current_sublist_line = seg.current_sublist_line;
+            let idx = self.builder.add_sub_chunk(seg.finish());
+            self.builder.emit(Op::LoadInt(idx as i64), 0);
+            self.builder.emit(
+                Op::CallBuiltin(crate::fusevm_bridge::BUILTIN_RUN_SEGMENT, 1),
+                0,
+            );
+            self.builder.emit(Op::SetStatus, 0);
         }
     }
 
