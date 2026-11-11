@@ -183,12 +183,12 @@ impl Emitter {
         if f.prepend {
             return format!("{z}=({list} \"${{{z}[@]}}\")");
         }
-        if f.local && self.block_level() > 0 {
+        // A fish local is invisible to the functions it calls, which zsh's dynamically
+        // scoped `local` is not, so it lives under a name no other code refers to.
+        if f.local && (self.block_level() > 0 || self.fn_depth > 0) {
             z = self.declare_block_local(&name);
-            return format!("typeset -ga {z}=({list})");
-        }
-        if f.local && self.fn_depth > 0 {
-            return format!("local -a {z}=({list})");
+            let decl = if self.fn_depth > 0 { "local -a" } else { "typeset -ga" };
+            return format!("{decl} {z}=({list})");
         }
         if f.global && self.fn_depth > 0 {
             return format!("typeset -ga {z}=({list})");
@@ -253,7 +253,7 @@ impl Emitter {
                 }
                 "--" => {}
                 s if s.starts_with('-') && s.len() > 1 => {}
-                _ if local && self.block_level() > 0 => names.push(self.declare_block_local(&t)),
+                _ if local && (self.block_level() > 0 || self.fn_depth > 0) => names.push(self.declare_block_local(&t)),
                 _ => names.push(self.zn(&t)),
             }
         }

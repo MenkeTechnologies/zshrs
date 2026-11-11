@@ -71,7 +71,7 @@ mod tests {
     #[test]
     fn scopes_map_to_typeset() {
         assert_eq!(t("set -g y a"), "y=(a)");
-        assert_eq!(t("function f\nset -l z 1\nset -g w 2\nend"), "function f {\nlocal -a z=(1)\ntypeset -ga w=(2)\n}");
+        assert_eq!(t("function f\nset -l z 1\nset -g w 2\nend"), "function f {\nlocal -a _fl1_z=(1)\ntypeset -ga w=(2)\n}");
         assert_eq!(t("set -gx E vim"), "typeset -gx E=vim");
         assert_eq!(t("set -x GOPATH a b"), "_fish_x=(a b); typeset -gx GOPATH=\"${(j.:.)_fish_x}\"");
     }

@@ -297,6 +297,16 @@ fn string(args: &[String]) -> i32 {
     status
 }
 
+/// fish accepts `--` between a subcommand's own operands (`string split , -- $x`), not
+/// only before them.
+fn without_dashdash(o: &Opts) -> Opts {
+    Opts {
+        flags: o.flags.clone(),
+        vals: o.vals.clone(),
+        rest: o.rest.iter().filter(|a| a.as_str() != "--").cloned().collect(),
+    }
+}
+
 fn str_sub(o: &Opts, out: &mut Out) -> i32 {
     let mut any = false;
     for s in inputs(&o.rest, false) {
@@ -373,6 +383,7 @@ fn str_repeat(o: &Opts, out: &mut Out) -> i32 {
 }
 
 fn str_split(o: &Opts, out: &mut Out, nul: bool) -> i32 {
+    let o = &without_dashdash(o);
     let (sep, items) = if nul {
         ("\0".to_string(), inputs(&o.rest, true))
     } else {
@@ -433,6 +444,7 @@ fn glob_regex(pat: &str, icase: bool, anchored: bool) -> fancy_regex::Regex {
 }
 
 fn str_match(o: &Opts, out: &mut Out) -> i32 {
+    let o = &without_dashdash(o);
     let Some((pat, items)) = o.rest.split_first() else {
         return err("string match", "missing argument");
     };
@@ -528,12 +540,21 @@ fn expand_replacement(rep: &str, caps: &fancy_regex::Captures) -> String {
 }
 
 fn str_replace(o: &Opts, out: &mut Out) -> i32 {
+    let o = &without_dashdash(o);
     let (Some(pat), Some(rep)) = (o.rest.first(), o.rest.get(1)) else {
         return err("string replace", "missing argument");
     };
     let items = if o.rest.len() > 2 { o.rest[2..].to_vec() } else { inputs(&[], false) };
     let icase = o.has('i');
     let regex = o.has('r');
+    if pat.is_empty() && !regex {
+        for s in &items {
+            if !o.has('f') {
+                out.line(s);
+            }
+        }
+        return 1;
+    }
     let re = if regex {
         match compile(pat, icase) {
             Ok(r) => r,

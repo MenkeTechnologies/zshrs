@@ -622,7 +622,7 @@ impl Parser {
         let start = self.i;
         let mut lit = String::new();
         // nesting depth of live brace expansions in this word
-        let mut braces = 0usize;
+        let mut braces: Vec<bool> = Vec::new();
         macro_rules! flush {
             () => {
                 if !lit.is_empty() {
@@ -683,19 +683,28 @@ impl Parser {
                     }
                     parts.push(Part::Raw(t));
                 }
-                '{' if self.brace_expansion_ahead() => {
+                '{' if self.brace_expansion_ahead().is_some() => {
                     flush!();
-                    braces += 1;
+                    // `{a,b}` expands; `{$x}` (no comma) just yields its contents
+                    let real = self.brace_expansion_ahead() == Some(true);
+                    braces.push(real);
                     self.i += 1;
-                    parts.push(Part::Raw("{".to_string()));
+                    if real {
+                        parts.push(Part::Raw("{".to_string()));
+                    }
                 }
-                ',' | '}' if braces > 0 => {
+                ',' | '}' if !braces.is_empty() => {
                     flush!();
+                    let real = *braces.last().unwrap_or(&true);
                     if c == '}' {
-                        braces -= 1;
+                        braces.pop();
                     }
                     self.i += 1;
-                    parts.push(Part::Raw(c.to_string()));
+                    if real {
+                        parts.push(Part::Raw(c.to_string()));
+                    } else if c == ',' {
+                        lit.push(',');
+                    }
                 }
                 _ => {
                     lit.push(c);
@@ -707,10 +716,12 @@ impl Parser {
         Ok((!parts.is_empty() || self.i > start).then_some(Word { parts }))
     }
 
-    /// At `{`: is there a matching `}` in this word with a top-level comma between?
-    fn brace_expansion_ahead(&self) -> bool {
+    /// At `{`: `Some(true)` for a brace expansion (matching `}` with a top-level comma),
+    /// `Some(false)` for braces around a variable (`{$x}`), `None` for literal braces.
+    fn brace_expansion_ahead(&self) -> Option<bool> {
         let mut depth = 0i32;
         let mut comma = false;
+        let mut var = false;
         let mut j = self.i;
         while let Some(&c) = self.s.get(j) {
             match c {
@@ -719,16 +730,23 @@ impl Parser {
                 '}' => {
                     depth -= 1;
                     if depth == 0 {
-                        return comma;
+                        return if comma {
+                            Some(true)
+                        } else if var {
+                            Some(false)
+                        } else {
+                            None
+                        };
                     }
                 }
                 ',' if depth == 1 => comma = true,
-                ' ' | '\t' | '\n' | ';' | '|' | '&' | '<' | '>' => return false,
+                '$' if depth == 1 => var = true,
+                ' ' | '\t' | '\n' | ';' | '|' | '&' | '<' | '>' => return None,
                 _ => {}
             }
             j += 1;
         }
-        false
+        None
     }
 
     /// After a backslash outside quotes: the text it stands for, or `None` for a continuation.

@@ -133,6 +133,12 @@ random() {
     *) local lo=$1 hi=${2-}; [[ -n $hi ]] || { hi=$lo; lo=0 }; print -r -- $(( lo + RANDOM % (hi - lo + 1) )) ;;
   esac
 }
+psub() {
+  local f
+  f=$(mktemp "${TMPDIR:-/tmp}/.psub.XXXXXX") || return 1
+  cat > $f
+  print -r -- $f
+}
 isatty() { local fd=${1-1}; case $fd in stdin) fd=0;; stdout) fd=1;; stderr) fd=2;; esac; [[ -t $fd ]] }
 dirprev=()
 dirnext=()
@@ -206,9 +212,83 @@ history() {
   esac
   return 0
 }
-bind() { return 0 }
+typeset -gA __fish_widgets=(
+  forward-char forward-char backward-char backward-char forward-word forward-word
+  backward-word backward-word beginning-of-line beginning-of-line end-of-line end-of-line
+  kill-line kill-line backward-kill-line backward-kill-line kill-word kill-word
+  backward-kill-word backward-kill-word delete-char delete-char
+  backward-delete-char backward-delete-char accept-autosuggestion forward-char
+  history-search-backward history-search-backward history-search-forward history-search-forward
+  up-or-search up-line-or-search down-or-search down-line-or-search complete expand-or-complete
+  execute accept-line clear-screen clear-screen yank yank kill-whole-line kill-whole-line
+  transpose-chars transpose-chars upcase-word up-case-word downcase-word down-case-word
+  undo undo redo redo repaint redisplay cancel send-break beginning-of-history beginning-of-history
+  end-of-history end-of-history
+)
+__fish_keyname() {
+  case $1 in
+    ctrl-?) print -rn -- "^${(U)1[6]}" ;;
+    alt-?) print -rn -- $'\e'"${1[5]}" ;;
+    up) print -rn -- $'\e[A' ;; down) print -rn -- $'\e[B' ;;
+    right) print -rn -- $'\e[C' ;; left) print -rn -- $'\e[D' ;;
+    home) print -rn -- $'\e[H' ;; end) print -rn -- $'\e[F' ;;
+    delete) print -rn -- $'\e[3~' ;; ppage) print -rn -- $'\e[5~' ;; npage) print -rn -- $'\e[6~' ;;
+    backspace) print -rn -- $'\x7f' ;; tab) print -rn -- $'\t' ;;
+    enter) print -rn -- $'\r' ;; escape) print -rn -- $'\e' ;;
+    *) print -rn -- $1 ;;
+  esac
+}
+integer __fish_nbinds=0
+__fish_bind() {
+  local erase= key= cmd w body
+  local -a pos
+  while (( $# )); do
+    case $1 in
+      -M|--mode|-m|--sets-mode) shift 2 ;;
+      -e|--erase) erase=1; shift ;;
+      -k|--key) pos+=("$(__fish_keyname $2)"); shift 2 ;;
+      --) shift; break ;;
+      -*) shift ;;
+      *) break ;;
+    esac
+  done
+  if (( ${#pos} )); then key=$pos[1]; else key=$(__fish_keyname "${1-}"); (( $# )) && shift; fi
+  [[ -n $key ]] || return 0
+  if [[ -n $erase ]]; then bindkey -r -- "$key" 2>/dev/null; return 0; fi
+  cmd="$*"
+  [[ -n $cmd ]] || return 0
+  if [[ -n ${__fish_widgets[$cmd]} ]]; then
+    bindkey -- "$key" ${__fish_widgets[$cmd]}
+  else
+    (( __fish_nbinds++ ))
+    w=__fish_bind_$__fish_nbinds
+    body=$(print -r -- "$cmd" | '@ZSHRS@' --fish-translate -) || return 1
+    builtin eval "$w() { $body
+zle reset-prompt }"
+    zle -N $w
+    bindkey -- "$key" $w
+  fi
+  return 0
+}
 complete() { return 0 }
-commandline() { return 0 }
+__fish_commandline() {
+  local a t
+  while (( $# )); do
+    a=$1; shift
+    case $a in
+      -f|--function) t=${__fish_widgets[$1]:-$1}; shift; zle $t 2>/dev/null ;;
+      -r|--replace) BUFFER=${1-}; CURSOR=${#BUFFER}; shift $(( $# > 0 )) ;;
+      -i|--insert) LBUFFER+=${1-}; shift $(( $# > 0 )) ;;
+      -a|--append) RBUFFER+=${1-}; shift $(( $# > 0 )) ;;
+      -C|--cursor) if (( $# )); then CURSOR=$1; shift; else print -r -- $CURSOR; fi ;;
+      -b|--current-buffer) print -r -- $BUFFER ;;
+      -t|--current-token) t=(${(z)LBUFFER}); print -r -- ${t[-1]-} ;;
+      -c|--cut-at-cursor|-p|--current-process|-j|--current-job|-P|--paging-mode|-S|--search-mode|-L|--is-valid|--tokenize|--input|-o) ;;
+      *) ;;
+    esac
+  done
+  return 0
+}
 typeset -gA __fish_events
 __fish_on_event() {
   case $1 in

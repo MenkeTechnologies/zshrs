@@ -341,20 +341,17 @@ impl Emitter {
         }
         let name = name.unwrap_or_default();
         self.fn_depth += 1;
-        let mut inner = String::new();
-        for (k, a) in argnames.iter().enumerate() {
-            inner.push_str(&format!(
-                "local -a {}=(\"${{(@)argv[{},{}]}}\")\n",
-                zname(a),
-                k + 1,
-                k + 1
-            ));
-        }
-        // the body is the function's own scope: `set -l` there is a zsh `local`
+        // the body is the function's own scope: its locals are `local`, under names no
+        // function it calls can see
         self.scopes.push(Frame {
             barrier: true,
             ..Frame::default()
         });
+        let mut inner = String::new();
+        for (k, a) in argnames.iter().enumerate() {
+            let m = self.declare_block_local(a);
+            inner.push_str(&format!("local -a {m}=(\"${{(@)argv[{},{}]}}\")\n", k + 1, k + 1));
+        }
         let text = self.script(body);
         self.scopes.pop();
         inner.push_str(if text.trim().is_empty() { ":" } else { &text });
@@ -386,6 +383,8 @@ impl Emitter {
             Some("read") => self.read_cmd(&rest[1..]),
             Some("alias") => self.alias_cmd(&rest[1..]),
             Some("abbr") => self.abbr_cmd(&rest[1..]),
+            // fish's bare `test` is a usage error (status 2); zsh's is false (1)
+            Some("test") if rest.len() == 1 => "__fish_ret 2".to_string(),
             // argparse sets the caller's `argv`, which a function cannot do: the parse
             // leaves the operands in `__fish_argv` and the caller's own `set --` takes them
             Some("argparse") => {
@@ -408,6 +407,10 @@ impl Emitter {
                     .is_some_and(|t| t.len() > 1 && t.starts_with('-'));
                 if name.as_deref() == Some("echo") && flagged {
                     all[0] = "__fish_echo".into();
+                }
+                // zshrs resolves these two before a function of the same name
+                if let Some(n @ ("bind" | "commandline")) = name.as_deref() {
+                    all[0] = format!("__fish_{n}");
                 }
                 all.join(" ")
             }
