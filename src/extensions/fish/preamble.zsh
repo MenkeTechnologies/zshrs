@@ -178,14 +178,15 @@ nextd() {
   done
 }
 dirh() {
-  local i d
+  local i
   for (( i = 1; i <= ${#dirprev}; i++ )); do
     print -r -- "$(printf '%2d' $(( ${#dirprev} - i + 1 )))) ${dirprev[i]}"
   done
-  print -r -- "${PWD}"
+  print -r -- "${PWD}"$'\e[m'
   for (( i = ${#dirnext}; i >= 1; i-- )); do
     print -r -- "$(printf '%2d' $(( ${#dirnext} - i + 1 )))) ${dirnext[i]}"
   done
+  print
 }
 history() {
   local sub=${1-} term limit= mode=contains a
@@ -207,7 +208,9 @@ history() {
       esac
       [[ -n $limit ]] && hits=(${hits[1,limit]})
       (( ${#hits} )) && print -rl -- $hits ;;
-    clear|merge|save|delete) return 0 ;;
+    save) builtin fc -W 2>/dev/null; return 0 ;;
+    merge) builtin fc -R 2>/dev/null; return 0 ;;
+    clear|delete) return 0 ;;
     '') (( ${#history} )) && print -rl -- ${(Oa)history} ;;
   esac
   return 0
@@ -270,9 +273,8 @@ zle reset-prompt }"
   fi
   return 0
 }
-complete() { return 0 }
 __fish_commandline() {
-  local a t
+  local a t ch tok= cut= cur= buf=
   while (( $# )); do
     a=$1; shift
     case $a in
@@ -280,13 +282,24 @@ __fish_commandline() {
       -r|--replace) BUFFER=${1-}; CURSOR=${#BUFFER}; shift $(( $# > 0 )) ;;
       -i|--insert) LBUFFER+=${1-}; shift $(( $# > 0 )) ;;
       -a|--append) RBUFFER+=${1-}; shift $(( $# > 0 )) ;;
-      -C|--cursor) if (( $# )); then CURSOR=$1; shift; else print -r -- $CURSOR; fi ;;
-      -b|--current-buffer) print -r -- $BUFFER ;;
-      -t|--current-token) t=(${(z)LBUFFER}); print -r -- ${t[-1]-} ;;
-      -c|--cut-at-cursor|-p|--current-process|-j|--current-job|-P|--paging-mode|-S|--search-mode|-L|--is-valid|--tokenize|--input|-o) ;;
-      *) ;;
+      -C|--cursor) if (( $# )); then CURSOR=$1; shift; else print -r -- $CURSOR; return 0; fi ;;
+      -b|--current-buffer) buf=1 ;;
+      -t|--current-token) cur=1 ;;
+      -o|--tokenize) tok=1 ;;
+      -c|--cut-at-cursor) cut=1 ;;
+      -[a-z][a-z]*)
+        for ch in ${(s::)a#-}; do
+          case $ch in o) tok=1 ;; c) cut=1 ;; t) cur=1 ;; b) buf=1 ;; esac
+        done ;;
     esac
   done
+  if [[ -n $tok ]]; then
+    if (( ${+__fish_toks} )); then print -rl -- "${(@)__fish_toks}"; else print -rl -- ${(z)LBUFFER}; fi
+  elif [[ -n $cur ]]; then
+    if (( ${+__fish_cur} )); then print -r -- $__fish_cur; else t=(${(z)LBUFFER}); print -r -- ${t[-1]-}; fi
+  elif [[ -n $buf ]]; then
+    print -r -- $BUFFER
+  fi
   return 0
 }
 typeset -gA __fish_events
@@ -438,6 +451,18 @@ __fish_uvar_erase() {
   print -rl -- "${(@)keep:#}" > $f
 }
 [[ -r $__fish_uvar_file ]] && builtin source $__fish_uvar_file
+if [[ -o interactive ]]; then
+  __fish_uvar_marker=${TMPDIR:-/tmp}/.fish_uvar.$$
+  : > $__fish_uvar_marker
+  __fish_uvar_sync() {
+    [[ $__fish_uvar_file -nt $__fish_uvar_marker ]] || return 0
+    builtin source $__fish_uvar_file
+    : > $__fish_uvar_marker
+  }
+  __fish_uvar_cleanup() { command rm -f $__fish_uvar_marker }
+  precmd_functions+=(__fish_uvar_sync)
+  zshexit_functions+=(__fish_uvar_cleanup)
+fi
 FISH_VERSION=4.9.3
 version=(4.9.3)
 fish_prompt() { print -rn -- "${USER}@${HOST%%.*} ${PWD/#$HOME/~}> " }

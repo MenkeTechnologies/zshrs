@@ -185,8 +185,8 @@ impl Emitter {
         }
         // A fish local is invisible to the functions it calls, which zsh's dynamically
         // scoped `local` is not, so it lives under a name no other code refers to.
-        if f.local && (self.block_level() > 0 || self.fn_depth > 0) {
-            z = self.declare_block_local(&name);
+        if f.local {
+            z = self.declare_local(&name);
             let decl = if self.fn_depth > 0 { "local -a" } else { "typeset -ga" };
             return format!("{decl} {z}=({list})");
         }
@@ -253,7 +253,7 @@ impl Emitter {
                 }
                 "--" => {}
                 s if s.starts_with('-') && s.len() > 1 => {}
-                _ if local && (self.block_level() > 0 || self.fn_depth > 0) => names.push(self.declare_block_local(&t)),
+                _ if local => names.push(self.declare_local(&t)),
                 _ => names.push(self.zn(&t)),
             }
         }

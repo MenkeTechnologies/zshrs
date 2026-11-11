@@ -59,6 +59,15 @@ struct Frame {
     barrier: bool,
 }
 
+thread_local! {
+    /// Names declared `set -l` outside any block or function. Kept across translations
+    /// in this process, so `set -l x 1` typed at the prompt is still local to the session
+    /// on the next line; a sourced file or `eval` is translated in its own process and
+    /// has its own.
+    static TOP_LOCALS: std::cell::RefCell<std::collections::HashSet<String>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+}
+
 /// The zsh parameter that holds a fish variable.
 pub fn zname(name: &str) -> String {
     match name {
@@ -126,10 +135,24 @@ impl Emitter {
                 return m.clone();
             }
             if f.barrier {
-                break;
+                // a function does not see the locals of the script that defines it
+                return zname(name);
             }
         }
+        if TOP_LOCALS.with(|t| t.borrow().contains(name)) {
+            return format!("_fl_top_{name}");
+        }
         zname(name)
+    }
+
+    /// Declare `name` local to the innermost scope, whatever that is, and return the zsh
+    /// name it lives under.
+    pub(super) fn declare_local(&mut self, name: &str) -> String {
+        if self.block_level() > 0 || self.fn_depth > 0 {
+            return self.declare_block_local(name);
+        }
+        TOP_LOCALS.with(|t| t.borrow_mut().insert(name.to_string()));
+        format!("_fl_top_{name}")
     }
 
     /// Blocks open since the enclosing function (or the script) began.
@@ -313,6 +336,7 @@ impl Emitter {
         let mut argnames: Vec<String> = Vec::new();
         let mut events: Vec<String> = Vec::new();
         let mut signals: Vec<String> = Vec::new();
+        let mut no_shadow = false;
         let mut i = 0;
         while i < header.len() {
             let t = header[i].text().unwrap_or_default();
@@ -334,6 +358,7 @@ impl Emitter {
                 }
                 "-d" | "--description" | "-w" | "--wraps" | "-v" | "--on-variable" | "-j"
                 | "--on-job-exit" | "-p" | "--on-process-exit" | "-V" | "--inherit-variable" => i += 1,
+                "-S" | "--no-scope-shadowing" => no_shadow = true,
                 s if s.starts_with('-') => {}
                 _ if name.is_none() => name = Some(t),
                 _ => {}
@@ -343,8 +368,9 @@ impl Emitter {
         self.fn_depth += 1;
         // the body is the function's own scope: its locals are `local`, under names no
         // function it calls can see
+        // (`--no-scope-shadowing` keeps the locals of where it is defined in view)
         self.scopes.push(Frame {
-            barrier: true,
+            barrier: !no_shadow,
             ..Frame::default()
         });
         let mut inner = String::new();
@@ -408,8 +434,8 @@ impl Emitter {
                 if name.as_deref() == Some("echo") && flagged {
                     all[0] = "__fish_echo".into();
                 }
-                // zshrs resolves these two before a function of the same name
-                if let Some(n @ ("bind" | "commandline")) = name.as_deref() {
+                // zshrs resolves these names before a function of the same name
+                if let Some(n @ ("bind" | "commandline" | "complete")) = name.as_deref() {
                     all[0] = format!("__fish_{n}");
                 }
                 all.join(" ")
@@ -616,10 +642,32 @@ impl Emitter {
                         self.hoists.push(format!("{v}=\"$( {text} )\""));
                         format!("${v}")
                     }
-                    None => t.clone(),
+                    None => self.map_index_vars(t),
                 }
             })
             .collect()
+    }
+
+    /// `$name` inside an index token, renamed to the zsh parameter that holds it.
+    fn map_index_vars(&self, tok: &str) -> String {
+        let mut out = String::new();
+        let mut chars = tok.chars().peekable();
+        while let Some(c) = chars.next() {
+            out.push(c);
+            if c == '$' {
+                let mut name = String::new();
+                while let Some(&n) = chars.peek() {
+                    if n.is_alphanumeric() || n == '_' {
+                        name.push(n);
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+                out.push_str(&if name.is_empty() { name } else { self.zn(&name) });
+            }
+        }
+        out
     }
 
     /// `$x` as a word list.

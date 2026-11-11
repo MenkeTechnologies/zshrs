@@ -115,9 +115,9 @@ mod tests {
     fn set_l_in_a_block_is_scoped_to_the_block() {
         let out = t("set -l a 1\nif true\nset -l a 2\necho $a\nend\necho $a");
         // top level stays plain; the block's `a` lives under its own name
-        assert!(out.starts_with("a=(1)\nif true\nthen\ntypeset -ga _fl1_a=(2)\necho "), "{out}");
+        assert!(out.starts_with("typeset -ga _fl_top_a=(1)\nif true\nthen\ntypeset -ga _fl1_a=(2)\necho "), "{out}");
         assert!(out.contains("${_fl1_a+\"${_fl1_a[@]}\"}"), "{out}");
-        assert!(out.ends_with("fi\necho ${a+\"${a[@]}\"}"), "{out}");
+        assert!(out.ends_with("fi\necho ${_fl_top_a+\"${_fl_top_a[@]}\"}"), "{out}");
     }
 
     #[test]
