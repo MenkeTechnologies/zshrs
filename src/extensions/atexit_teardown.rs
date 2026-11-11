@@ -87,10 +87,27 @@ pub fn exiting() -> bool {
     EXITING.load(Ordering::SeqCst)
 }
 
+/// Set in the forked child of [`crate::embed::run_program`]. Never cleared.
+static EMBEDDED_CHILD: AtomicBool = AtomicBool::new(false);
+
+/// Mark this process as a `run_program` child: [`exit`] then leaves through
+/// `_exit(2)`, because the libc `atexit` handlers and stdio buffers it would
+/// otherwise run belong to the embedding host that was forked.
+pub fn mark_embedded_child() {
+    EMBEDDED_CHILD.store(true, Ordering::SeqCst);
+}
+
 /// `exit(3)` for the shell: mark it exiting ([`exiting`]), then exit.
 /// Every exit of a shell process goes through here instead of calling
 /// `std::process::exit` directly.
 pub fn exit(code: i32) -> ! {
     EXITING.store(true, Ordering::SeqCst);
+    if EMBEDDED_CHILD.load(Ordering::SeqCst) {
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+        let _ = std::io::stderr().flush();
+        // SAFETY: `_exit` only terminates the process.
+        unsafe { libc::_exit(code) }
+    }
     std::process::exit(code)
 }

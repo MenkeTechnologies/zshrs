@@ -277,6 +277,16 @@ pub mod stdout_ferror;
 /// (the stdio buffering C gets from libc's `FILE *shout`).
 #[path = "extensions/shout.rs"]
 pub mod shout;
+/// `cmdarg_startup` submodule — the non-interactive `-c` startup and run
+/// sequence shared by the binary and [`embed::run_program`].
+#[path = "extensions/cmdarg_startup.rs"]
+pub mod cmdarg_startup;
+/// `embed` submodule — [`run_program`], running a program in a forked child
+/// with its stdin, stdout and stderr on pipes.
+#[cfg(unix)]
+pub mod embed;
+#[cfg(unix)]
+pub use embed::run_program;
 /// `startup_signals` submodule.
 #[path = "extensions/startup_signals.rs"]
 pub mod startup_signals;

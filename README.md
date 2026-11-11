@@ -36,6 +36,7 @@ The first Unix shell to JIT-compile to native machine code. Bytecode alone is no
 - [\[0x0B\] Architecture](#0x0b-architecture)
 - [\[0x0C\] Editor Integration](#0x0c-editor-integration)
 - [\[0x0D\] Native Rust Plugins](#0x0d-native-rust-plugins)
+- [\[0x0E\] Embedding](#0x0e-embedding)
 - [\[0xFF\] License](#0xff-license)
 
 ---
@@ -1508,6 +1509,43 @@ its own build-tree internals.
 
 A runnable example lives in [`examples/plugin-hello/`](examples/plugin-hello/).
 Full guide: [`docs/PLUGINS.md`](docs/PLUGINS.md); package manager: [`docs/ZNATIVE.md`](docs/ZNATIVE.md).
+
+---
+
+## [0x0E] EMBEDDING
+
+The library crate is `zsh`. One function runs a program from Rust and
+returns its output (Unix only):
+
+```rust
+pub fn run_program(src: &str, input: &str) -> Result<String, String>
+```
+
+- Each call forks a child that runs `src` like `zsh -f -c src`: not
+  interactive, no ZLE, no job control, and no startup file read (`zsh -f`
+  still reads `/etc/zshenv`; this does not). Every call starts from a
+  clean shell; nothing it sets survives into the next call.
+- `input` is the program's stdin (fd 0); `read` and external commands see it.
+- Returns everything written to stdout (fd 1) by builtins and external
+  commands alike. Nothing reaches the host's terminal.
+- Exit status 0, including an explicit `exit 0`, returns `Ok(stdout)`. A
+  nonzero status (parse error, failed last command, `exit N`) or death by a
+  signal returns `Err` naming the status or signal, followed by the
+  program's stderr.
+- Callable from any thread; concurrent calls run in parallel, each in its
+  own process.
+- The call returns once every process holding the program's stdout or
+  stderr has closed it, as `$(…)` does: a background job that keeps them
+  open delays the return.
+- The child is a fork of the host without `exec`. Do not call
+  `std::env::set_var` concurrently with `run_program`, and a custom global
+  allocator must be fork-safe. `src/embed.rs` lists the fork-safety
+  measures.
+
+```rust
+let out = zsh::run_program(r#"read name; print "hello, $name""#, "world\n")?;
+assert_eq!(out, "hello, world\n");
+```
 
 ---
 
