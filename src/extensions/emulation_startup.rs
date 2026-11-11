@@ -1053,6 +1053,20 @@ fn csh_preamble() -> String {
 
 static CSH_PREAMBLE_SENT: AtomicBool = AtomicBool::new(false);
 
+/// The translator's preamble, once: `Some(text)` the first time it is asked
+/// for (and never again), `None` outside `--csh` / `--fish`. Startup runs it
+/// ahead of the startup files and the first prompt, so `-f`, a missing
+/// `config.fish` or `.cshrc` still get the drop-in's options and prompt.
+/// Left to ride on the first typed line, it was lexed while BANGHIST was
+/// still on: every `!` in it was history-expanded (`zsh: no such word in
+/// event`, or the whole preamble echoed back) and the first prompt was zsh's.
+pub fn take_translation_preamble() -> Option<String> {
+    if !translating() || CSH_PREAMBLE_SENT.swap(true, Ordering::Relaxed) {
+        return None;
+    }
+    Some(translation_preamble())
+}
+
 /// The `--csh` input boundary: csh text in, zsh text out, with the preamble
 /// ahead of the first input. Every other personality passes its input
 /// through untouched.
@@ -1278,6 +1292,11 @@ pub fn overrides_zsh_startup() -> bool {
 /// Source the selected drop-in's startup files. Library-side entry
 /// point, called from the `run_init_scripts` hook.
 pub fn run_init_scripts() {
+    // The translator's helpers are the drop-in's semantics, not a startup
+    // file: `fish --no-config` still has them.
+    if let Some(text) = take_translation_preamble() {
+        let _ = crate::ported::exec::execute_script_zsh_pipeline(&text);
+    }
     // `-f` / `unsetopt rcs` suppresses every startup file, the same way
     // bash's `--norc` + `--noprofile` do.
     if !crate::ported::zsh_h::isset(crate::ported::zsh_h::RCS) {

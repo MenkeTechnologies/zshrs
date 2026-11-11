@@ -7759,8 +7759,15 @@ impl ShellExecutor {
                 }
                 let _cs_eval_ctx_guard = CmdsubstEvalCtxGuard(sync_eval_ctx);
                 SUBSHELL_DEPTH.fetch_add(1, Relaxed);
+                // c:Src/exec.c:4783 — the forked child takes its open redirect
+                // scopes with it. A body left by `return` / `exit` skips its
+                // WithRedirectsEnd, so `$( { return 1 } >/dev/null )` kept a
+                // saved dup of the capture pipe open and the reader below never
+                // saw EOF. Unwind to the entry depth, as function calls do.
+                let redir_depth = self.redirect_scope_stack.len();
                 let _ctx = ExecutorContext::enter(self);
                 let _ = vm.run();
+                with_executor(|exec| exec.unwind_redirect_scopes_to(redir_depth));
                 let inner_exit_pending = EXIT_PENDING.load(Relaxed);
                 let inner_exit_val = EXIT_VAL.load(Relaxed);
                 let inner_status = if inner_exit_pending != 0 {

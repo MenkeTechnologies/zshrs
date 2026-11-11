@@ -16,6 +16,7 @@
 //! anywhere prevents the first command from executing.
 
 pub mod builtins;
+pub mod complete;
 pub mod emit;
 pub mod parse;
 pub mod setcmd;

@@ -743,6 +743,11 @@ pub fn docomplete(lst: i32) -> i32 {
         }
     }
     let _ftdump = FtimeDump;
+    // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+    // `--fish`: fish writes command substitution as a bare `(…)`, which the
+    // completion lexer below does not know. The guard gives every such `(`
+    // before the cursor a `$` for the duration and takes it back on return.
+    let _fish_subst = crate::fish::complete::subst_rewrite();
     // c:599
     // c:604 — `int olst = lst`; `lst` is then narrowed in place by the
     // expand-vs-complete decision at c:704-793. C captures `olst` at the

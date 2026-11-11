@@ -175,3 +175,108 @@ fn fish_own_scripts_translate() {
     }
     assert!(bad.is_empty(), "{} of {} fish scripts do not translate:\n{}", bad.len(), names.len(), bad.join("\n"));
 }
+
+/// `complete` definitions answer `complete -C` as fish answers it: options with
+/// descriptions, an option that takes the next word, `--opt=` arguments,
+/// conditions that read `commandline`, `--wraps`, a definition autoloaded from
+/// `~/.config/fish/completions/<cmd>.fish`, and fish's own scripts (string, set_color)
+/// read out of the installed fish. The scratch directory is empty, so file
+/// completions contribute nothing on either side.
+#[test]
+fn completions_match_fish() {
+    let Some(reference) = fish() else { return };
+    let home = scratch("complete");
+    let cwd = scratch("complete-cwd");
+    let comp_dir = home.join(".config/fish/completions");
+    std::fs::create_dir_all(&comp_dir).unwrap();
+    std::fs::write(comp_dir.join("zqauto.fish"), "complete -c zqauto -f -l from-file -d 'Autoloaded'\n").unwrap();
+    let script = home.join("complete.fish");
+    std::fs::write(
+        &script,
+        r#"function zq; end
+function zqauto; end
+function zw; end
+complete -c zq -f -s v -l verbose -d 'Be loud'
+complete -c zq -f -l color -xa 'auto never always'
+complete -c zq -f -n 'test (count (commandline -xpc)) -eq 1' -a 'first second' -d 'Subcommand'
+complete -c zq -f -n 'contains -- first (commandline -xpc)' -s q -l quiet -d 'Only after first'
+complete -c zw -w zq
+complete -C 'zq --'
+complete -C 'zq --color '
+complete -C 'zq --color=a'
+complete -C 'zq '
+complete -C 'zq first -'
+complete -C 'zq -v'
+complete -C 'zw f'
+complete -C 'string re'
+complete -C 'set_color br'
+"#,
+    )
+    .unwrap();
+    let want = run(&reference, &["--no-config"], &script, &home, &cwd);
+    let got = run(Path::new(env!("CARGO_BIN_EXE_zshrs")), &["--fish", "-f"], &script, &home, &cwd);
+    // with configuration on, `<cmd>.fish` autoloads from the user's completions dir
+    let auto = home.join("auto.fish");
+    std::fs::write(&auto, "function zqauto; end\ncomplete -C 'zqauto --'\ncomplete -C 'zqauto --fr'\n").unwrap();
+    let want_auto = run(&reference, &[], &auto, &home, &cwd);
+    let got_auto = run(Path::new(env!("CARGO_BIN_EXE_zshrs")), &["--fish"], &auto, &home, &cwd);
+    let _ = std::fs::remove_dir_all(&home);
+    let _ = std::fs::remove_dir_all(&cwd);
+    assert!(!want.stdout.is_empty(), "fish produced nothing");
+    assert_eq!(got.stdout, want.stdout);
+    assert_eq!(want_auto.stdout, "--from-file\tAutoloaded\n--from-file\tAutoloaded\n");
+    assert_eq!(got_auto.stdout, want_auto.stdout);
+}
+
+/// The fish preamble runs at startup, ahead of the first prompt line: the first
+/// line no longer carries it through history expansion (its `!` produced
+/// "no such word in event"), and the prompt is fish's from the start.
+#[test]
+fn preamble_is_installed_before_the_first_line() {
+    use std::io::Write;
+    let home = scratch("preamble");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_zshrs"))
+        .args(["--fish", "-f", "-i"])
+        .env("HOME", &home)
+        .env("ZSHRS_HISTORY", "0")
+        .env("ZSHRS_NATIVE_ZLE_FX", "0")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn zshrs");
+    child.stdin.take().unwrap().write_all(b"echo first\n").unwrap();
+    let out = child.wait_with_output().unwrap();
+    let _ = std::fs::remove_dir_all(&home);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(String::from_utf8_lossy(&out.stdout).contains("first"), "stdout: {:?}", out.stdout);
+    assert!(!err.contains("event") && !err.contains("setopt"), "stderr: {err}");
+}
+
+/// `return` / `exit` inside a redirected group in `$( … )` leave its redirect
+/// scope open; the substitution must still see end of file (it hung, holding a
+/// copy of its own capture pipe). zsh: `[] 1`, `[] 3`.
+#[test]
+fn command_substitution_ends_when_the_body_returns_from_a_redirected_group() {
+    for (body, want) in [
+        ("{ return 1 } >/dev/null 2>&1", "[] 1\n"),
+        ("{ exit 3 } >/dev/null; print x", "[] 3\n"),
+    ] {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_zshrs"))
+            .args(["-f", "-c", &format!("x=$( {body} ); echo \"[$x] $?\"")])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("spawn zshrs");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while child.try_wait().unwrap().is_none() {
+            if std::time::Instant::now() > deadline {
+                let _ = child.kill();
+                panic!("`{body}` in $( ) never returned");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let out = child.wait_with_output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout), want, "{body}");
+    }
+}

@@ -1,0 +1,33 @@
+#autoload
+
+# zshrs --fish: the completer that runs fish's own completion definitions
+# (`complete` in config.fish / conf.d, `<cmd>.fish` on $fish_complete_path,
+# the installed fish's built-in scripts). It sits ahead of `_complete` in the
+# `completer` style; when no fish definition covers the command it returns 1
+# and zsh's completer for that command runs instead. Command names,
+# parameters and `~user` are left to `_complete`.
+
+[[ $compstate[context] == command ]] && (( CURRENT > 1 )) || return 1
+
+local -a __fish_cw __fish_cd __fish_cs spaced bare group replace
+local __fish_cf __fish_ck __fish_cu i w
+
+__fish_complete_query -- "$LBUFFER" || return 1
+
+for (( i = 1; i <= $#__fish_cw; i++ )); do
+  w=${__fish_cw[i]//:/\\:}
+  [[ -n $__fish_cd[i] ]] && w+=":${__fish_cd[i]}"
+  if [[ $__fish_cs[i] == 1 ]]; then
+    bare+=("$w")
+  else
+    spaced+=("$w")
+  fi
+done
+
+[[ $__fish_ck == 1 ]] && group=(-V) || group=(-J)
+# fish replaces the word when the best match is not a prefix of it
+[[ $__fish_cu == 1 ]] && replace=(-U)
+(( $#spaced )) && _describe $group -t fish-completions completion spaced $replace
+(( $#bare )) && _describe $group -t fish-completions completion bare -S '' $replace
+[[ $__fish_cf == 1 ]] && _files
+return 0

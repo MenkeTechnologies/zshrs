@@ -1581,6 +1581,7 @@ pub fn zshrs_main() {
             // fish's `string`, `math`, `count` and `contains` run in-process.
             if p == Personality::Fish {
                 zsh::fish::builtins::register_all();
+                zsh::fish::complete::register_all();
             }
             // The drop-in's option deltas on top of the shared `emulate`
             // preset. `parseopts_setemulate` re-applies them for the
@@ -3185,6 +3186,10 @@ fn source_emulation_startup_files(
     is_interactive: bool,
     no_rcs: bool,
 ) {
+    // `--csh` / `--fish`: the translator's helpers run even under `-f`.
+    if let Some(text) = zsh::emulation_startup::take_translation_preamble() {
+        let _ = executor.execute_script(&text);
+    }
     if no_rcs || !zsh::ported::options::opt_state_get("rcs").unwrap_or(true) {
         return;
     }
