@@ -18,6 +18,7 @@ __fish_echo() {
 }
 __fish_ret() { return $1 }
 _() { print -r -- "$*" }
+__fish_builtin_q() { local n; for n; do [[ -n ${(M)${(f)"$(__fish_builtin_names)"}:#$n} ]] || return 1; done }
 __fish_command_query() {
   local quiet= all= n r=0 a ch
   local -a hits
@@ -60,6 +61,7 @@ status() {
     current-command) print -r -- ${funcstack[2]:-fish} ;;
     fish-path) print -r -- '@ZSHRS@' ;;
     current-line-number|-n) print -r -- $LINENO ;;
+    stack-trace|print-stack-trace|test-feature|buildinfo|terminal-os) return 0 ;;
     *) [[ -o interactive ]] && print -r -- 'This is an interactive session' || print -r -- 'This is a non-interactive session' ;;
   esac
 }
@@ -99,6 +101,75 @@ __fish_set_list() {
     out+=($line)
   done
   (( ${#out} )) && print -rl -- "${(@)out}"
+  return 0
+}
+__fish_set_show() {
+  local z=$1 n=$2 t kind=global exp=unexported cnt
+  local -a vals
+  [[ ${+parameters[$z]} == 1 ]] || return 1
+  t=${(Pt)z}
+  [[ $z == _fl* ]] && kind=local
+  [[ $t == *export* ]] && exp=exported
+  if [[ $t == array* ]]; then vals=("${(@P)z}")
+  elif [[ $exp == exported ]]; then
+    # an exported list is one joined string in the environment
+    if [[ $n == *PATH ]]; then vals=("${(@s.:.)${(P)z}}"); else vals=(${=${(P)z}}); fi
+  else vals=("${(P)z}"); fi
+  print -r -- "\$${n}: set in $kind scope, $exp, with ${#vals} elements"
+  local i
+  for (( i = 1; i <= ${#vals}; i++ )); do print -r -- "\$${n}[$i]: |${vals[i]}|"; done
+  return 0
+}
+typeset -gA __fish_abbrs
+typeset -ga __fish_abbr_order
+__fish_abbr() {
+  local op=show pos=command a name exp
+  local -a args
+  while (( $# )); do
+    a=$1; shift
+    case $a in
+      -a|--add) op=add ;; -e|--erase) op=erase ;; -l|--list) op=list ;;
+      -s|--show) op=show ;; -q|--query) op=query ;; -r|--rename) op=rename ;;
+      -p|--position) pos=$1; shift ;; --position=*) pos=${a#*=} ;;
+      -f|--function|--regex|--command|-c) shift ;;
+      --set-cursor|--set-cursor=*) ;;
+      --) args+=("$@"); break ;;
+      -*) ;;
+      *) args+=("$a") ;;
+    esac
+  done
+  [[ $op == show ]] && (( ${#args} )) && op=add
+  case $op in
+    add)
+      (( ${#args} >= 2 )) || { print -u2 -r -- 'abbr --add: Requires at least two arguments'; return 2 }
+      name=$args[1]; exp="${(j: :)args[2,-1]}"
+      [[ -n ${__fish_abbrs[$name]+x} ]] || __fish_abbr_order+=($name)
+      __fish_abbrs[$name]="$pos"$'\x1f'"$exp"
+      if [[ $pos == anywhere ]]; then alias -g -- "$name=$exp"; else alias -- "$name=$exp"; fi ;;
+    show)
+      for name in "${__fish_abbr_order[@]}"; do
+        pos=${__fish_abbrs[$name]%%$'\x1f'*} exp=${__fish_abbrs[$name]#*$'\x1f'}
+        if [[ $pos == anywhere ]]; then print -r -- "abbr -a --position anywhere -- ${(q-)name} ${(q-)exp}"
+        else print -r -- "abbr -a -- ${(q-)name} ${(q-)exp}"; fi
+      done ;;
+    list) (( ${#__fish_abbr_order} )) && print -rl -- "${__fish_abbr_order[@]}" ;;
+    query)
+      (( ${#args} )) || return 1
+      for name in "${args[@]}"; do [[ -n ${__fish_abbrs[$name]+x} ]] || return 1; done ;;
+    erase)
+      for name in "${args[@]}"; do
+        [[ -n ${__fish_abbrs[$name]+x} ]] || { print -u2 -r -- "abbr --erase: No abbreviation named $name"; continue }
+        unset "__fish_abbrs[$name]"
+        __fish_abbr_order=("${(@)__fish_abbr_order:#$name}")
+        unalias -- "$name" 2>/dev/null
+      done ;;
+    rename)
+      (( ${#args} == 2 )) || { print -u2 -r -- 'abbr --rename: Requires exactly two arguments'; return 2 }
+      [[ -n ${__fish_abbrs[$args[1]]+x} ]] || { print -u2 -r -- "abbr --rename: No abbreviation named $args[1]"; return 2 }
+      pos=${__fish_abbrs[$args[1]]%%$'\x1f'*} exp=${__fish_abbrs[$args[1]]#*$'\x1f'}
+      __fish_abbr --erase "$args[1]"
+      __fish_abbr --add --position $pos -- "$args[2]" $=exp ;;
+  esac
   return 0
 }
 __fish_set_dynamic() {
@@ -163,16 +234,21 @@ type() {
   return $r
 }
 functions() {
-  local a n=() q= e=
+  local a n=() q= e= listnames= alln=
   for a; do
     case $a in
       -q|--query) q=1 ;;
       -e|--erase) e=1 ;;
-      -n|--names|-a|--all) ;;
+      -n|--names) listnames=1 ;;
+      -a|--all) alln=1 ;;
       -*) ;;
       *) n+=($a) ;;
     esac
   done
+  if [[ -n $listnames ]]; then
+    if [[ $(whence -w __fish_function_names 2>/dev/null) != *none* && -n $(whence -w __fish_function_names 2>/dev/null) ]]; then __fish_function_names ${alln:+-a}; else print -rl -- ${(ok)functions}; fi
+    return
+  fi
   if [[ -n $q ]]; then (( ${#n} )) && (( $+functions[$n[1]] )); return; fi
   if [[ -n $e ]]; then for a in $n; do unfunction -- $a 2>/dev/null; done; return 0; fi
   if (( ! ${#n} )); then print -rl -- ${(ko)functions}; return 0; fi
@@ -604,6 +680,8 @@ if [[ -o interactive ]]; then
   zshexit_functions+=(__fish_uvar_cleanup)
 fi
 umask=(${(l:4::0:)$(builtin umask)})
+CMD_DURATION=(0)
+fish_kill_signal=(0)
 FISH_VERSION=4.9.3
 version=(4.9.3)
 fish_prompt() { print -rn -- "${USER}@${HOST%%.*} ${PWD/#$HOME/~}> " }

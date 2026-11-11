@@ -106,7 +106,7 @@ mod tests {
 
     #[test]
     fn command_substitution_splits_on_newlines() {
-        assert_eq!(t("echo (ls)"), "{ __fc1=\"$( ls )\"; echo ${__fc1:+\"${(@f)__fc1}\"}; }");
+        assert_eq!(t("echo (ls)"), "{ __fc1=\"$( ls\n__fish_cs=$?; print -rn x; exit $__fish_cs )\"; echo ${${__fc1%x}:+\"${(@f)${${__fc1%x}%$'\\n'}}\"}; }");
         assert_eq!(t("echo \"$(ls)\""), "echo \"$( ls )\"");
     }
 

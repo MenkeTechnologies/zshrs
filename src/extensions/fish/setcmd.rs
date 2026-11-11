@@ -18,6 +18,7 @@ struct SetFlags {
     append: bool,
     prepend: bool,
     list: bool,
+    show: bool,
 }
 
 impl Emitter {
@@ -70,7 +71,11 @@ impl Emitter {
                     'q' => f.query = true,
                     'a' => f.append = true,
                     'p' => f.prepend = true,
-                    'S' | 'n' => f.list = true,
+                    'S' => {
+                        f.list = true;
+                        f.show = true;
+                    }
+                    'n' => f.list = true,
                     _ => {}
                 }
             }
@@ -159,6 +164,15 @@ impl Emitter {
         let values = &operands[1..];
 
         if f.list {
+            // `set -S name`: how fish describes a variable
+            if !operands.is_empty() && f.show {
+                let calls: Vec<String> = operands
+                    .iter()
+                    .filter_map(|w| self.set_target(w))
+                    .map(|(n, _)| format!("__fish_set_show {} {}", self.zn(&n), crate::fish::emit::squote(&n)))
+                    .collect();
+                return calls.join("; ");
+            }
             let flags: Vec<String> = args[..at].iter().map(|w| self.word_scalar(w)).collect();
             return format!("__fish_set_list {}", flags.join(" "));
         }
@@ -359,21 +373,5 @@ impl Emitter {
             Err(_) => body,
         };
         format!("function {} {{ {translated} \"$@\"; }}", quote_lit(&name))
-    }
-
-    /// `abbr -a name expansion…`: a zsh alias, which expands at the prompt the same way.
-    pub(super) fn abbr_cmd(&mut self, args: &[Word]) -> String {
-        let texts: Vec<String> = args.iter().filter_map(Word::text).collect();
-        let operands: Vec<&String> = texts
-            .iter()
-            .filter(|t| !(t.starts_with('-') && t.len() > 1))
-            .collect();
-        match operands.as_slice() {
-            [name, exp @ ..] if !exp.is_empty() => {
-                let body = exp.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(" ");
-                format!("alias -- {}={}", quote_lit(name), squote(&body))
-            }
-            _ => ":".into(),
-        }
     }
 }

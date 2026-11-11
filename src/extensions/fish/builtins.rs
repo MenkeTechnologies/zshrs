@@ -12,7 +12,7 @@ use std::io::{BufRead, Read, Write};
 
 /// Register every fish command in the native-command table.
 pub fn register_all() {
-    for name in ["string", "math", "count", "contains", "path"] {
+    for name in ["string", "math", "count", "contains", "path", "__fish_printf"] {
         crate::native_cmds::register(name, move |argv| run(argv));
     }
 }
@@ -26,6 +26,7 @@ pub fn run(argv: &[String]) -> i32 {
         "count" => count(args),
         "contains" => contains(args),
         "path" => path(args),
+        "__fish_printf" => printf(args),
         _ => 127,
     }
 }
@@ -792,6 +793,322 @@ fn unescape(s: &str, style: &str) -> String {
         }
     }
     out
+}
+
+// ---- printf ----------------------------------------------------------------------
+
+/// `snprintf` with one argument, for the numeric conversions.
+fn c_format<T>(spec: &str, v: T, width_hint: usize) -> String {
+    let Ok(cspec) = std::ffi::CString::new(spec) else { return String::new() };
+    let mut buf = vec![0u8; width_hint + 80];
+    // SAFETY: `cspec` is a valid format with exactly one conversion taking a `T`, and the
+    // buffer length is passed to snprintf.
+    let n = unsafe { libc::snprintf(buf.as_mut_ptr().cast(), buf.len(), cspec.as_ptr(), v) };
+    if n < 0 {
+        return String::new();
+    }
+    buf.truncate((n as usize).min(buf.len() - 1));
+    String::from_utf8_lossy(&buf).into_owned()
+}
+
+/// An integer argument as printf reads it: decimal, `0x` hex, leading-0 octal, or `'c` for
+/// a character's code. Anything left over, or no number at all, is reported and counted
+/// as a failure, while the value read so far is still used.
+fn printf_int(arg: &str, failed: &mut bool) -> i64 {
+    if let Some(rest) = arg.strip_prefix(['\'', '"']) {
+        return rest.chars().next().map_or(0, |c| c as i64);
+    }
+    let Ok(c) = std::ffi::CString::new(arg) else { return 0 };
+    let mut end: *mut libc::c_char = std::ptr::null_mut();
+    // SAFETY: `c` is NUL terminated and `end` receives a pointer into it.
+    let v = unsafe { libc::strtoll(c.as_ptr(), &mut end, 0) };
+    let used = (end as usize).saturating_sub(c.as_ptr() as usize);
+    if used == 0 {
+        eprintln!("printf: {arg}: expected a numeric value");
+        *failed = true;
+        NO_NUMBER.with(|n| n.set(true));
+    } else if used < arg.len() {
+        eprintln!("printf: {arg}: value not completely converted (can't convert '{}')", &arg[used..]);
+        *failed = true;
+    }
+    v
+}
+
+thread_local! {
+    /// Set when a numeric conversion got an argument with no number in it; fish stops
+    /// printing there.
+    static NO_NUMBER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn printf_float(arg: &str, failed: &mut bool) -> f64 {
+    if let Some(rest) = arg.strip_prefix(['\'', '"']) {
+        return rest.chars().next().map_or(0.0, |c| c as u32 as f64);
+    }
+    let Ok(c) = std::ffi::CString::new(arg) else { return 0.0 };
+    let mut end: *mut libc::c_char = std::ptr::null_mut();
+    // SAFETY: as in `printf_int`.
+    let v = unsafe { libc::strtod(c.as_ptr(), &mut end) };
+    let used = (end as usize).saturating_sub(c.as_ptr() as usize);
+    if used == 0 {
+        eprintln!("printf: {arg}: expected a numeric value");
+        *failed = true;
+        NO_NUMBER.with(|n| n.set(true));
+    } else if used < arg.len() {
+        eprintln!("printf: {arg}: value not completely converted (can't convert '{}')", &arg[used..]);
+        *failed = true;
+    }
+    v
+}
+
+/// Backslash escapes of a format or `%b` argument. Returns false after `\c`, which ends
+/// all output.
+fn printf_escapes(s: &str, out: &mut Vec<u8>, percent_b: bool) -> bool {
+    let b: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] != '\\' || i + 1 >= b.len() {
+            let mut buf = [0u8; 4];
+            out.extend_from_slice(b[i].encode_utf8(&mut buf).as_bytes());
+            i += 1;
+            continue;
+        }
+        i += 1;
+        let c = b[i];
+        i += 1;
+        match c {
+            'a' => out.push(7),
+            'b' => out.push(8),
+            'f' => out.push(12),
+            'n' => out.push(b'\n'),
+            'r' => out.push(b'\r'),
+            't' => out.push(b'\t'),
+            'v' => out.push(11),
+            'e' => out.push(27),
+            '\\' => out.push(b'\\'),
+            'c' => return false,
+            '0'..='7' => {
+                // up to three octal digits (`%b` also takes a leading 0)
+                let mut v = c.to_digit(8).unwrap_or(0);
+                let mut n = 1;
+                let max = if percent_b && c == '0' { 4 } else { 3 };
+                while n < max && i < b.len() && b[i].is_digit(8) {
+                    v = v * 8 + b[i].to_digit(8).unwrap_or(0);
+                    i += 1;
+                    n += 1;
+                }
+                out.push(v as u8);
+            }
+            'x' | 'u' | 'U' => {
+                let max = match c {
+                    'x' => 2,
+                    'u' => 4,
+                    _ => 8,
+                };
+                let mut v = 0u32;
+                let mut n = 0;
+                while n < max && i < b.len() && b[i].is_ascii_hexdigit() {
+                    v = v * 16 + b[i].to_digit(16).unwrap_or(0);
+                    i += 1;
+                    n += 1;
+                }
+                if n == 0 {
+                    out.extend_from_slice(format!("\\{c}").as_bytes());
+                } else if c == 'x' {
+                    out.push(v as u8);
+                } else if let Some(ch) = char::from_u32(v) {
+                    let mut buf = [0u8; 4];
+                    out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
+                }
+            }
+            other => {
+                out.push(b'\\');
+                let mut buf = [0u8; 4];
+                out.extend_from_slice(other.encode_utf8(&mut buf).as_bytes());
+            }
+        }
+    }
+    true
+}
+
+fn pad(text: &str, width: usize, left: bool) -> String {
+    let n = text.chars().count();
+    if n >= width {
+        return text.to_string();
+    }
+    let fill = " ".repeat(width - n);
+    if left { format!("{text}{fill}") } else { format!("{fill}{text}") }
+}
+
+fn printf(args: &[String]) -> i32 {
+    let Some(fmt) = args.first() else {
+        eprintln!("printf: not enough arguments");
+        return 2;
+    };
+    let mut next = 1usize;
+    let mut failed = false;
+    let mut out: Vec<u8> = Vec::new();
+    'passes: loop {
+        let start = next;
+        let f: Vec<char> = fmt.chars().collect();
+        let mut i = 0;
+        while i < f.len() {
+            if f[i] == '\\' {
+                // collect the escape and let the shared decoder read it
+                let mut j = i + 1;
+                if j < f.len() {
+                    j += 1;
+                    if matches!(f[j - 1], '0'..='7') {
+                        while j < f.len() && j < i + 4 && f[j].is_digit(8) {
+                            j += 1;
+                        }
+                    } else if matches!(f[j - 1], 'x' | 'u' | 'U') {
+                        let max = match f[j - 1] { 'x' => 2, 'u' => 4, _ => 8 };
+                        let mut n = 0;
+                        while j < f.len() && n < max && f[j].is_ascii_hexdigit() {
+                            j += 1;
+                            n += 1;
+                        }
+                    }
+                }
+                let piece: String = f[i..j.min(f.len())].iter().collect();
+                if !printf_escapes(&piece, &mut out, false) {
+                    break 'passes;
+                }
+                i = j;
+                continue;
+            }
+            if f[i] != '%' {
+                let mut buf = [0u8; 4];
+                out.extend_from_slice(f[i].encode_utf8(&mut buf).as_bytes());
+                i += 1;
+                continue;
+            }
+            i += 1;
+            if f.get(i) == Some(&'%') {
+                out.push(b'%');
+                i += 1;
+                continue;
+            }
+            let mut flags = String::new();
+            while i < f.len() && "-+ #0'".contains(f[i]) {
+                flags.push(f[i]);
+                i += 1;
+            }
+            let mut take = |next: &mut usize, failed: &mut bool| -> i64 {
+                let v = args.get(*next).map_or(0, |a| printf_int(a, failed));
+                *next += 1;
+                v
+            };
+            let mut width = String::new();
+            if f.get(i) == Some(&'*') {
+                let w = take(&mut next, &mut failed);
+                if w < 0 {
+                    flags.push('-');
+                }
+                width = w.abs().to_string();
+                i += 1;
+            } else {
+                while i < f.len() && f[i].is_ascii_digit() {
+                    width.push(f[i]);
+                    i += 1;
+                }
+            }
+            let mut prec: Option<String> = None;
+            if f.get(i) == Some(&'.') {
+                i += 1;
+                let mut p = String::new();
+                if f.get(i) == Some(&'*') {
+                    p = take(&mut next, &mut failed).max(0).to_string();
+                    i += 1;
+                } else {
+                    while i < f.len() && f[i].is_ascii_digit() {
+                        p.push(f[i]);
+                        i += 1;
+                    }
+                }
+                prec = Some(p);
+            }
+            while i < f.len() && "hlLqjzt".contains(f[i]) {
+                i += 1;
+            }
+            let Some(&conv) = f.get(i) else {
+                eprintln!("printf: %: invalid conversion specification");
+                failed = true;
+                break 'passes;
+            };
+            i += 1;
+            let wnum: usize = width.parse().unwrap_or(0);
+            let spec_tail = format!(
+                "{flags}{width}{}",
+                prec.as_ref().map_or(String::new(), |p| format!(".{p}"))
+            );
+            match conv {
+                'd' | 'i' => {
+                    let v = args.get(next).map_or(0, |a| printf_int(a, &mut failed));
+                    next += 1;
+                    if NO_NUMBER.with(|n| n.replace(false)) {
+                        break 'passes;
+                    }
+                    out.extend_from_slice(c_format(&format!("%{spec_tail}lld"), v, wnum).as_bytes());
+                }
+                'u' | 'o' | 'x' | 'X' | 'c' if conv != 'c' => {
+                    let v = args.get(next).map_or(0, |a| printf_int(a, &mut failed));
+                    next += 1;
+                    if NO_NUMBER.with(|n| n.replace(false)) {
+                        break 'passes;
+                    }
+                    out.extend_from_slice(c_format(&format!("%{spec_tail}ll{conv}"), v as u64, wnum).as_bytes());
+                }
+                'f' | 'F' | 'e' | 'E' | 'g' | 'G' | 'a' | 'A' => {
+                    let v = args.get(next).map_or(0.0, |a| printf_float(a, &mut failed));
+                    next += 1;
+                    if NO_NUMBER.with(|n| n.replace(false)) {
+                        break 'passes;
+                    }
+                    out.extend_from_slice(c_format(&format!("%{spec_tail}{conv}"), v, wnum).as_bytes());
+                }
+                's' => {
+                    let a = args.get(next).cloned().unwrap_or_default();
+                    next += 1;
+                    let a = match prec.as_deref().and_then(|p| p.parse::<usize>().ok()) {
+                        Some(p) => a.chars().take(p).collect(),
+                        None => a,
+                    };
+                    out.extend_from_slice(pad(&a, wnum, flags.contains('-')).as_bytes());
+                }
+                'c' => {
+                    let a = args.get(next).cloned().unwrap_or_default();
+                    next += 1;
+                    let c: String = a.chars().take(1).collect();
+                    out.extend_from_slice(pad(&c, wnum, flags.contains('-')).as_bytes());
+                }
+                'b' => {
+                    let a = args.get(next).cloned().unwrap_or_default();
+                    next += 1;
+                    let mut tmp = Vec::new();
+                    let go_on = printf_escapes(&a, &mut tmp, true);
+                    let text = String::from_utf8_lossy(&tmp).into_owned();
+                    out.extend_from_slice(pad(&text, wnum, flags.contains('-')).as_bytes());
+                    if !go_on {
+                        break 'passes;
+                    }
+                }
+                other => {
+                    eprintln!("printf: %{other}: invalid conversion specification");
+                    failed = true;
+                    break 'passes;
+                }
+            }
+        }
+        // the format is reused while arguments remain and the last pass used some
+        if next >= args.len() || next == start {
+            break;
+        }
+    }
+    let mut so = std::io::stdout().lock();
+    let _ = so.write_all(&out);
+    let _ = so.flush();
+    i32::from(failed)
 }
 
 // ---- path ------------------------------------------------------------------------

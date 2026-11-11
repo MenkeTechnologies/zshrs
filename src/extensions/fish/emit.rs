@@ -452,7 +452,10 @@ impl Emitter {
             Some("set") => self.set_cmd(&rest[1..]),
             Some("read") => self.read_cmd(&rest[1..]),
             Some("alias") => self.alias_cmd(&rest[1..]),
-            Some("abbr") => self.abbr_cmd(&rest[1..]),
+            Some("abbr") => {
+                let all: Vec<String> = rest[1..].iter().map(|w| self.word_list(w)).collect();
+                format!("__fish_abbr {}", all.join(" "))
+            }
             // fish's bare `test` is a usage error (status 2); zsh's is false (1)
             Some("test") if rest.len() == 1 => "__fish_ret 2".to_string(),
             // argparse sets the caller's `argv`, which a function cannot do: the parse
@@ -485,6 +488,21 @@ impl Emitter {
                     })
                 {
                     all[0] = "__fish_command_query".into();
+                }
+                // `builtin -n` lists fish's builtins, `builtin -q NAME` asks about one
+                if name.as_deref() == Some("builtin") {
+                    match rest.get(1).and_then(|w| w.bare()) {
+                        Some("-n" | "--names") => all = vec!["__fish_builtin_names".to_string()],
+                        Some("-q" | "--query") => {
+                            let tail: Vec<String> = all.iter().skip(2).cloned().collect();
+                            all = std::iter::once("__fish_builtin_q".to_string()).chain(tail).collect();
+                        }
+                        _ => {}
+                    }
+                }
+                // fish's printf converts numbers its own way; the native one follows it
+                if name.as_deref() == Some("printf") {
+                    all[0] = "__fish_printf".into();
                 }
                 // zshrs resolves these names before a function of the same name
                 if let Some(n @ ("bind" | "commandline" | "complete")) = name.as_deref() {
@@ -680,17 +698,35 @@ impl Emitter {
         let inner = self.script(s);
         self.hoist_id += 1;
         let v = format!("__fc{}", self.hoist_id);
-        self.hoists.push(format!("{v}=\"$( {inner} )\""));
-        match idx {
-            None => format!("${{{v}:+\"${{(@f){v}}}\"}}"),
-            Some(toks) => ranges(toks)
-                .iter()
-                .map(|(r, rev)| {
-                    format!("${{{v}:+\"${{(@{})${{(@f){v}}}[{r}]}}\"}}", if *rev { "Oa" } else { "" })
-                })
-                .collect::<Vec<_>>()
-                .join(" "),
-        }
+        // The output is captured with a trailing `x` so `$(…)` cannot strip its final
+        // newlines: fish drops only ONE trailing newline and keeps empty lines, so
+        // `(echo)` is one empty element and `(printf '')` is none.
+        self.hoists.push(format!(
+            "{v}=\"$( {inner}\n__fish_cs=$?; print -rn x; exit $__fish_cs )\""
+        ));
+        let out = format!("${{{v}%x}}");
+        let list = format!("${{{out}:+\"${{(@f)${{{out}%$'\\n'}}}}\"}}");
+        let Some(toks) = idx else { return list };
+        // an index counts elements, so the list is made an array first
+        self.hoist_id += 1;
+        let arr = format!("__fa{}", self.hoist_id);
+        self.hoists.push(format!("{arr}=({list})"));
+        self.index_words(&arr, toks)
+    }
+
+    /// The words `$name[idx…]` stands for, `z` being the zsh array that holds the list.
+    fn index_words(&mut self, z: &str, idx: &[String]) -> String {
+        let idx = self.index_tokens(idx);
+        idx.iter()
+            .map(|t| match dyn_range(t) {
+                Some((a, b)) => format!("\"${{{}[@]}}\"", self.dynamic_slice(z, a, b)),
+                None => {
+                    let (r, rev) = range_of(t);
+                    format!("\"${{(@{}){z}[{r}]}}\"", if rev { "Oa" } else { "" })
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
     /// Index tokens with any `(cmd)` token replaced by the variable its output was
@@ -750,18 +786,7 @@ impl Emitter {
             return format!("\"${{(@P)${{(j: :){z}}}}}\"");
         }
         if let Some(idx) = &v.index {
-            let idx = self.index_tokens(idx);
-            return idx
-                .iter()
-                .map(|t| match dyn_range(t) {
-                    Some((a, b)) => format!("\"${{{}[@]}}\"", self.dynamic_slice(&z, a, b)),
-                    None => {
-                        let (r, rev) = range_of(t);
-                        format!("\"${{(@{}){z}[{r}]}}\"", if rev { "Oa" } else { "" })
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join(" ");
+            return self.index_words(&z, idx);
         }
         if is_colon_scalar(n) {
             return format!("${{{z}:+\"${{(@s.:.){z}}}\"}}");
@@ -828,6 +853,8 @@ fn special_scalar(name: &str) -> Option<&'static str> {
         "status" => Some("$?"),
         "fish_pid" => Some("$$"),
         "last_pid" => Some("$!"),
+        // fish's `$_` is empty outside an interactive command
+        "_" => Some("\"\""),
         _ => None,
     }
 }
