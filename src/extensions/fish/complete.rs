@@ -881,6 +881,10 @@ pub struct Comp {
     pub no_space: bool,
     /// from a `-k` definition: keeps its place instead of being sorted
     pub keep: bool,
+    /// What fish matches the typed word against when it is not the word
+    /// itself: an `-a` result is matched with its `\tdescription` still on
+    /// (fish wildcard_complete), so `ksh --` finds `-e\tfail on non-zero…`.
+    pub matched_as: Option<String>,
 }
 
 /// What a query found.
@@ -990,6 +994,7 @@ impl Completer<'_> {
             self.out.keep_order = true;
         }
         for w in self.eval.args(args) {
+            let raw = format!("{prefix}{w}");
             let (word, d) = match w.split_once('\t') {
                 Some((w, d)) => (w.to_string(), d.to_string()),
                 None => (w, desc.to_string()),
@@ -999,7 +1004,13 @@ impl Completer<'_> {
             }
             let word = format!("{prefix}{word}");
             let no_space = auto_no_space(&word);
-            self.out.comps.push(Comp { word, desc: d, no_space, keep: keep_order });
+            self.out.comps.push(Comp {
+                word,
+                desc: d,
+                no_space,
+                keep: keep_order,
+                matched_as: Some(raw),
+            });
         }
     }
 
@@ -1141,6 +1152,7 @@ impl Completer<'_> {
                         desc: o.desc.clone(),
                         no_space: false,
                         keep: false,
+        matched_as: None,
                     });
                     continue;
                 }
@@ -1160,6 +1172,7 @@ impl Completer<'_> {
                         desc: o.desc.clone(),
                         no_space: true,
                         keep: false,
+        matched_as: None,
                     });
                 }
                 self.out.comps.push(Comp {
@@ -1167,6 +1180,7 @@ impl Completer<'_> {
                     desc: o.desc.clone(),
                     no_space: false,
                     keep: false,
+        matched_as: None,
                 });
             }
         }
@@ -1749,7 +1763,7 @@ fn complete_dash_c(text: &str) -> Vec<Comp> {
     // fish `sort_and_prioritize`: only the best kind of match survives
     let ranked: Vec<(u32, Comp)> = comps
         .into_iter()
-        .filter_map(|c| fuzzy_rank(&typed, &c.word).map(|r| (r, c)))
+        .filter_map(|c| rank_of(&typed, &c).map(|r| (r, c)))
         .collect();
     let best = ranked.iter().map(|(r, _)| *r).min();
     let mut comps: Vec<Comp> = ranked.into_iter().filter(|(r, _)| Some(*r) == best).map(|(_, c)| c).collect();
@@ -1783,6 +1797,11 @@ const SUBSTR: u32 = 2;
 const SUBSTR_ICASE: u32 = 3;
 const SUBSEQ: u32 = 4;
 
+/// The rank of `c` for the typed word (see [`Comp::matched_as`]).
+fn rank_of(typed: &str, c: &Comp) -> Option<u32> {
+    fuzzy_rank(typed, c.matched_as.as_deref().unwrap_or(&c.word))
+}
+
 /// fish `string_fuzzy_match_string(typed, candidate)` as a rank.
 fn fuzzy_rank(typed: &str, cand: &str) -> Option<u32> {
     if typed.chars().count() > cand.chars().count() {
@@ -1800,7 +1819,10 @@ fn fuzzy_rank(typed: &str, cand: &str) -> Option<u32> {
     if cand.contains(typed) {
         return Some(SUBSTR);
     }
-    if c.contains(&t) {
+    // fish `ifind(…, fuzzy)`: the case-insensitive substring step also takes
+    // `_` for `-` (#3584), so `openssl -` finds `s_client`
+    let dash = |x: &str| x.replace('_', "-");
+    if dash(&c).contains(&dash(&t)) {
         return Some(if smart { SUBSTR } else { SUBSTR_ICASE });
     }
     let mut it = cand.chars();
@@ -1963,6 +1985,7 @@ fn comp(word: String, desc: &str, no_space: bool) -> Comp {
         desc: desc.to_string(),
         no_space,
         keep: false,
+        matched_as: None,
     }
 }
 
@@ -2269,7 +2292,7 @@ fn query_cmd(argv: &[String]) -> i32 {
     // fish keeps only the best kind of match. Files count as prefix matches
     // when one exists; when the best is weaker than a prefix (`-v` finding
     // `--verbose`) the word is replaced rather than extended (`__fish_cu`).
-    let ranks: Vec<Option<u32>> = ans.comps.iter().map(|c| fuzzy_rank(&line.cur, &c.word)).collect();
+    let ranks: Vec<Option<u32>> = ans.comps.iter().map(|c| rank_of(&line.cur, c)).collect();
     let files_match = ans.do_file && file_names(&line.cur, false).iter().any(|c| fuzzy_rank(&line.cur, &c.word) == Some(PREFIX));
     let best = ranks.iter().flatten().copied().chain(files_match.then_some(PREFIX)).min();
     let mut keep = ranks.iter().map(|r| r.is_some() && *r == best);
@@ -2537,6 +2560,7 @@ mod tests {
         assert_eq!(fuzzy_rank("-v", "--verbose"), Some(SUBSTR));
         assert_eq!(fuzzy_rank("-V", "--verbose"), Some(SUBSTR_ICASE));
         assert_eq!(fuzzy_rank("vbs", "verbose"), Some(SUBSEQ));
+        assert_eq!(fuzzy_rank("-", "s_client"), Some(SUBSTR));
         assert_eq!(fuzzy_rank("verbosely", "verbose"), None);
     }
 
