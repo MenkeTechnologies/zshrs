@@ -89,7 +89,10 @@ fn env_fixups() -> String {
         .into_iter()
         .filter(|n| !inherited(n))
         .collect();
-    let mut out = String::new();
+    let mut out = format!(
+        "__fish_uvar_file='{}'\n",
+        builtins::uvar_path().to_string_lossy().replace('\'', "'\\''")
+    );
     if !extras.is_empty() {
         // one statement each: a failure on one must not skip the rest
         for n in &extras {

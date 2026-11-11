@@ -355,3 +355,61 @@ fn native_commands_are_builtins_to_type() {
     assert_eq!(want.stdout, "builtin\nbuiltin\nbuiltin\nbuiltin\nbuiltin\n0\n");
     assert_eq!(got.stdout, want.stdout);
 }
+
+/// Universal variables live in fish's own `fish_variables`: what zshrs writes, fish reads,
+/// and the other way round.
+#[test]
+fn universal_variables_share_fish_variables_with_fish() {
+    let Some(reference) = fish() else { return };
+    let cfg = scratch("uvar");
+    let home = scratch("uvar-home");
+    let zshrs = env!("CARGO_BIN_EXE_zshrs");
+    let run_zshrs = |script: &str| {
+        let mut child = Command::new(zshrs)
+            .args(["--fish", "-f"])
+            .env_clear()
+            .env("HOME", &home)
+            .env("XDG_CONFIG_HOME", &cfg)
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("spawn zshrs");
+        std::io::Write::write_all(&mut child.stdin.take().unwrap(), script.as_bytes()).unwrap();
+        String::from_utf8_lossy(&child.wait_with_output().unwrap().stdout).into_owned()
+    };
+    let probe = "echo (count $zu_list) $zu_list[2] $zu_list[3] $zu_list[4]; echo (count $zu_exp) $zu_exp; echo (count $zu_empty) $zu_one";
+    // zshrs writes, fish reads
+    run_zshrs("set -U zu_list a 'b c' 'd\\e' é\nset -Ux zu_exp 1 2\nset -U zu_empty\nset -U zu_one hello\n");
+    // (`--no-config` makes fish ignore the file, so it reads it with config enabled)
+    let by_fish = {
+        let out = Command::new(&reference)
+            .args(["-c", probe])
+            .env_clear()
+            .env("HOME", &home)
+            .env("XDG_CONFIG_HOME", &cfg)
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .stdin(Stdio::null())
+            .output()
+            .expect("spawn fish");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let by_zshrs = run_zshrs(&format!("{probe}\n"));
+    assert_eq!(by_zshrs, by_fish, "zshrs and fish disagree about the variables zshrs wrote");
+    assert_eq!(by_fish, "4 b c d\\e é\n2 1 2\n0 hello\n");
+    // fish writes, zshrs reads
+    let setter = "set -U zu_list x 'y z'; set -Ux zu_exp 7";
+    let _ = Command::new(&reference)
+        .args(["-c", setter])
+        .env_clear()
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", &cfg)
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .stdin(Stdio::null())
+        .output();
+    let back = run_zshrs("echo (count $zu_list) $zu_list[2]; echo $zu_exp\n");
+    assert_eq!(back, "2 y z\n7\n");
+    for d in [&cfg, &home] {
+        let _ = std::fs::remove_dir_all(d);
+    }
+}

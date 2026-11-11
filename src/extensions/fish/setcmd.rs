@@ -134,13 +134,17 @@ impl Emitter {
     pub(super) fn set_cmd(&mut self, args: &[Word]) -> String {
         let (f, at) = self.set_flags(args);
         let text = self.set_inner(args);
-        if !f.universal || f.query || f.list {
+        // `set -e NAME` with no scope flag erases the universal variable too, when that is
+        // what the name was (the file is left alone if it does not hold it)
+        let plain_erase = f.erase && !f.universal && !f.local && !f.global;
+        if (!f.universal && !plain_erase) || f.query || f.list {
             return text;
         }
         let names: Vec<String> = args[at..]
             .iter()
             .filter_map(|w| self.set_target(w))
             .take(if f.erase { usize::MAX } else { 1 })
+            .filter(|(_, idx)| !plain_erase || idx.is_none())
             .map(|(n, _)| self.zn(&n))
             .collect();
         let call = if f.erase { "__fish_uvar_erase" } else { "__fish_uvar_save" };

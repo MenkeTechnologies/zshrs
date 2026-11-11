@@ -12,7 +12,7 @@ use std::io::{BufRead, Read, Write};
 
 /// Register every fish command in the native-command table.
 pub fn register_all() {
-    for name in ["string", "math", "count", "contains", "path", "__fish_printf"] {
+    for name in ["string", "math", "count", "contains", "path", "__fish_printf", "__fish_uvar_load", "__fish_uvar_write"] {
         crate::native_cmds::register(name, move |argv| run(argv));
     }
 }
@@ -27,6 +27,8 @@ pub fn run(argv: &[String]) -> i32 {
         "contains" => contains(args),
         "path" => path(args),
         "__fish_printf" => printf(args),
+        "__fish_uvar_load" => uvar_load(),
+        "__fish_uvar_write" => uvar_write(args),
         _ => 127,
     }
 }
@@ -1130,6 +1132,164 @@ fn printf(args: &[String]) -> i32 {
     let _ = so.write_all(&out);
     let _ = so.flush();
     i32::from(failed)
+}
+
+// ---- universal variables ----------------------------------------------------------
+
+/// fish's universal-variable file: `$XDG_CONFIG_HOME/fish/fish_variables`.
+pub fn uvar_path() -> std::path::PathBuf {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|v| !v.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))
+        .unwrap_or_default();
+    base.join("fish").join("fish_variables")
+}
+
+/// A value as `fish_variables` spells it: letters, digits, `_` and `/` as they are,
+/// everything else as `\xHH`, `\uHHHH` or `\UHHHHHHHH`.
+fn uvar_encode(s: &str) -> String {
+    let mut out = String::new();
+    for c in s.chars() {
+        if c.is_ascii_alphanumeric() || c == '_' || c == '/' {
+            out.push(c);
+        } else if (c as u32) < 0x80 {
+            out.push_str(&format!("\\x{:02x}", c as u32));
+        } else if (c as u32) < 0x10000 {
+            out.push_str(&format!("\\u{:04x}", c as u32));
+        } else {
+            out.push_str(&format!("\\U{:08x}", c as u32));
+        }
+    }
+    out
+}
+
+fn uvar_decode(s: &str) -> String {
+    let b: Vec<char> = s.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] != '\\' || i + 1 >= b.len() {
+            out.push(b[i]);
+            i += 1;
+            continue;
+        }
+        let (digits, kind) = match b[i + 1] {
+            'x' => (2, 'x'),
+            'u' => (4, 'u'),
+            'U' => (8, 'U'),
+            'n' => {
+                out.push('\n');
+                i += 2;
+                continue;
+            }
+            c => {
+                out.push(c);
+                i += 2;
+                continue;
+            }
+        };
+        let hex: String = b[i + 2..].iter().take(digits).collect();
+        match u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32) {
+            Some(c) => out.push(c),
+            None => out.push_str(&format!("\\{kind}{hex}")),
+        }
+        i += 2 + hex.chars().count();
+    }
+    out
+}
+
+/// Read the file and define each variable in the running shell: a list is a zsh array, an
+/// exported one is tied to its exported scalar like `set -x` does.
+fn uvar_load() -> i32 {
+    let Ok(text) = std::fs::read_to_string(uvar_path()) else { return 0 };
+    let q = super::emit::squote;
+    let mut code = String::new();
+    for line in text.lines() {
+        let Some(rest) = line.strip_prefix("SETUVAR ") else { continue };
+        let mut export = false;
+        let mut rest = rest;
+        while let Some(flag) = rest.strip_prefix("--") {
+            let (f, tail) = flag.split_once(' ').unwrap_or((flag, ""));
+            export |= f == "export";
+            rest = tail;
+        }
+        let Some((name, value)) = rest.split_once(':') else { continue };
+        let items: Vec<String> = if value == "\\x1d" || value.is_empty() {
+            Vec::new()
+        } else {
+            value.split("\\x1e").map(uvar_decode).collect()
+        };
+        let z = super::emit::zname(name);
+        let list = items.iter().map(|v| q(v)).collect::<Vec<_>>().join(" ");
+        if export {
+            let tied = format!("__fx_{name}");
+            let sep = if name.ends_with("PATH") { ':' } else { ' ' };
+            code.push_str(&format!(
+                "if (( ! ${{+{tied}}} )); then unset {name} 2>/dev/null; typeset -gxT {name} {tied} '{sep}'; fi; {tied}=({list})\n"
+            ));
+            super::emit::note_exported(name);
+        } else {
+            code.push_str(&format!("typeset -ga {z}=({list})\n"));
+        }
+    }
+    if !code.is_empty() {
+        let _ = crate::ported::exec::execute_script_zsh_pipeline(&code);
+    }
+    0
+}
+
+/// `__fish_uvar_write [--export] NAME VALUE…` sets a variable in the file, `-e NAME` removes it.
+/// The file is rewritten whole, keeping every other line, and replaced atomically.
+fn uvar_write(args: &[String]) -> i32 {
+    let (erase, export, rest) = match args.first().map(String::as_str) {
+        Some("-e") => (true, false, &args[1..]),
+        Some("--export") => (false, true, &args[1..]),
+        _ => (false, false, args),
+    };
+    let Some((name, values)) = rest.split_first() else { return 1 };
+    // the shell's names for tied/special variables back to fish's
+    let name = match name.as_str() {
+        "path" => "PATH",
+        "cdpath" => "CDPATH",
+        "manpath" => "MANPATH",
+        n => n.strip_prefix("_fish_v_").unwrap_or(n),
+    };
+    let file = uvar_path();
+    let old = std::fs::read_to_string(&file).unwrap_or_default();
+    let mut lines: Vec<String> = old.lines().map(str::to_string).collect();
+    if lines.is_empty() {
+        lines.push("# This file contains fish universal variable definitions.".into());
+        lines.push("# VERSION: 3.0".into());
+    }
+    let is_ours = |l: &String| {
+        l.strip_prefix("SETUVAR ").is_some_and(|r| {
+            let r = r.trim_start_matches("--export ").trim_start_matches("--path ");
+            r.split(':').next() == Some(name)
+        })
+    };
+    let had = lines.iter().any(is_ours);
+    if erase && !had {
+        return 0; // nothing to remove: leave the file (which may not exist) alone
+    }
+    lines.retain(|l| !is_ours(l));
+    if !erase {
+        let value = if values.is_empty() {
+            "\\x1d".to_string()
+        } else {
+            values.iter().map(|v| uvar_encode(v)).collect::<Vec<_>>().join("\\x1e")
+        };
+        lines.push(format!("SETUVAR {}{name}:{value}", if export { "--export " } else { "" }));
+    }
+    if let Some(dir) = file.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let tmp = file.with_extension(format!("tmp{}", std::process::id()));
+    let ok = std::fs::write(&tmp, lines.join("\n") + "\n").is_ok() && std::fs::rename(&tmp, &file).is_ok();
+    if !ok {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    i32::from(!ok)
 }
 
 // ---- path ------------------------------------------------------------------------

@@ -649,36 +649,29 @@ __fish_eval() {
   builtin eval "$__t"
 }
 eval() { __fish_eval "$@" }
-__fish_uvar_file=${HOME}/.zshrs/fish_universal.zsh
 __fish_uvar_save() {
-  local n=$1 f=$__fish_uvar_file line
-  local -a keep v
-  [[ -r $f ]] && keep=("${(@f)$(<$f)}")
-  keep=("${(@)keep:#(typeset -gx |)${n}=*}")
-  if [[ ${(Pt)n} == *export* ]]; then
-    line="typeset -gx $n=${(q)${(P)n}}"
-  else
-    v=("${(@P)n}")
-    line="$n=(${(j: :)${(@q)v}})"
-  fi
-  [[ -d ${f:h} ]] || mkdir -p ${f:h}
-  print -rl -- "${(@)keep:#}" $line > $f
+  # $1 is the zsh parameter; an exported list lives in __fx_NAME
+  local n=$1 name=$1 exp=
+  local -a v
+  case $n in __fx_*) name=${n#__fx_}; exp=--export ;; esac
+  [[ ${(Pt)n} == *export* ]] && exp=--export
+  v=("${(@P)n}")
+  __fish_uvar_write $exp $name "${v[@]}"
+  [[ -n ${__fish_uvar_marker-} ]] && : > $__fish_uvar_marker
+  return 0
 }
 __fish_uvar_erase() {
-  local n=$1 f=$__fish_uvar_file
-  local -a keep
-  [[ -r $f ]] || return 0
-  keep=("${(@f)$(<$f)}")
-  keep=("${(@)keep:#(typeset -gx |)${n}=*}")
-  print -rl -- "${(@)keep:#}" > $f
+  __fish_uvar_write -e ${1#__fx_}
+  [[ -n ${__fish_uvar_marker-} ]] && : > $__fish_uvar_marker
+  return 0
 }
-[[ -r $__fish_uvar_file ]] && builtin source $__fish_uvar_file
+__fish_uvar_load
 if [[ -o interactive ]]; then
   __fish_uvar_marker=${TMPDIR:-/tmp}/.fish_uvar.$$
   : > $__fish_uvar_marker
   __fish_uvar_sync() {
     [[ $__fish_uvar_file -nt $__fish_uvar_marker ]] || return 0
-    builtin source $__fish_uvar_file
+    __fish_uvar_load
     : > $__fish_uvar_marker
   }
   __fish_uvar_cleanup() { command rm -f $__fish_uvar_marker }
