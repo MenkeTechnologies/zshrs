@@ -7,7 +7,9 @@
 # and zsh's completer for that command runs instead. Command names,
 # parameters and `~user` are left to `_complete`.
 
-[[ $compstate[context] == command ]] && (( CURRENT > 1 )) || return 1
+# whether the cursor is on an argument is decided from the fish text itself:
+# zsh strips precommands (`command`, `builtin`, `exec`) from $words, fish does not
+[[ $compstate[context] == command ]] || return 1
 
 local -a __fish_cw __fish_cd __fish_cs spaced bare group replace
 local __fish_cf __fish_ck __fish_cu i w

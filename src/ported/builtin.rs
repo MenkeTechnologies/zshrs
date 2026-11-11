@@ -12787,6 +12787,32 @@ pub fn bin_whence(
                     continue;
                 }
             }
+            // !!! RUST-ONLY — NO C COUNTERPART !!! Host-registered native
+            // commands (`extensions/native_cmds.rs`: `--fish`'s string/math/
+            // count/…, zshrs-native's git) dispatch from the builtin slot, after
+            // the ported table and before PATH, so they classify as builtins:
+            // `whence -w string` in `--fish` reported `none`.
+            // (Not when an extension arm above already reported the name.)
+            let shown_as_extension = !crate::ext_builtins::hide_ext_builtins()
+                && (crate::daemon::builtins::is_zshrs_builtin(arg)
+                    || crate::extensions::ext_builtins::is_extension_builtin(arg));
+            if builtin_node.is_none()
+                && !is_disabled_builtin
+                && !shown_as_extension
+                && crate::native_cmds::is_enabled(arg)
+            {
+                let mut native_node = hashnode {
+                    next: None,
+                    nam: arg.clone(),
+                    flags: 0,
+                };
+                printbuiltinnode(&mut native_node as *mut hashnode, printflags);
+                informed = 1;
+                any_found = true;
+                if !all {
+                    continue;
+                }
+            }
             // c:4167-4173 — cmdnamtab HASHED check (commands installed
             // via `hash NAME=PATH`). Read the canonical cmdnamtab
             // directly. Was a fake env-var bridge under invented

@@ -80,6 +80,17 @@ struct Entry {
     order: usize,
 }
 
+/// One `complete_load` of a command.
+#[derive(Clone, Copy)]
+struct Loaded {
+    /// `$ZSH_SUBSHELL` when it ran. A `$( … )` runs in-process and throws its
+    /// function definitions away on return, while the options it registered
+    /// here stay; a load made deeper than the current depth is redone.
+    depth: i32,
+    /// the command's option count before the file added its own
+    options_before: usize,
+}
+
 #[derive(Default)]
 struct Store {
     /// keyed by (command, is_path)
@@ -89,10 +100,11 @@ struct Store {
     wrappers: BTreeMap<String, Vec<String>>,
     /// commands whose completions were erased explicitly: no autoload
     tombstones: BTreeSet<String>,
-    /// commands whose `<cmd>.fish` was already looked for
-    loaded: BTreeSet<String>,
-    /// functions whose `<name>.fish` was already looked for
-    fn_loaded: BTreeSet<String>,
+    /// commands whose `<cmd>.fish` was already looked for: the subshell depth
+    /// it was sourced at and how many options the command had before
+    loaded: BTreeMap<String, Loaded>,
+    /// functions with no `<name>.fish` anywhere
+    fn_missing: BTreeSet<String>,
 }
 
 fn store() -> std::sync::MutexGuard<'static, Store> {
@@ -454,8 +466,17 @@ pub fn builtin_complete(argv: &[String]) -> i32 {
     }
 
     if do_complete {
-        let line = do_complete_param.unwrap_or_else(transient_or_empty);
+        // fish: with no string to complete, `-C` needs the live command line
+        let line = match do_complete_param {
+            Some(p) => p,
+            None if transient().is_empty() && !crate::ported::zsh_h::interact() => {
+                eprintln!("complete: Can not get commandline in non-interactive mode");
+                return 1;
+            }
+            None => transient_or_empty(),
+        };
         let _ = unescape_output;
+        tracing::debug!(target: "fish_complete", line = %line, "complete -C");
         let mut out = String::new();
         for c in complete_dash_c(&line) {
             out.push_str(&c.word);
@@ -823,9 +844,6 @@ fn is_var_assignment(tok: &str) -> bool {
     }
 }
 
-/// Words that decorate or join a statement and are not its command
-/// (fish parses them as part of the job conjunction or the decoration).
-const DECORATORS: &[&str] = &["and", "or", "not", "!", "time", "command", "builtin", "exec", "begin", "if", "while", "else"];
 
 /// fish `wildcard_match` for command names: `*` and `?`.
 fn wildcard_match(s: &str, pat: &str) -> bool {
@@ -1218,10 +1236,12 @@ fn locate(text: &str) -> Position {
     let first = toks.iter().rposition(|t| t.kind == TokKind::Sep).map_or(0, |p| p + 1);
     let mut toks: Vec<Tok> = toks[first..].to_vec();
     let at_end = |t: &Tok| t.end >= s.len();
-    // decorators and `VAR=val` before the command word
+    // `VAR=val` before the command word. `and`, `not`, `command`, `time`, ...
+    // stay: fish completes them from their own scripts (not.fish, command.fish,
+    // ...), which hand the rest of the line to `__fish_complete_subcommand`.
     while let Some(t) = toks.first() {
         let w: String = s[t.start..t.end].iter().collect();
-        if at_end(t) || t.kind != TokKind::Str || !(DECORATORS.contains(&w.as_str()) || is_var_assignment(&w)) {
+        if at_end(t) || t.kind != TokKind::Str || !is_var_assignment(&w) {
             break;
         }
         toks.remove(0);
@@ -1400,6 +1420,7 @@ impl Eval for ShellEval {
             return false;
         };
         let out = capture_in_shell(&format!("{{\n{z}\n}} >/dev/null 2>&1 </dev/null; print -rn -- $?"));
+        tracing::debug!(target: "fish_complete", cond, status = %out.trim(), "condition");
         out.trim() == "0"
     }
 
@@ -1410,6 +1431,7 @@ impl Eval for ShellEval {
             return Vec::new();
         };
         let out = capture_in_shell(&format!("{{\n{z}\n}} 2>/dev/null </dev/null"));
+        tracing::debug!(target: "fish_complete", args, words = out.lines().count(), "argument list");
         out.lines().map(str::to_string).collect()
     }
 
@@ -1420,18 +1442,27 @@ impl Eval for ShellEval {
 
 /// Whether `name` runs as something: function, builtin, native command, or `PATH`.
 fn command_exists(name: &str) -> bool {
-    crate::ported::utils::getshfunc(name).is_some()
+    // fish `builtin_exists`: its builtins count even where zsh has no such
+    // command (`not`, `and`, `begin`, `string`, ...)
+    FISH_BUILTINS.iter().any(|(b, _)| *b == name)
+        || crate::ported::utils::getshfunc(name).is_some()
         || crate::ported::builtin::BUILTINS.iter().any(|b| b.node.nam == name)
         || crate::native_cmds::is_registered(name)
         || crate::ported::exec::findcmd(name, 0, 0).is_some()
 }
 
-/// Translate and run a fish file in the current shell.
+/// Translate and run a fish file in the current shell, as fish's autoloader
+/// sources it: a top-level `exit` ends the file, not the shell (rm.fish ends
+/// with `test "$uname" = Darwin; and exit 0`). Same shape as the preamble's
+/// `source`: translated in source mode, run as an anonymous function.
 fn source_fish(text: &str, origin: &str) -> bool {
     let _keep = KeepStatus::new();
-    match crate::fish::translate(text) {
+    crate::fish::set_source_mode(true);
+    let translated = crate::fish::translate(text);
+    crate::fish::set_source_mode(false);
+    match translated {
         Ok(z) => {
-            crate::ported::exec::execstring(&z, 0, 0, origin);
+            crate::ported::exec::execstring(&format!("() {{\n{z}\n}}"), 0, 0, origin);
             true
         }
         Err(e) => {
@@ -1441,13 +1472,28 @@ fn source_fish(text: &str, origin: &str) -> bool {
     }
 }
 
-/// fish `complete_load`: look for `<cmd>.fish` once.
+/// fish `complete_load`: look for `<cmd>.fish` once — per subshell level:
+/// a load done inside a `$( … )` lost its functions when that substitution
+/// returned, so a shallower caller drops the options it added and sources the
+/// file again.
 fn complete_load(cmd: &str) {
+    let depth = crate::ported::exec::zsh_subshell.load(std::sync::atomic::Ordering::Relaxed);
     {
         let mut st = store();
-        if st.tombstones.contains(cmd) || !st.loaded.insert(cmd.to_string()) {
+        if st.tombstones.contains(cmd) {
             return;
         }
+        let key = (cmd.to_string(), false);
+        if let Some(prev) = st.loaded.get(cmd).copied() {
+            if prev.depth <= depth {
+                return;
+            }
+            if let Some(e) = st.map.get_mut(&key) {
+                e.options.truncate(prev.options_before);
+            }
+        }
+        let options_before = st.map.get(&key).map_or(0, |e| e.options.len());
+        st.loaded.insert(cmd.to_string(), Loaded { depth, options_before });
     }
     // providers for a tool that is not installed only produce errors
     if !command_exists(cmd) {
@@ -1465,10 +1511,13 @@ pub fn autoload_function(name: &str) -> bool {
     if crate::ported::utils::getshfunc(name).is_some() {
         return true;
     }
-    if name.is_empty() || name.contains('/') || !store().fn_loaded.insert(name.to_string()) {
+    // Looked up again whenever it is not defined: a definition made inside a
+    // `$( … )` is gone once that substitution returns.
+    if name.is_empty() || name.contains('/') || store().fn_missing.contains(name) {
         return false;
     }
     let Some((text, origin)) = find_script("functions", &format!("{name}.fish")) else {
+        store().fn_missing.insert(name.to_string());
         return false;
     };
     source_fish(&text, &origin) && crate::ported::utils::getshfunc(name).is_some()
@@ -1672,25 +1721,30 @@ fn find_script(kind: &str, file: &str) -> Option<(String, String)> {
 // ---------------------------------------------------------------------------
 
 fn complete_dash_c(text: &str) -> Vec<Comp> {
-    let mut comps = match locate(text) {
-        Position::Command(prefix) => command_names(&unescape(&prefix)),
-        Position::Special => Vec::new(),
+    let (typed, comps) = match locate(text) {
+        Position::Command(prefix) => {
+            let typed = unescape(&prefix);
+            let comps = command_names(&typed);
+            (typed, comps)
+        }
+        Position::Special => (String::new(), Vec::new()),
         Position::Argument(line) => {
             let ans = complete_argument(&line, &mut ShellEval);
             let do_file = ans.as_ref().is_none_or(|a| a.do_file);
             let mut comps = ans.map(|a| a.comps).unwrap_or_default();
             if do_file {
-                comps.extend(file_names(&line.cur));
+                comps.extend(file_names(&line.cur, false));
             }
-            // fish `sort_and_prioritize`: only the best kind of match survives
-            let ranked: Vec<(u32, Comp)> = comps
-                .into_iter()
-                .filter_map(|c| fuzzy_rank(&line.cur, &c.word).map(|r| (r, c)))
-                .collect();
-            let best = ranked.iter().map(|(r, _)| *r).min();
-            ranked.into_iter().filter(|(r, _)| Some(*r) == best).map(|(_, c)| c).collect()
+            (line.cur, comps)
         }
     };
+    // fish `sort_and_prioritize`: only the best kind of match survives
+    let ranked: Vec<(u32, Comp)> = comps
+        .into_iter()
+        .filter_map(|c| fuzzy_rank(&typed, &c.word).map(|r| (r, c)))
+        .collect();
+    let best = ranked.iter().map(|(r, _)| *r).min();
+    let mut comps: Vec<Comp> = ranked.into_iter().filter(|(r, _)| Some(*r) == best).map(|(_, c)| c).collect();
     // fish `sort_and_prioritize`: unique, then `-k` results first in their
     // own order, the rest in `wcsfilecmp` order
     let mut seen = HashSet::new();
@@ -1699,9 +1753,17 @@ fn complete_dash_c(text: &str) -> Vec<Comp> {
         (true, true) => std::cmp::Ordering::Equal,
         (true, false) => std::cmp::Ordering::Less,
         (false, true) => std::cmp::Ordering::Greater,
-        (false, false) => wcsfilecmp(&a.word, &b.word),
+        // fish stores a same-case prefix match as the text after what was
+        // typed and any other match as the whole word, and sorts on that
+        (false, false) => wcsfilecmp(sort_key(&typed, &a.word), sort_key(&typed, &b.word)),
     });
     comps
+}
+
+/// What fish keeps as the completion text: the rest of the word after a
+/// same-case prefix, otherwise the whole word (it replaces the token).
+fn sort_key<'a>(typed: &str, word: &'a str) -> &'a str {
+    word.strip_prefix(typed).unwrap_or(word)
 }
 
 /// fish `StringFuzzyMatch` ranks, better first: a prefix (or a case-insensitive
@@ -1818,40 +1880,195 @@ fn wcsfilecmp(a: &str, b: &str) -> std::cmp::Ordering {
     }
 }
 
-fn command_names(prefix: &str) -> Vec<Comp> {
-    let listing = crate::ported::exec::run_command_substitution(
-        "print -rl -- ${(k)commands} ${(k)builtins} ${(k)functions} ${(k)aliases}",
-    );
-    let mut names: Vec<&str> = listing
-        .lines()
-        .filter(|n| n.starts_with(prefix) && (prefix.starts_with('_') || !n.starts_with('_')))
-        .collect();
-    names.sort_unstable();
-    names.dedup();
-    names
-        .into_iter()
-        .map(|n| Comp {
-            word: n.to_string(),
-            desc: String::new(),
-            no_space: false,
-            keep: false,
-        })
-        .collect()
+/// fish `builtin_get_names` / `builtin_get_desc` (fish 4.9
+/// `src/builtins/shared/misc.rs`): the builtins and their one-line descriptions.
+const FISH_BUILTINS: &[(&str, &str)] = &[
+    ("!", "Negate exit status of job"),
+    (".", "Evaluate contents of file"),
+    (":", "Return a successful result"),
+    ("[", "Test a condition"),
+    ("_", "Translate a string"),
+    ("abbr", "Manage abbreviations"),
+    ("and", "Run command if last command succeeded"),
+    ("argparse", "Parse options in fish script"),
+    ("begin", "Create a block of code"),
+    ("bg", "Send job to background"),
+    ("bind", "Handle fish key bindings"),
+    ("block", "Temporarily block delivery of events"),
+    ("break", "Stop the innermost loop"),
+    ("breakpoint", "Halt execution and start debug prompt"),
+    ("builtin", "Run a builtin specifically"),
+    ("case", "Block of code to run conditionally"),
+    ("cd", "Change working directory"),
+    ("command", "Run a command specifically"),
+    ("commandline", "Set or get the commandline"),
+    ("complete", "Edit command specific completions"),
+    ("contains", "Search for a specified string in a list"),
+    ("continue", "Skip over remaining innermost loop"),
+    ("count", "Count the number of arguments"),
+    ("disown", "Remove job from job list"),
+    ("echo", "Print arguments"),
+    ("else", "Evaluate block if condition is false"),
+    ("emit", "Emit an event"),
+    ("end", "End a block of commands"),
+    ("eval", "Evaluate a string as a statement"),
+    ("exec", "Run command in current process"),
+    ("exit", "Exit the shell"),
+    ("false", "Return an unsuccessful result"),
+    ("fg", "Send job to foreground"),
+    ("fish_indent", ""),
+    ("fish_key_reader", "explore what characters keyboard keys send"),
+    ("for", "Perform a set of commands multiple times"),
+    ("function", "Define a new function"),
+    ("functions", "List or remove functions"),
+    ("history", "History of commands executed by user"),
+    ("if", "Evaluate block if condition is true"),
+    ("jobs", "Print currently running jobs"),
+    ("math", "Evaluate math expressions"),
+    ("not", "Negate exit status of job"),
+    ("or", "Execute command if previous command failed"),
+    ("path", "Handle paths"),
+    ("printf", "Prints formatted text"),
+    ("pwd", "Print the working directory"),
+    ("random", "Generate random number"),
+    ("read", "Read a line of input into variables"),
+    ("realpath", "Show absolute path sans symlinks"),
+    ("return", "Stop the currently evaluated function"),
+    ("set", "Handle environment variables"),
+    ("set_color", "Set the terminal color"),
+    ("source", "Evaluate contents of file"),
+    ("status", "Return status information about fish"),
+    ("string", "Manipulate strings"),
+    ("switch", "Conditionally run blocks of code"),
+    ("test", "Test a condition"),
+    ("time", "Measure how long a command or block takes"),
+    ("true", "Return a successful result"),
+    ("type", "Check if a thing is a thing"),
+    ("ulimit", "Get/set resource usage limits"),
+    ("wait", "Await background process completion"),
+    ("while", "Perform a command multiple times"),
+];
+
+fn comp(word: String, desc: &str, no_space: bool) -> Comp {
+    Comp {
+        word,
+        desc: desc.to_string(),
+        no_space,
+        keep: false,
+    }
 }
 
-fn file_names(prefix: &str) -> Vec<Comp> {
+/// fish `complete_cmd` for the command word: executables, then directories,
+/// then functions (autoloadable ones included), then builtins; the first
+/// source to offer a name gives its description.
+fn command_names(prefix: &str) -> Vec<Comp> {
+    if prefix.contains('/') || prefix.starts_with('~') {
+        // a path: executables and directories under it
+        return file_names(prefix, true)
+            .into_iter()
+            .filter(|c| c.word.ends_with('/') || is_executable(&expand_tilde(&c.word)))
+            .collect();
+    }
+    let mut out = Vec::new();
+    let path = crate::ported::params::getsparam("PATH").unwrap_or_default();
+    for dir in path.split(':').filter(|d| !d.is_empty()) {
+        let Ok(rd) = std::fs::read_dir(dir) else { continue };
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let p = e.path();
+            if !is_executable(&p.to_string_lossy()) || p.is_dir() || (name.starts_with('.') && !prefix.starts_with('.')) {
+                continue;
+            }
+            let link = std::fs::symlink_metadata(&p).is_ok_and(|m| m.file_type().is_symlink());
+            out.push(comp(name, if link { "command link" } else { "command" }, false));
+        }
+    }
+    if let Ok(rd) = std::fs::read_dir(".") {
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if e.path().is_dir() && (!name.starts_with('.') || prefix.starts_with('.')) {
+                out.push(comp(format!("{name}/"), "directory", true));
+            }
+        }
+    }
+    for f in function_names(prefix.starts_with('_')) {
+        out.push(comp(f, "", false));
+    }
+    out.extend(
+        FISH_BUILTINS
+            .iter()
+            .filter(|(n, _)| !n.starts_with('.') || prefix.starts_with('.'))
+            .map(|(n, d)| comp(n.to_string(), d, false)),
+    );
+    out
+}
+
+/// fish `function::get_names`: the shell's functions — not the preamble's
+/// stand-ins for fish builtins nor its internal helpers — and every
+/// autoloadable `functions/*.fish` (search path and the installed fish).
+/// Hidden (`_…`) names only with `hidden`. Sorted, unique.
+pub fn function_names(hidden: bool) -> Vec<String> {
+    let is_builtin = |n: &str| FISH_BUILTINS.iter().any(|(b, _)| *b == n);
+    let mut fns: Vec<String> = crate::ported::hashtable::shfunctab_lock()
+        .read()
+        .map(|t| t.iter().map(|(n, _)| n.clone()).filter(|n| !is_builtin(n) && !preamble_functions().contains(n)).collect())
+        .unwrap_or_default();
+    for dir in search_path("functions") {
+        if let Ok(rd) = std::fs::read_dir(&dir) {
+            fns.extend(rd.flatten().filter_map(|e| e.file_name().to_string_lossy().strip_suffix(".fish").map(str::to_string)));
+        }
+    }
+    if let Some(d) = fish_data() {
+        fns.extend(d.files.iter().filter_map(|f| f.strip_prefix("functions/")?.strip_suffix(".fish").map(str::to_string)));
+    }
+    fns.retain(|f| hidden || !f.starts_with('_'));
+    // `functions -n` order: by code point
+    fns.sort();
+    fns.dedup();
+    fns
+}
+
+fn expand_tilde(p: &str) -> String {
+    match p.strip_prefix("~/") {
+        Some(rest) => format!("{}/{rest}", std::env::var("HOME").unwrap_or_default()),
+        None => p.to_string(),
+    }
+}
+
+/// A regular file this user may execute (`access(X_OK)`, as fish checks:
+/// root-only daemons like `/usr/sbin/cupsd` are not offered).
+fn is_executable(p: &str) -> bool {
+    let Ok(c) = std::ffi::CString::new(p) else { return false };
+    std::fs::metadata(p).is_ok_and(|m| m.is_file()) && unsafe { libc::access(c.as_ptr(), libc::X_OK) } == 0
+}
+
+/// Functions the fish preamble defines for its own use (`__fish_cl_words`,
+/// `command_not_found_handler`, ...). fish has none of them, so they are not
+/// offered unless fish ships a function of that name.
+fn preamble_functions() -> &'static HashSet<String> {
+    static NAMES: OnceLock<HashSet<String>> = OnceLock::new();
+    NAMES.get_or_init(|| {
+        crate::fish::PREAMBLE
+            .lines()
+            .filter_map(|l| {
+                let name = l.split("() {").next()?;
+                (l.contains("() {") && !name.is_empty() && !name.contains([' ', '\t', '$'])).then(|| name.to_string())
+            })
+            .collect()
+    })
+}
+
+/// The entries of the directory `prefix` names that the typed last component
+/// matches (fish's fuzzy match: case-insensitive prefixes, substrings, ...;
+/// the caller keeps the best kind). Dot entries only when a dot is typed.
+/// `describe` gives command-position descriptions (`directory`, `command`,
+/// `command link`); argument file completions carry none (fish #254).
+fn file_names(prefix: &str, describe: bool) -> Vec<Comp> {
     let (dir, base) = match prefix.rfind('/') {
         Some(i) => (&prefix[..=i], &prefix[i + 1..]),
         None => ("", prefix),
     };
-    let home = std::env::var("HOME").unwrap_or_default();
-    let real_dir = if let Some(rest) = dir.strip_prefix("~/") {
-        format!("{home}/{rest}")
-    } else if dir.is_empty() {
-        ".".to_string()
-    } else {
-        dir.to_string()
-    };
+    let real_dir = if dir.is_empty() { ".".to_string() } else { expand_tilde(dir) };
     let Ok(rd) = std::fs::read_dir(&real_dir) else {
         return Vec::new();
     };
@@ -1859,19 +2076,24 @@ fn file_names(prefix: &str) -> Vec<Comp> {
         .flatten()
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().into_owned();
-            if !name.starts_with(base) || (name.starts_with('.') && !base.starts_with('.')) {
+            // no fuzzy file matching for a word that starts with a dash (fish #568)
+            let fuzzy_ok = !prefix.starts_with('-');
+            let matched = fuzzy_rank(base, &name).is_some_and(|r| fuzzy_ok || r <= PREFIX_ICASE);
+            if (name.starts_with('.') && !base.starts_with('.')) || !matched {
                 return None;
             }
-            let is_dir = e.path().is_dir();
-            Some(Comp {
-                word: format!("{dir}{name}{}", if is_dir { "/" } else { "" }),
-                desc: String::new(),
-                no_space: is_dir,
-                keep: false,
-            })
+            let path = e.path();
+            let is_dir = path.is_dir();
+            let desc = match () {
+                _ if !describe => "",
+                _ if is_dir => "directory",
+                _ if std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) => "command link",
+                _ => "command",
+            };
+            Some(comp(format!("{dir}{name}{}", if is_dir { "/" } else { "" }), desc, is_dir))
         })
         .collect();
-    out.sort_by(|a, b| a.word.cmp(&b.word));
+    out.sort_by(|a, b| wcsfilecmp(&a.word, &b.word));
     out
 }
 
@@ -2040,7 +2262,7 @@ fn query_cmd(argv: &[String]) -> i32 {
     // when one exists; when the best is weaker than a prefix (`-v` finding
     // `--verbose`) the word is replaced rather than extended (`__fish_cu`).
     let ranks: Vec<Option<u32>> = ans.comps.iter().map(|c| fuzzy_rank(&line.cur, &c.word)).collect();
-    let files_match = ans.do_file && !file_names(&line.cur).is_empty();
+    let files_match = ans.do_file && file_names(&line.cur, false).iter().any(|c| fuzzy_rank(&line.cur, &c.word) == Some(PREFIX));
     let best = ranks.iter().flatten().copied().chain(files_match.then_some(PREFIX)).min();
     let mut keep = ranks.iter().map(|r| r.is_some() && *r == best);
     ans.comps.retain(|_| keep.next().unwrap_or(false));
@@ -2074,6 +2296,26 @@ pub fn register_all() {
     crate::native_cmds::register("__fish_complete_query", |argv| settle(query_cmd(argv)));
     crate::native_cmds::register("__fish_autoload", |argv| {
         settle(i32::from(!argv.get(1).is_some_and(|n| autoload_function(n))))
+    });
+    // `functions -n` / `builtin -n` in the preamble list what fish would
+    crate::native_cmds::register("__fish_function_names", |argv| {
+        let hidden = argv.iter().skip(1).any(|a| a == "-a");
+        let mut out = String::new();
+        for f in function_names(hidden) {
+            out.push_str(&f);
+            out.push('\n');
+        }
+        print!("{out}");
+        0
+    });
+    crate::native_cmds::register("__fish_builtin_names", |_| {
+        let mut out = String::new();
+        for (n, _) in FISH_BUILTINS {
+            out.push_str(n);
+            out.push('\n');
+        }
+        print!("{out}");
+        0
     });
     crate::native_cmds::register("__fish_cmdline_read", |argv| {
         // __fish_cmdline_read BUFFER CURSOR ARGS…
@@ -2233,13 +2475,16 @@ mod tests {
     }
 
     #[test]
-    fn the_process_at_the_cursor_is_found_through_separators_decorators_and_substitutions() {
+    fn the_process_at_the_cursor_is_found_through_separators_assignments_and_substitutions() {
         add(&["-c", "zt2", "-xa", "one two"]);
-        assert_eq!(words("true; and zt2 ", &[]).unwrap(), ["one", "two"]);
+        assert_eq!(words("true; zt2 ", &[]).unwrap(), ["one", "two"]);
+        assert_eq!(words("x | zt2 ", &[]).unwrap(), ["one", "two"]);
         assert_eq!(words("echo (zt2 ", &[]).unwrap(), ["one", "two"]);
         assert_eq!(words("echo $(zt2 o", &[]).unwrap(), ["one"]);
-        assert_eq!(words("A=1 command zt2 ", &[]).unwrap(), ["one", "two"]);
-        assert_eq!(words("x | not zt2 ", &[]).unwrap(), ["one", "two"]);
+        assert_eq!(words("A=1 B=2 zt2 ", &[]).unwrap(), ["one", "two"]);
+        // `not`, `command`, ... are the command: their own definitions answer
+        add(&["-c", "zt2not", "-xa", "own"]);
+        assert_eq!(words("true; zt2not zt2 ", &[]).unwrap(), ["own"]);
     }
 
     #[test]

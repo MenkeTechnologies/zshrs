@@ -210,6 +210,11 @@ complete -C 'zq -v'
 complete -C 'zw f'
 complete -C 'string re'
 complete -C 'set_color br'
+complete -c zsub -x -a '(__fish_complete_subcommand)'
+complete -C 'zsub zq --v'
+complete -C 'zsub zq --c'
+complete -C 'which --'
+complete -C 'not -'
 "#,
     )
     .unwrap();
@@ -333,4 +338,20 @@ fn fish_own_functions_behave_like_fish() {
         let _ = std::fs::remove_dir_all(d);
     }
     assert!(bad.is_empty(), "fish function divergences:\n{}", bad.join("\n"));
+}
+
+/// fish's builtins that zshrs runs as in-process native commands (`string`,
+/// `math`, `count`, `contains`, `path`) classify as builtins, as in fish: they
+/// sit in the builtin dispatch slot, so `whence`/`type` must say so.
+#[test]
+fn native_commands_are_builtins_to_type() {
+    let Some(reference) = fish() else { return };
+    let home = scratch("type");
+    let script = home.join("type.fish");
+    std::fs::write(&script, "type -t string math count contains path\ntype -q string; echo $status\n").unwrap();
+    let want = run(&reference, &["--no-config"], &script, &home, &home);
+    let got = run(Path::new(env!("CARGO_BIN_EXE_zshrs")), &["--fish", "-f"], &script, &home, &home);
+    let _ = std::fs::remove_dir_all(&home);
+    assert_eq!(want.stdout, "builtin\nbuiltin\nbuiltin\nbuiltin\nbuiltin\n0\n");
+    assert_eq!(got.stdout, want.stdout);
 }
