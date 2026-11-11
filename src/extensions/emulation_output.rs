@@ -148,7 +148,7 @@ pub fn kill_list(sigs: &[(i32, String)]) -> Option<String> {
     let nsig = sigs.last().map_or(1, |(num, _)| num + 1);
     let mut out = String::new();
     match p {
-        Personality::Zsh => return None,
+        Personality::Zsh | Personality::Fish => return None,
         // bash: `%2d) SIG%s` five to a row, tab after every entry
         // including the last on a row, so the final row ends in a tab.
         Personality::Bash => {

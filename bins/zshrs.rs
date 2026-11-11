@@ -357,6 +357,7 @@ byte-for-byte; every `source` re-runs the file fresh, every echo re-fires):
   --dash       identical-behaviour drop-in for /bin/dash (strict POSIX subset)
   --ash        identical-behaviour drop-in for ash (Almquist; current upstream dash)
   --csh        identical-behaviour drop-in for /bin/csh
+  --fish       fish drop-in: fish syntax translated to zsh (fish 4 semantics)
   --posix      identical-behaviour drop-in for /bin/sh (Bourne)
   --emulate MODE  alias for --MODE (zsh-compat: `emulate zsh` etc.)
   --zsh-compat alias of --zsh (legacy spelling)
@@ -380,10 +381,12 @@ Every drop-in reads ITS OWN startup files, not zsh's (skipped by -f /
             login: /etc/profile + ~/.profile.  interactive: $ENV (no default)
   --csh     always: /etc/csh.cshrc + ~/.tcshrc, or ~/.cshrc if absent.
             login also: /etc/csh.login + ~/.login.  login exit: ~/.logout
+  --fish    always: /etc/fish/config.fish + ~/.config/fish/conf.d/*.fish
+            + ~/.config/fish/config.fish ($XDG_CONFIG_HOME honoured)
 An interactive LOGIN shell reads both its profile AND its interactive file
 in every mode except --bash, which reads the profile only.
 
-Argv[0] inference: invoking the binary as `ksh` / `sh` / `csh` / `bash`
+Argv[0] inference: invoking the binary as `ksh` / `sh` / `csh` / `fish` / `bash`
 (via symlink or hardlink) selects the matching mode automatically, matching
 C zsh's behaviour at Src/init.c:1869+. Use the explicit `--MODE` flag to
 override.
@@ -1344,7 +1347,7 @@ pub fn zshrs_main() {
         "dash" | "ash" => Some(ShellMode::Dash),
         "sh" => Some(ShellMode::Posix),
         "bash" => Some(ShellMode::Bash),
-        "zsh" | "zsh-5.9" => Some(ShellMode::Zsh),
+        "zsh" | "zsh-5.9" | "fish" => Some(ShellMode::Zsh),
         _ => None,
     };
 
@@ -1457,8 +1460,8 @@ pub fn zshrs_main() {
         // mksh (MirBSD Korn shell) and pdksh (Public Domain Korn shell)
         // use the same ksh emulation base.
         Some(ShellMode::Ksh)
-    } else if args.iter().any(|a| a == "--csh") {
-        // csh emulation routes to Zsh mode (zshrs has no separate csh
+    } else if args.iter().any(|a| a == "--csh" || a == "--fish") {
+        // csh and fish emulation route to Zsh mode (zshrs has no separate csh
         // bucket; `emulate csh` flips the canonical option deltas via
         // `crate::ported::options::emulate("csh", true)` below).
         Some(ShellMode::Zsh)
@@ -1632,12 +1635,19 @@ pub fn zshrs_main() {
             {
                 Some(Personality::Csh)
             }
+            ShellMode::Zsh | ShellMode::Zshrs if flag("--fish") || argv0_basename == "fish" => {
+                Some(Personality::Fish)
+            }
             // A bare `--zsh` and the default zshrs mode both keep zsh's
             // own startup files, which the faithful port already owns.
             ShellMode::Zsh | ShellMode::Zshrs => None,
         };
         if let Some(p) = personality {
             zsh::emulation_startup::set_personality(p);
+            // fish's `string`, `math`, `count` and `contains` run in-process.
+            if p == Personality::Fish {
+                zsh::fish::builtins::register_all();
+            }
             // The drop-in's option deltas on top of the shared `emulate`
             // preset. `parseopts_setemulate` re-applies them for the
             // interactive path, which re-installs the emulation itself.
@@ -1842,6 +1852,34 @@ pub fn zshrs_main() {
             },
         };
         match zsh::csh::translate(&src) {
+            Ok(text) => print!("{text}"),
+            Err(msg) => {
+                eprintln!("{msg}");
+                zsh::atexit_teardown::exit(1);
+            }
+        }
+        zsh::atexit_teardown::exit(0);
+    }
+
+    // `--fish-translate [--] FILE|-`: print the zsh translation of a fish script.
+    // Used by the `source` / `eval` functions the fish preamble defines.
+    if args.len() >= 3 && args[1] == "--fish-translate" {
+        let operand = args[2..].iter().find(|a| a.as_str() != "--");
+        let src = match operand.map(String::as_str) {
+            Some("-") | None => {
+                let mut s = String::new();
+                let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut s);
+                s
+            }
+            Some(path) => match std::fs::read_to_string(path) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("source: Error encountered while sourcing file '{path}':\nsource: {e}");
+                    zsh::atexit_teardown::exit(1);
+                }
+            },
+        };
+        match zsh::fish::translate(&src) {
             Ok(text) => print!("{text}"),
             Err(msg) => {
                 eprintln!("{msg}");
@@ -2221,6 +2259,7 @@ pub fn zshrs_main() {
             "dash",
             "ash",
             "csh",
+            "fish",
             "posix",
             "disasm",
         ];
@@ -2828,7 +2867,7 @@ pub fn zshrs_main() {
             Ok(text) => executor.execute_cmdarg(&text),
             Err(msg) => {
                 eprintln!("{msg}");
-                zsh::atexit_teardown::exit(1);
+                zsh::atexit_teardown::exit(zsh::emulation_startup::translation_error_status());
             }
         };
         #[cfg(feature = "daemon")]
@@ -3103,16 +3142,14 @@ pub fn zshrs_main() {
         // have resolved the name to a $path entry; that resolved path is
         // what SHIN was opened on, while `$0` / ZSH_SCRIPT / scriptname
         // above keep the verbatim operand (c:1402-1403).
-        let script_result = if zsh::emulation_startup::personality()
-            == zsh::emulation_startup::Personality::Csh
-        {
-            // csh text cannot take the bytecode-cache path: translate first.
+        let script_result = if zsh::emulation_startup::translating() {
+            // csh and fish text cannot take the bytecode-cache path: translate first.
             match std::fs::read_to_string(&runscript_open) {
                 Ok(src) => match csh_input(&src) {
                     Ok(text) => executor.execute_script(&text),
                     Err(msg) => {
                         eprintln!("{msg}");
-                        zsh::atexit_teardown::exit(1);
+                        zsh::atexit_teardown::exit(zsh::emulation_startup::translation_error_status());
                     }
                 },
                 Err(e) => Err(e.to_string()),
@@ -4061,13 +4098,13 @@ fn process_line(line: &str, executor: &mut ShellExecutor) {
     }
 }
 
-/// The `--csh` input boundary: csh text in, zsh text out. Every other
+/// The `--csh` / `--fish` input boundary: foreign text in, zsh text out. Every other
 /// personality passes its input through untouched. Errors carry the text
 /// tcsh prints for the same mistake. The translation, preamble and options
 /// live in `emulation_startup` so the library-side startup-file sourcing
 /// (an interactive shell) goes through the same boundary.
 fn csh_input(src: &str) -> Result<String, String> {
-    zsh::emulation_startup::csh_input(src, zsh::csh::translate)
+    zsh::emulation_startup::csh_input(src, zsh::emulation_startup::translate_script)
 }
 
 /// One line of interactive or stdin input; see `emulation_startup::csh_line`.

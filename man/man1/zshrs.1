@@ -167,6 +167,11 @@ Drop-in for
 .BR csh (1).
 Outside the Bourne family; provided for argv[0] dispatch.
 .TP
+.B \-\-fish
+Drop-in for
+.BR fish (1).
+fish syntax is translated to zsh text and run by the same engine.
+.TP
 .B \-\-zsh\-compat
 Legacy alias for
 .BR \-\-zsh .
@@ -400,6 +405,9 @@ block at the top of a file is the module header.
 .BI \-\-tiers " FILE"
 Run the script, then report which fusevm execution tier took each of its
 chunks, asked of fusevm's own eligibility and cache predicates.
+.TP
+.BI \-\-fish\-translate " FILE"
+Print the zsh translation of a fish script (\fB\-\fR reads stdin).
 .TP
 .BI \-\-csh\-translate " [\-\-source] FILE"
 Print the zsh translation of a csh script (\fB\-\fR reads stdin).
@@ -657,6 +665,19 @@ and reads
 and
 .I /etc/csh.logout
 on exit.
+.TP
+.B \-\-fish
+Always:
+.IR /etc/fish/config.fish ,
+the
+.I *.fish
+files in
+.I ~/.config/fish/conf.d
+in name order, then
+.IR ~/.config/fish/config.fish .
+.B $XDG_CONFIG_HOME
+replaces
+.IR ~/.config .
 .PP
 An interactive LOGIN shell reads both its profile and its interactive
 file in every mode except

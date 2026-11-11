@@ -145,6 +145,15 @@ prompt lines) is translated to zsh text and run by the same engine. Covers
 \fB$#x\fR, \fB$x[n]\fR, \fB$?x\fR and the \fB:h :t :r :e\fR modifiers, \fB>&\fR,
 \fB>!\fR, \fB|&\fR, and aliases with history arguments. Checked against
 .BR tcsh (1).
+.TP
+.B \-\-fish
+fish syntax: input is parsed whole and translated to zsh text, as for
+\fB\-\-csh\fR. Variables are lists, \fBset\fR maps onto
+\fBtypeset\fR, \fB(cmd)\fR splits on newlines, and \fBstring\fR,
+\fBmath\fR, \fBcount\fR, \fBcontains\fR and \fBpath\fR run in-process.
+Reads \fI/etc/fish/config.fish\fR, \fI~/.config/fish/conf.d/*.fish\fR and
+\fI~/.config/fish/config.fish\fR. Checked against
+.BR fish (1).
 .PP
 Eight Bourne-family dialects run on one bytecode core, and each is
 verified against its own reference shell rather than against zsh's

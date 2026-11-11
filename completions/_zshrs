@@ -36,6 +36,10 @@ fi
 # Words _arguments cannot place, handled first:
 #   zshrs --csh-translate [--] [--source] FILE|-   (argv[1] only, bins/zshrs.rs)
 #   zshrs --docs -s|--search PATTERN               (docs_book.rs `run`)
+if [[ $words[2] == --fish-translate ]]; then
+  (( CURRENT == 3 )) && _alternative 'files:fish script (- for stdin):_files' && ret=0
+  return ret
+fi
 if [[ $words[2] == --csh-translate ]]; then
   if (( CURRENT == 3 )); then
     _alternative \
@@ -57,6 +61,7 @@ _arguments -S -s : \
   '--ksh[parity-mode drop-in for /bin/ksh (ksh-93)]' \
   '--sh[parity-mode drop-in for /bin/sh / POSIX (alias of --posix)]' \
   '--csh[parity-mode drop-in for /bin/csh]' \
+  '--fish[drop-in for fish: fish syntax translated to zsh]' \
   '--dash[parity-mode drop-in for dash]' \
   '--ash[parity-mode drop-in for ash]' \
   '--mksh[parity-mode drop-in for mksh]' \
@@ -71,6 +76,7 @@ _arguments -S -s : \
   '(1 *)--doctor[full diagnostic report of shell health, caches, and performance]' \
   '--json[with --doctor: the same report as one JSON object]' \
   ${not}'(- 1 *)--csh-translate[print the zsh translation of a csh script]' \
+  ${not}'(- 1 *)--fish-translate[print the zsh translation of a fish script]' \
   '(-)--banner[print the ZSHRS logo, version and builtin totals, and daemon status]' \
   '(-)--prewarm-autoloads[compile every _* completer on \$fpath into autoloads.rkyv]' \
   '--disasm[print fusevm bytecode to stdout before each VM run]' \

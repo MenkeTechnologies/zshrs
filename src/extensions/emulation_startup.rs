@@ -88,6 +88,8 @@ pub enum Personality {
     Dash = 6,
     /// `--csh`.
     Csh = 7,
+    /// `--fish` — fish source translated to zsh.
+    Fish = 8,
 }
 
 impl Personality {
@@ -102,6 +104,8 @@ impl Personality {
             Personality::Ksh93 | Personality::Mksh | Personality::Pdksh => "ksh",
             Personality::Dash => "dash",
             Personality::Csh => "csh",
+            // fish text is translated to zsh before it runs: zsh options underneath
+            Personality::Fish => "zsh",
         }
     }
 
@@ -113,7 +117,7 @@ impl Personality {
             Personality::Bash => Some("BASH_ENV"),
             Personality::Ksh93 | Personality::Mksh | Personality::Pdksh => Some("ENV"),
             Personality::Sh | Personality::Dash => Some("ENV"),
-            Personality::Zsh | Personality::Csh => None,
+            Personality::Zsh | Personality::Csh | Personality::Fish => None,
         }
     }
 
@@ -201,6 +205,7 @@ pub fn personality() -> Personality {
         5 => Personality::Sh,
         6 => Personality::Dash,
         7 => Personality::Csh,
+        8 => Personality::Fish,
         _ => Personality::Zsh,
     }
 }
@@ -260,6 +265,9 @@ const SYS_SUID_PROFILE: &str = "/etc/suid_profile";
 
 /// csh's system-wide rc and login files (tcsh(1) "Startup and shutdown").
 const SYS_CSHRC: &str = "/etc/csh.cshrc";
+
+/// fish's system-wide configuration file.
+const SYS_FISH_CONFIG: &str = "/etc/fish/config.fish";
 const SYS_CSH_LOGIN: &str = "/etc/csh.login";
 const SYS_CSH_LOGOUT: &str = "/etc/csh.logout";
 
@@ -488,6 +496,32 @@ fn files_for(p: Personality, c: &Ctx) -> Vec<PathBuf> {
                 files.extend(c.home.map(|h| h.join(".login")));
             }
         }
+
+        // fish(1): "/etc/fish/config.fish", then the user's `conf.d` snippets
+        // (sorted by file name) and `config.fish`, under `$XDG_CONFIG_HOME/fish`
+        // or `~/.config/fish`. fish reads them for every invocation, login or not.
+        Personality::Fish => {
+            if c.privileged {
+                return files;
+            }
+            files.extend(sys_file(SYS_FISH_CONFIG));
+            let base = std::env::var_os("XDG_CONFIG_HOME")
+                .filter(|v| !v.is_empty())
+                .map(|v| PathBuf::from(v).join("fish"))
+                .or_else(|| c.home.map(|h| h.join(".config").join("fish")));
+            if let Some(dir) = base {
+                let mut snippets: Vec<PathBuf> = std::fs::read_dir(dir.join("conf.d"))
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .map(|e| e.path())
+                    .filter(|p| p.extension().is_some_and(|x| x == "fish"))
+                    .collect();
+                snippets.sort();
+                files.extend(snippets);
+                files.push(dir.join("config.fish"));
+            }
+        }
     }
     files
 }
@@ -620,7 +654,7 @@ pub fn apply_personality_param_deltas() {
     let p = personality();
     // csh/tcsh runs on translated zsh text that reads `$OSTYPE` and has its own
     // `which`; only the Bourne-family drop-ins get the parameter deltas.
-    if matches!(p, Personality::Zsh | Personality::Csh) {
+    if matches!(p, Personality::Zsh | Personality::Csh | Personality::Fish) {
         return;
     }
     // EVERY drop-in: `$OPTARG` starts unset (`${OPTARG+set}` is empty in bash,
@@ -1026,7 +1060,7 @@ pub fn csh_input(
     src: &str,
     translate: fn(&str) -> Result<String, String>,
 ) -> Result<String, String> {
-    if personality() != Personality::Csh {
+    if !translating() {
         return Ok(src.to_string());
     }
     let text = translate(src)?;
@@ -1034,8 +1068,58 @@ pub fn csh_input(
         // (the options persist; re-running `setopt` would also reset `$?`)
         Ok(text)
     } else {
-        Ok(format!("{}{text}", csh_preamble()))
+        Ok(format!("{}{text}", translation_preamble()))
     }
+}
+
+/// Exit status when the input does not translate: fish reports a syntax error as 127.
+pub fn translation_error_status() -> i32 {
+    if personality() == Personality::Fish {
+        127
+    } else {
+        1
+    }
+}
+
+/// True when the drop-in's input is foreign-shell text that is translated to zsh
+/// before it runs (`--csh`, `--fish`).
+pub fn translating() -> bool {
+    matches!(personality(), Personality::Csh | Personality::Fish)
+}
+
+/// The zsh-side helpers the selected translator's output relies on.
+fn translation_preamble() -> String {
+    if personality() == Personality::Fish {
+        let exe = std::env::current_exe()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| "zshrs".to_string());
+        crate::fish::preamble(&exe)
+    } else {
+        csh_preamble()
+    }
+}
+
+/// The selected translator, whole-script form.
+pub fn translate_script(src: &str) -> Result<String, String> {
+    if personality() == Personality::Fish {
+        crate::fish::translate(src)
+    } else {
+        crate::csh::translate(src)
+    }
+}
+
+/// The selected translator for input that may still be arriving.
+fn translate_partial(src: &str) -> Result<String, String> {
+    if personality() == Personality::Fish {
+        crate::fish::translate(src)
+    } else {
+        crate::csh::translate_partial(src)
+    }
+}
+
+/// An error that means "keep reading lines" rather than "report and drop the input".
+fn needs_more_input(msg: &str) -> bool {
+    msg.ends_with("not found.") || (personality() == Personality::Fish && crate::fish::is_incomplete(msg))
 }
 
 thread_local! {
@@ -1049,7 +1133,7 @@ thread_local! {
 /// until a later line closes it, so a `foreach` typed over several lines
 /// runs once at `end`; the caller gets `None` until then.
 pub fn csh_line(line: &str) -> Option<String> {
-    if personality() != Personality::Csh {
+    if !translating() {
         return Some(line.to_string());
     }
     CSH_PENDING.with(|p| {
@@ -1062,12 +1146,12 @@ pub fn csh_line(line: &str) -> Option<String> {
         if line.chars().rev().take_while(|&c| c == '\\').count() % 2 == 1 {
             return None;
         }
-        match csh_input(&pending, crate::csh::translate_partial) {
+        match csh_input(&pending, translate_partial) {
             Ok(text) => {
                 pending.clear();
                 Some(text)
             }
-            Err(msg) if msg.ends_with("not found.") => None,
+            Err(msg) if needs_more_input(&msg) => None,
             Err(msg) => {
                 pending.clear();
                 eprintln!("{msg}");
@@ -1112,7 +1196,7 @@ static CSH_SLURPED: AtomicBool = AtomicBool::new(false);
 /// file would give). Only the first call does it; `None` afterwards and when
 /// a block is already being collected line by line.
 pub fn csh_slurp(first: &str, mut more: impl FnMut() -> String) -> Option<String> {
-    if personality() != Personality::Csh
+    if !translating()
         || CSH_PENDING.with(|p| !p.borrow().is_empty())
         || CSH_SLURPED.swap(true, Ordering::Relaxed)
     {
@@ -1127,11 +1211,11 @@ pub fn csh_slurp(first: &str, mut more: impl FnMut() -> String) -> Option<String
         src.push('\n');
         src.push_str(line.strip_suffix('\n').unwrap_or(&line));
     }
-    match csh_input(&src, crate::csh::translate) {
+    match csh_input(&src, translate_script) {
         Ok(text) => Some(text),
         Err(msg) => {
             eprintln!("{msg}");
-            crate::ported::builtin::zexit(1, crate::ported::zsh_h::ZEXIT_NORMAL);
+            crate::ported::builtin::zexit(translation_error_status(), crate::ported::zsh_h::ZEXIT_NORMAL);
             None
         }
     }
@@ -1141,7 +1225,7 @@ pub fn csh_slurp(first: &str, mut more: impl FnMut() -> String) -> Option<String
 /// still holding, translated with end-of-file semantics (the reached body
 /// runs). `None` when nothing is pending.
 pub fn csh_flush_pending() -> Option<String> {
-    if personality() != Personality::Csh {
+    if !translating() {
         return None;
     }
     CSH_PENDING.with(|p| {
@@ -1150,7 +1234,7 @@ pub fn csh_flush_pending() -> Option<String> {
             return None;
         }
         let src = std::mem::take(&mut *pending);
-        match csh_input(&src, crate::csh::translate) {
+        match csh_input(&src, translate_script) {
             Ok(text) => Some(text),
             Err(msg) => {
                 eprintln!("{msg}");
@@ -1165,14 +1249,14 @@ pub fn csh_flush_pending() -> Option<String> {
 /// `zshrs --csh` print `parse error near` for every rc file. Other
 /// personalities source the file as is.
 fn source_startup_file(path: &Path) {
-    if personality() != Personality::Csh {
+    if !translating() {
         let _ = crate::ported::init::source(&path.to_string_lossy());
         return;
     }
     let Ok(contents) = std::fs::read_to_string(path) else {
         return;
     };
-    let Ok(text) = csh_input(&contents, crate::csh::translate) else {
+    let Ok(text) = csh_input(&contents, translate_script) else {
         return;
     };
     let name = path.to_string_lossy().into_owned();

@@ -72,7 +72,13 @@ pub fn enabled() -> bool {
         // These engines are zshrs-original — no shell zshrs stands in for
         // has autosuggestion ghost text or input highlighting, so a
         // drop-in that renders them does not look like its reference.
-        None => !crate::extensions::emulation_startup::emulating(),
+        // `--fish` is the exception: autosuggestion and input highlighting are
+        // what fish itself has.
+        None => {
+            !crate::extensions::emulation_startup::emulating()
+                || crate::extensions::emulation_startup::personality()
+                    == crate::extensions::emulation_startup::Personality::Fish
+        }
     }
 }
 

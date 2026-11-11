@@ -338,6 +338,10 @@ pub mod emulation_output;
 /// (Rust-only; no zsh C counterpart).
 #[path = "extensions/csh/mod.rs"]
 pub mod csh;
+/// fish source → zsh source translator behind `zshrs --fish`
+/// (zshrs-original; the reference is fish 4.x).
+#[path = "extensions/fish/mod.rs"]
+pub mod fish;
 /// `emulation_startup` submodule — per-drop-in startup/logout files (Rust-only).
 #[path = "extensions/emulation_startup.rs"]
 pub mod emulation_startup;

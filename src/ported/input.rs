@@ -741,10 +741,13 @@ pub fn inputline() -> i32 {
     // (`foreach` … `end`) is held back and an empty line stands in for it.
     // A here-document body (read while `stophist` is raised, c:lex.c:286) is
     // literal text and passes untouched.
-    let in_heredoc = crate::ported::hist::stophist.load(std::sync::atomic::Ordering::SeqCst)
-        >= crate::ported::zsh_h::STOPHIST_DELTA;
-    let line = if crate::emulation_startup::personality()
-        == crate::emulation_startup::Personality::Csh
+    // fish has no here-documents, and its input runs with BANGHIST off, which leaves
+    // `stophist` at STOPHIST_DELTA for every line, so the test does not apply to it.
+    let in_heredoc = crate::emulation_startup::personality()
+        != crate::emulation_startup::Personality::Fish
+        && crate::ported::hist::stophist.load(std::sync::atomic::Ordering::SeqCst)
+            >= crate::ported::zsh_h::STOPHIST_DELTA;
+    let line = if crate::emulation_startup::translating()
         && !in_heredoc
         && !csh_flushed
     {
