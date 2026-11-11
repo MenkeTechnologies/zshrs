@@ -54,16 +54,22 @@ fn run_zshrs_parity_bytes(code: &str) -> (i32, Vec<u8>) {
 /// Create a per-test temp dir under $TMPDIR with a unique name.
 /// Caller is responsible for cleanup (or accept tmpfs cleanup).
 fn tempdir_for_test() -> String {
+    // The clock alone is not unique: macOS reports microseconds, so two
+    // tests on parallel threads could get the same directory and see each
+    // other's files. The per-process counter makes every name distinct.
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let base = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string());
     let pid = std::process::id();
+    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     let path = format!(
-        "{}/zshrs-test-{}-{}",
+        "{}/zshrs-test-{}-{}-{}",
         base.trim_end_matches('/'),
         pid,
+        seq,
         nanos
     );
     std::fs::create_dir_all(&path).expect("failed to create tempdir");
