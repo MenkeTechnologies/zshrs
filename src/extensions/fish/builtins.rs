@@ -220,6 +220,12 @@ fn string(args: &[String]) -> i32 {
         Ok(o) => o,
         Err(e) => return err(&format!("string {sub}"), &e),
     };
+    // `string join / -- a b`: fish takes `--` after the separator too
+    let o = if matches!(sub.as_str(), "join" | "join0" | "pad" | "length" | "sub" | "trim" | "upper" | "lower" | "repeat" | "escape" | "unescape" | "shorten" | "collect") {
+        without_dashdash(&o)
+    } else {
+        o
+    };
     let quiet = o.has('q');
     let mut out = Out::new(quiet, o.has('z') && matches!(sub.as_str(), "split0" | "join0"));
     let status = match sub.as_str() {

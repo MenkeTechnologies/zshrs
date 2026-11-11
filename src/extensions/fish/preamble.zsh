@@ -17,6 +17,7 @@ __fish_echo() {
   return 0
 }
 __fish_ret() { return $1 }
+_() { print -r -- "$*" }
 __fish_slice() {
   local -a src=("${(@P)2}") r
   local n=$#src a=$3 b=$4 i
@@ -82,10 +83,38 @@ __fish_set_list() {
   return 0
 }
 __fish_set_dynamic() {
-  local a
-  while [[ ${1-} == -* ]]; do shift; done
-  a=$1; shift
-  builtin eval "typeset -g -a $a; $a=(\"\$@\")"
+  local exp= erase= query= app= pre= n sep=' '
+  while [[ ${1-} == -* ]]; do
+    case $1 in
+      -x|--export) exp=1 ;;
+      -e|--erase) erase=1 ;;
+      -q|--query) query=1 ;;
+      -a|--append) app=1 ;;
+      -p|--prepend) pre=1 ;;
+      --) shift; break ;;
+    esac
+    shift
+  done
+  n=$1; shift
+  [[ -n $n ]] || return 1
+  case $n in
+    PATH) n=path ;; CDPATH) n=cdpath ;; MANPATH) n=manpath ;; hostname) n=HOST ;;
+    path|cdpath|fpath|manpath|mailpath|module_path|signals|options|commands|functions|aliases|parameters|history|dirstack|widgets|keymaps|modules|nameddirs|userdirs|galiases|saliases|funcstack|jobtexts|builtins|reswords|status|prompt|psvar|watch) n=_fish_v_$n ;;
+  esac
+  [[ $n == *PATH ]] && sep=:
+  if [[ -n $query ]]; then (( ${+parameters[$n]} )); return; fi
+  if [[ -n $erase ]]; then unset "$n"; return 0; fi
+  if [[ -n $exp ]]; then
+    local -a __v=("$@")
+    [[ ${(Pt)n} == array* ]] && unset "$n"
+    typeset -gx "$n=${(j:$sep:)__v}"
+    return 0
+  fi
+  [[ -n ${parameters[$n]} && ${(Pt)n} != array* ]] && unset "$n"
+  typeset -ga "$n"
+  if [[ -n $app ]]; then builtin eval "$n+=(\"\$@\")"
+  elif [[ -n $pre ]]; then builtin eval "$n=(\"\$@\" \"\${(@)$n}\")"
+  else builtin eval "$n=(\"\$@\")"; fi
 }
 type() {
   local q= t= a n k r=0
@@ -141,7 +170,8 @@ set_color() {
       -u|--underline) r+=(4) ;;
       -r|--reverse) r+=(7) ;;
       -b|--background) bg=$1; shift ;;
-      -c|--print-colors|-v|--version) ;;
+      -c|--print-colors) print -rl -- black blue brblack brblue brcyan brgreen brmagenta brred brwhite bryellow cyan green magenta red white yellow normal; return 0 ;;
+      -v|--version) ;;
       -*) ;;
       *) c=$a ;;
     esac
@@ -311,33 +341,23 @@ zle reset-prompt }"
   return 0
 }
 __fish_commandline() {
-  local a t ch tok= cut= cur= buf=
+  # editing operations act on the zle buffer; reading is done by
+  # __fish_cmdline_read, which answers from the line being completed while a
+  # completion runs (fish's transient commandline)
+  local a t
+  local -a reads
   while (( $# )); do
     a=$1; shift
     case $a in
-      -f|--function) t=${__fish_widgets[$1]:-$1}; shift; zle $t 2>/dev/null ;;
-      -r|--replace) BUFFER=${1-}; CURSOR=${#BUFFER}; shift $(( $# > 0 )) ;;
-      -i|--insert) LBUFFER+=${1-}; shift $(( $# > 0 )) ;;
-      -a|--append) RBUFFER+=${1-}; shift $(( $# > 0 )) ;;
-      -C|--cursor) if (( $# )); then CURSOR=$1; shift; else print -r -- $CURSOR; return 0; fi ;;
-      -b|--current-buffer) buf=1 ;;
-      -t|--current-token) cur=1 ;;
-      -o|--tokenize) tok=1 ;;
-      -c|--cut-at-cursor) cut=1 ;;
-      -[a-z][a-z]*)
-        for ch in ${(s::)a#-}; do
-          case $ch in o) tok=1 ;; c) cut=1 ;; t) cur=1 ;; b) buf=1 ;; esac
-        done ;;
+      -f|--function) t=${__fish_widgets[$1]:-$1}; shift; zle $t 2>/dev/null; return 0 ;;
+      -r|--replace) BUFFER=${1-}; CURSOR=${#BUFFER}; return 0 ;;
+      -i|--insert) LBUFFER+=${1-}; return 0 ;;
+      -a|--append) RBUFFER+=${1-}; return 0 ;;
+      -C|--cursor) if (( $# )) && [[ $1 == <-> ]]; then CURSOR=$1; return 0; fi; reads+=($a) ;;
+      *) reads+=($a) ;;
     esac
   done
-  if [[ -n $tok ]]; then
-    if (( ${+__fish_toks} )); then print -rl -- "${(@)__fish_toks}"; else print -rl -- ${(z)LBUFFER}; fi
-  elif [[ -n $cur ]]; then
-    if (( ${+__fish_cur} )); then print -r -- $__fish_cur; else t=(${(z)LBUFFER}); print -r -- ${t[-1]-}; fi
-  elif [[ -n $buf ]]; then
-    print -r -- $BUFFER
-  fi
-  return 0
+  __fish_cmdline_read "${BUFFER-}" "${CURSOR-0}" "${(@)reads}"
 }
 typeset -gA __fish_events
 __fish_on_event() {
@@ -363,6 +383,8 @@ __fish_argparse() {
     case $1 in
       -n|--name) name=$2; shift 2 ;;
       -x|--exclusive|-N|--min-args|-X|--max-args) shift 2 ;;
+      --name=*) name=${1#*=}; shift ;;
+      --exclusive=*|--min-args=*|--max-args=*) shift ;;
       -i|--ignore-unknown) ign=1; shift ;;
       -u|--move-unknown) mu=1; shift ;;
       -s|--stop-nonopt) stop=1; shift ;;
@@ -461,7 +483,15 @@ __fish_argparse() {
 fish_vi_key_bindings() { return 0 }
 fish_default_key_bindings() { return 0 }
 fish_config() { return 0 }
-command_not_found_handler() { print -u2 -r -- "fish: Unknown command: $1"; return 127 }
+# `complete` reached indirectly (`set c complete …; $c …`); a literal `complete`
+# word is rewritten to __fish_complete by the translator
+complete() { __fish_complete "$@" }
+command_not_found_handler() {
+  # fish autoloads a function from NAME.fish on $fish_function_path (and its own functions)
+  if __fish_autoload "$1"; then "$@"; return; fi
+  print -u2 -r -- "fish: Unknown command: $1"; return 127
+}
+__fish_cl_words() { (( $# )) && print -rl -- "$@"; return 0 }
 source() {
   local __f=$1 __t
   shift
@@ -524,4 +554,8 @@ if [[ -o interactive ]]; then
   PROMPT='$(__fish_prompt_render fish_prompt)'
   __fish_rprompt() { (( $+functions[fish_right_prompt] )) && __fish_prompt_render fish_right_prompt }
   RPROMPT='$(__fish_rprompt)'
+  # fish completes out of the box: compsys, with fish's own definitions first
+  autoload -Uz compinit && compinit -d ${ZSHRS_HOME:-$HOME/.zshrs}/fish.zcompdump
+  zstyle ':completion:*' completer _fish_complete _complete _ignored
+  compdef _precommand and or not begin
 fi

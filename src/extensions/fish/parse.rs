@@ -171,6 +171,8 @@ type PResult<T> = Result<T, String>;
 pub struct Parser {
     s: Vec<char>,
     i: usize,
+    /// Open `{ … }` blocks; a `}` at statement start closes one.
+    braces: usize,
 }
 
 /// Parse a whole fish script.
@@ -178,6 +180,7 @@ pub fn parse(src: &str) -> PResult<Script> {
     let mut p = Parser {
         s: src.chars().collect(),
         i: 0,
+        braces: 0,
     };
     let script = p.script(&[]).map_err(|e| {
         let line = p.s[..p.i.min(p.s.len())].iter().filter(|&&c| c == '\n').count() + 1;
@@ -265,6 +268,9 @@ impl Parser {
             if self.peek().is_none() || self.peek() == Some(')') {
                 break;
             }
+            if self.braces > 0 && self.peek() == Some('}') {
+                break;
+            }
             if let Some(kw) = self.peek_kw() {
                 if terms.contains(&kw.as_str()) {
                     break;
@@ -338,6 +344,25 @@ impl Parser {
         }];
         loop {
             let save = self.i;
+            // `if a && b` / `while a || b`: the operator form on the same line
+            self.skip_blank();
+            let op = if self.starts_with("&&") {
+                Some(Conn::And)
+            } else if self.starts_with("||") {
+                Some(Conn::Or)
+            } else {
+                None
+            };
+            if let Some(conn) = op {
+                self.i += 2;
+                self.skip_blank_nl();
+                out.push(Stmt {
+                    conn,
+                    job: self.job()?,
+                });
+                continue;
+            }
+            self.i = save;
             self.skip_separators();
             let conn = match self.peek_word_text().as_deref() {
                 Some("and") => Conn::And,
@@ -422,6 +447,23 @@ impl Parser {
         self.skip_blank();
         if let Some(c) = self.env_prefixed_compound()? {
             return Ok(c);
+        }
+        // fish 4.1 brace block: `{ cmd; cmd }`
+        if self.peek() == Some('{') && matches!(self.at(1), Some(' ' | '\t' | '\n')) {
+            self.i += 1;
+            self.braces += 1;
+            let body = self.script(&[]);
+            self.braces -= 1;
+            let body = body?;
+            self.skip_separators();
+            if self.peek() != Some('}') {
+                return Err("fish: Missing end to balance this brace".to_string());
+            }
+            self.i += 1;
+            return Ok(Cmd::Begin {
+                body,
+                redirs: self.trailing_redirs()?,
+            });
         }
         let kw = self.peek_kw();
         match kw.as_deref() {
@@ -611,6 +653,7 @@ impl Parser {
             match self.peek() {
                 None | Some('\n' | ';' | ')') => break,
                 Some('2') if self.starts_with("2>|") => break,
+                Some('}') if self.braces > 0 && matches!(self.at(1), None | Some(' ' | '\t' | '\n' | ';' | ')')) => break,
                 Some('#') if words.is_empty() || self.at_word_start() => {
                     self.skip_comment();
                     break;

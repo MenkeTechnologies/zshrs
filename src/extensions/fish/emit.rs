@@ -60,6 +60,9 @@ pub struct Emitter {
 struct Frame {
     vars: std::collections::HashMap<String, String>,
     barrier: bool,
+    /// The scope names variables at run time (`set $name`, `$$name`), which only plain
+    /// names can follow; its locals are not renamed.
+    plain: bool,
 }
 
 thread_local! {
@@ -165,6 +168,11 @@ impl Emitter {
 
     /// Register `name` as local to the innermost block and return its zsh name.
     pub(super) fn declare_block_local(&mut self, name: &str) -> String {
+        if self.scopes.iter().rev().take_while(|f| !f.barrier).any(|f| f.plain)
+            || self.scopes.iter().rev().find(|f| f.barrier).is_some_and(|f| f.plain)
+        {
+            return zname(name);
+        }
         if let Some(m) = self.scopes.last().and_then(|f| f.vars.get(name)) {
             return m.clone();
         }
@@ -385,6 +393,7 @@ impl Emitter {
         // (`--no-scope-shadowing` keeps the locals of where it is defined in view)
         self.scopes.push(Frame {
             barrier: !no_shadow,
+            plain: uses_dynamic_names(body),
             ..Frame::default()
         });
         let mut inner = String::new();
@@ -710,7 +719,8 @@ impl Emitter {
         }
         let z = self.zn(n);
         if v.deref {
-            return format!("\"${{(@P){z}}}\"");
+            // the variable named by `$name` (its first element, when it is a list)
+            return format!("\"${{(@P)${{(j: :){z}}}}}\"");
         }
         if let Some(idx) = &v.index {
             let idx = self.index_tokens(idx);
@@ -762,7 +772,7 @@ impl Emitter {
         }
         let z = self.zn(n);
         if v.deref {
-            return format!("${{(P){z}}}");
+            return format!("${{(P)${{(j: :){z}}}}}");
         }
         if let Some(idx) = &v.index {
             let idx = self.index_tokens(idx);
@@ -873,4 +883,43 @@ fn ends_in_string_collect(s: &Script) -> bool {
         }
         _ => false,
     }
+}
+
+/// Does the script name a variable at run time (`set $name …`, `read $name`, `$$name`)?
+/// Such a function keeps its locals under their own names so the run-time name finds them.
+fn uses_dynamic_names(script: &Script) -> bool {
+    fn word_dynamic(w: &Word) -> bool {
+        w.parts.iter().any(|p| match p {
+            Part::Var(v) => v.deref,
+            Part::Double(ds) => ds.iter().any(|d| matches!(d, DPart::Var(v) if v.deref)),
+            Part::Cmd(s, _) => uses_dynamic_names(s),
+            _ => false,
+        })
+    }
+    fn cmd_dynamic(c: &Cmd) -> bool {
+        match c {
+            Cmd::Simple { words, .. } => {
+                let named = matches!(words.first().and_then(Word::bare), Some("set" | "read"))
+                    && words[1..]
+                        .iter()
+                        .find(|w| !w.bare().is_some_and(|t| t.starts_with('-')))
+                        .is_some_and(|w| w.text().is_none() && !matches!(w.parts.first(), Some(Part::Raw(_))));
+                named || words.iter().any(word_dynamic)
+            }
+            Cmd::If { arms, els, .. } => {
+                arms.iter().any(|(c, b)| script_dynamic(c) || uses_dynamic_names(b))
+                    || els.as_ref().is_some_and(uses_dynamic_names)
+            }
+            Cmd::While { cond, body, .. } => script_dynamic(cond) || uses_dynamic_names(body),
+            Cmd::For { list, body, .. } => list.iter().any(word_dynamic) || uses_dynamic_names(body),
+            Cmd::Switch { cases, .. } => cases.iter().any(|(_, b)| uses_dynamic_names(b)),
+            Cmd::Begin { body, .. } => uses_dynamic_names(body),
+            Cmd::WithEnv { inner, .. } => cmd_dynamic(inner),
+            Cmd::Function { .. } => false,
+        }
+    }
+    fn script_dynamic(stmts: &[Stmt]) -> bool {
+        stmts.iter().any(|st| st.job.cmds.iter().any(|(c, _)| cmd_dynamic(c)))
+    }
+    script_dynamic(script)
 }
