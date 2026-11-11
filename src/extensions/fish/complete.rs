@@ -331,9 +331,17 @@ fn getopt(args: &[String]) -> Result<(Vec<(char, Option<String>)>, Vec<String>),
                 Some((n, v)) => (n, Some(v.to_string())),
                 None => (l, None),
             };
-            let Some(&(_, c, kind)) = LONG_OPTS.iter().find(|(n, _, _)| *n == name) else {
-                return Err(format!("complete: {a}: unknown option"));
+            // fish wgetopt `find_matching_long_opt`: an exact name, else the one
+            // option the text abbreviates (ansible.fish writes `--l poll`)
+            let exact = LONG_OPTS.iter().find(|(n, _, _)| *n == name);
+            let mut prefixed = LONG_OPTS.iter().filter(|(n, _, _)| !name.is_empty() && n.starts_with(name));
+            let found = match (exact, prefixed.next(), prefixed.next()) {
+                (Some(o), _, _) => o,
+                (None, Some(o), None) => o,
+                (None, Some(_), Some(_)) => return Err(format!("complete: {a}: option is ambiguous")),
+                _ => return Err(format!("complete: {a}: unknown option")),
             };
+            let &(_, c, kind) = found;
             let val = match kind {
                 1 => match inline {
                     Some(v) => Some(v),
@@ -2492,6 +2500,16 @@ mod tests {
         add(&["-c", "zt3", "-xa", "base"]);
         add(&["-c", "zt3w", "--wraps", "zt3"]);
         assert_eq!(words("zt3w ", &[]).unwrap(), ["base"]);
+    }
+
+    #[test]
+    fn long_options_may_be_abbreviated() {
+        // ansible.fish: `complete -c ansible -s P --l poll -r`
+        add(&["-c", "zt6", "--l", "poll", "--desc", "Poll"]);
+        assert_eq!(words("zt6 --p", &[]).unwrap(), ["--poll"]);
+        // `--co` is both --command and --condition
+        let argv: Vec<String> = ["complete", "--co", "x"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(builtin_complete(&argv), 2);
     }
 
     #[test]
