@@ -70,7 +70,13 @@ pub fn install_entry_environment(mut entry_env: Vec<(String, String)>, zsh_dropi
     // block below) has to be known HERE: `--zsh` publishes none of the
     // bundled-docs paths, because zsh itself sets none of them.
     crate::extensions::dash_mode::set_zsh_dropin(zsh_dropin);
-    crate::bundled_docs::publish_into(&mut entry_env);
+    // `--fish` publishes none of them either: fish exports only what it inherited.
+    let fish = std::env::args_os().next().is_some_and(|a| {
+        std::path::Path::new(&a).file_name().is_some_and(|n| n.to_string_lossy().trim_start_matches('-') == "fish")
+    }) || std::env::args_os().any(|a| a == "--fish");
+    if !fish {
+        crate::bundled_docs::publish_into(&mut entry_env);
+    }
     let _ = crate::ported::params::environ.set(entry_env);
     // Restore default SIGPIPE behavior before anything writes to
     // stdout/stderr. Rust runtime installs SIG_IGN on SIGPIPE in

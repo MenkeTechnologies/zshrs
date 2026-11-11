@@ -262,7 +262,7 @@ fn helpdir_value() -> Option<String> {
 /// reads. [`inherited_home`] is the test that keeps the two shells equal
 /// in both arms.
 pub fn seed_helpdir_param() {
-    if crate::dash_mode::zsh_dropin() {
+    if crate::dash_mode::zsh_dropin() || fish_dropin() {
         return; // `--zsh`: zsh sets no HELPDIR, so neither does the drop-in
     }
     if crate::ported::params::getsparam("HELPDIR").is_some_and(|v| !v.is_empty()) {
@@ -271,6 +271,11 @@ pub fn seed_helpdir_param() {
     if let Some(v) = helpdir_value() {
         crate::ported::params::setsparam("HELPDIR", &v);
     }
+}
+
+/// `--fish` publishes no `MANPATH` / `INFOPATH` either: fish exports only what it inherited.
+fn fish_dropin() -> bool {
+    crate::extensions::emulation_startup::personality() == crate::extensions::emulation_startup::Personality::Fish
 }
 
 /// Materialise the pages and put them on `MANPATH` / `INFOPATH` in the OS
@@ -287,7 +292,7 @@ pub fn seed_helpdir_param() {
 /// it is a shell parameter only, seeded by [`seed_helpdir_param`] once
 /// paramtab exists.
 pub fn install_and_publish() {
-    if crate::dash_mode::zsh_dropin() {
+    if crate::dash_mode::zsh_dropin() || fish_dropin() {
         return; // `--zsh`: zsh publishes no bundled MANPATH/INFOPATH entries
     }
     let _ = ensure_installed();
@@ -307,7 +312,7 @@ pub fn install_and_publish() {
 /// re-derived from the live environment later. Editing the snapshot fixes
 /// both, and keeps the process environment in step for child commands.
 pub fn publish_into(env: &mut Vec<(String, String)>) {
-    if crate::dash_mode::zsh_dropin() {
+    if crate::dash_mode::zsh_dropin() || fish_dropin() {
         return; // `--zsh`: zsh publishes no bundled MANPATH/INFOPATH entries
     }
     let _ = ensure_installed();

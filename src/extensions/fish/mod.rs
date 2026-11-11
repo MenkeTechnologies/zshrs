@@ -57,7 +57,34 @@ pub fn is_incomplete(msg: &str) -> bool {
 
 /// The preamble with the path of this binary spliced into `source` and `eval`.
 pub fn preamble(exe: &str) -> String {
-    PREAMBLE.replace("@ZSHRS@", &exe.replace('\'', "'\\''"))
+    let mut text = PREAMBLE.replace("@ZSHRS@", &exe.replace('\'', "'\\''"));
+    text.push_str(&env_fixups());
+    text
+}
+
+/// zshrs exports a few variables fish does not (`FPATH`, `INFOPATH`, `MANPATH`, `LOGNAME`,
+/// `OLDPWD`) and leaves `USER` unexported, where fish exports exactly `HOME PATH PWD SHLVL
+/// TERM USER` on top of what it inherited. A variable the process did not inherit is
+/// taken out of the environment its children see.
+fn env_fixups() -> String {
+    let inherited = |name: &str| {
+        crate::ported::params::environ
+            .get()
+            .is_some_and(|env| env.iter().any(|(k, _)| k == name))
+    };
+    let extras: Vec<&str> = ["FPATH", "INFOPATH", "MANPATH", "LOGNAME", "OLDPWD"]
+        .into_iter()
+        .filter(|n| !inherited(n))
+        .collect();
+    let mut out = String::new();
+    if !extras.is_empty() {
+        // one statement each: a failure on one must not skip the rest
+        for n in &extras {
+            out.push_str(&format!("typeset +x {n} 2>/dev/null\n"));
+        }
+    }
+    out.push_str("[[ -n ${USER-} ]] && typeset -gx USER\n:\n"); // (ends with status 0)
+    out
 }
 
 #[cfg(test)]

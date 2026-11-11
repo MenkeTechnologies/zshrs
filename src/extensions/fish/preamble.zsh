@@ -66,41 +66,49 @@ status() {
   esac
 }
 __fish_set_list() {
-  local scope= names= exp= n k line v
-  local -a vals out
-  for k; do
-    case $k in
-      -g|--global|-U|--universal) scope=g ;;
-      -l|--local) scope=l ;;
-      -n|--names) names=1 ;;
-      -x|--export) exp=1 ;;
+  # locals are `__`-prefixed: they show up in $parameters while this runs and are skipped
+  local __sc= __nm= __ex= __n __k __line __v __t
+  local -a __vals __out
+  for __k; do
+    case $__k in
+      --global|--universal) __sc=g ;;
+      --local) __sc=l ;;
+      --names) __nm=1 ;;
+      --export) __ex=1 ;;
+      --*) ;;
+      -*) for __v in ${(s::)__k#-}; do
+            case $__v in g|U) __sc=g ;; l) __sc=l ;; n) __nm=1 ;; x) __ex=1 ;; esac
+          done ;;
     esac
   done
-  for n in ${(ok)parameters}; do
-    k=$n
-    case $n in
-      _fl_top_*) k=${n#_fl_top_}; [[ $scope == g ]] && continue ;;
-      _fl<->_*) k=${n#_fl<->_}; [[ $scope == g ]] && continue ;;
-      __fish*|_fish_x|_fl*) continue ;;
-      _fish_v_*) k=${n#_fish_v_}; [[ $scope == l ]] && continue ;;
-      path) k=PATH; [[ $scope == l ]] && continue ;;
-      cdpath) k=CDPATH; [[ $scope == l ]] && continue ;;
-      manpath) k=MANPATH; [[ $scope == l ]] && continue ;;
-      *) [[ $scope == l ]] && continue ;;
+  for __n in ${(ok)parameters}; do
+    __k=$__n
+    case $__n in
+      _fl_top_*) __k=${__n#_fl_top_}; [[ $__sc == g ]] && continue ;;
+      _fl<->_*) __k=${__n#_fl<->_}; [[ $__sc == g ]] && continue ;;
+      __fx_*) continue ;;
+      __*|_fish_x|_fl*|_fish_v_*|.*) continue ;;
+      path) __k=PATH; [[ $__sc == l ]] && continue ;;
+      cdpath) __k=CDPATH; [[ $__sc == l ]] && continue ;;
+      manpath) __k=MANPATH; [[ $__sc == l ]] && continue ;;
+      *) [[ $__sc == l ]] && continue ;;
     esac
-    [[ ${(Pt)n} == *association* || ${(Pt)n} == *special* && ${(Pt)n} != *export* ]] && continue
-    [[ -n $exp && ${(Pt)n} != *export* ]] && continue
-    if [[ -n $names ]]; then out+=($k); continue; fi
-    if [[ ${(Pt)n} == array* ]]; then vals=("${(@P)n}"); else vals=("${(P)n}"); fi
-    line=$k
-    if (( ${#vals} == 1 )); then
-      [[ -n ${vals[1]} ]] && line+=" ${(q-)vals[1]}"
+    __t=${(Pt)__n}
+    [[ $__t == *association* || ( $__t == *special* && $__t != *export* ) ]] && continue
+    [[ -n $__ex && $__t != *export* ]] && continue
+    if [[ -n $__nm ]]; then __out+=($__k); continue; fi
+    if (( ${+parameters[__fx_$__n]} )); then __vals=("${(@P)${:-__fx_$__n}}")   # an exported list
+    elif [[ $__t == array* ]]; then __vals=("${(@P)__n}")
+    else __vals=("${(P)__n}"); fi
+    __line=$__k
+    if (( ${#__vals} == 1 )); then
+      [[ -n ${__vals[1]} ]] && __line+=" ${(q-)__vals[1]}"
     else
-      for v in "${vals[@]}"; do line+=" '${v//\'/\\\'}'"; done
+      for __v in "${__vals[@]}"; do __line+=" '${__v//\'/\\\'}'"; done
     fi
-    out+=($line)
+    __out+=($__line)
   done
-  (( ${#out} )) && print -rl -- "${(@)out}"
+  (( ${#__out} )) && print -rl -- "${(@)__out}"
   return 0
 }
 __fish_set_show() {
