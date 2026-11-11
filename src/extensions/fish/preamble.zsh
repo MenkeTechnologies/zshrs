@@ -43,7 +43,44 @@ status() {
     *) [[ -o interactive ]] && print -r -- 'This is an interactive session' || print -r -- 'This is a non-interactive session' ;;
   esac
 }
-__fish_set_list() { print -rl -- ${(ok)parameters} }
+__fish_set_list() {
+  local scope= names= exp= n k line v
+  local -a vals out
+  for k; do
+    case $k in
+      -g|--global|-U|--universal) scope=g ;;
+      -l|--local) scope=l ;;
+      -n|--names) names=1 ;;
+      -x|--export) exp=1 ;;
+    esac
+  done
+  for n in ${(ok)parameters}; do
+    k=$n
+    case $n in
+      _fl_top_*) k=${n#_fl_top_}; [[ $scope == g ]] && continue ;;
+      _fl<->_*) k=${n#_fl<->_}; [[ $scope == g ]] && continue ;;
+      __fish*|_fish_x|_fl*) continue ;;
+      _fish_v_*) k=${n#_fish_v_}; [[ $scope == l ]] && continue ;;
+      path) k=PATH; [[ $scope == l ]] && continue ;;
+      cdpath) k=CDPATH; [[ $scope == l ]] && continue ;;
+      manpath) k=MANPATH; [[ $scope == l ]] && continue ;;
+      *) [[ $scope == l ]] && continue ;;
+    esac
+    [[ ${(Pt)n} == *association* || ${(Pt)n} == *special* && ${(Pt)n} != *export* ]] && continue
+    [[ -n $exp && ${(Pt)n} != *export* ]] && continue
+    if [[ -n $names ]]; then out+=($k); continue; fi
+    if [[ ${(Pt)n} == array* ]]; then vals=("${(@P)n}"); else vals=("${(P)n}"); fi
+    line=$k
+    if (( ${#vals} == 1 )); then
+      [[ -n ${vals[1]} ]] && line+=" ${(q-)vals[1]}"
+    else
+      for v in "${vals[@]}"; do line+=" '${v//\'/\\\'}'"; done
+    fi
+    out+=($line)
+  done
+  (( ${#out} )) && print -rl -- "${(@)out}"
+  return 0
+}
 __fish_set_dynamic() {
   local a
   while [[ ${1-} == -* ]]; do shift; done
@@ -318,15 +355,16 @@ emit() {
   return 0
 }
 __fish_argparse() {
-  local name=argparse ign= stop= spec s sfx short long id a o val k i c us=$'\x1f'
-  local -a vals
-  local -A kind=() alias=() acc=()
+  local name=argparse ign= stop= mu= amp= consumed= spec s sfx short long id a o val k i c us=$'\x1f'
+  local -a vals opts=()
+  local -A kind=() alias=() acc=() noopt=()
   local -a specs=() rest=() ids=()
   while (( $# )); do
     case $1 in
       -n|--name) name=$2; shift 2 ;;
       -x|--exclusive|-N|--min-args|-X|--max-args) shift 2 ;;
       -i|--ignore-unknown) ign=1; shift ;;
+      -u|--move-unknown) mu=1; shift ;;
       -s|--stop-nonopt) stop=1; shift ;;
       -h|--help) shift ;;
       --) shift; break ;;
@@ -334,7 +372,8 @@ __fish_argparse() {
     esac
   done
   for spec in $specs; do
-    s=${spec%%!*} sfx= short= long=
+    s=${spec%%!*} sfx= short= long= amp=
+    [[ $s == *'&' ]] && { amp=1; s=${s%&}; }
     case $s in
       *'=?') sfx=o; s=${s%=?} ;;
       *'=+') sfx=m; s=${s%=+} ;;
@@ -345,6 +384,7 @@ __fish_argparse() {
     else short=$s; fi
     id=${long:-$short}
     ids+=($id)
+    [[ -n $amp ]] && noopt[$id]=1
     kind[$id]=$sfx
     [[ -n $short ]] && alias[-$short]=$id
     [[ -n $long ]] && alias[--$long]=$id
@@ -357,41 +397,46 @@ __fish_argparse() {
     if [[ $a == --?* ]]; then
       o=${a%%=*} val=
       [[ $a == *=* ]] && val=${a#*=}
-      k=$alias[$o]
+      k=$alias[$o] consumed=
       if [[ -z $k ]]; then
+        [[ -n $mu ]] && { opts+=($a); continue }
         [[ -n $ign ]] && { rest+=($a); continue }
         print -u2 -r -- "$name: Unknown option '$o'"; return 2
       fi
       if [[ -n $kind[$k] ]]; then
         if [[ $a != *=* ]]; then
           if [[ $kind[$k] == o ]]; then val=
-          elif (( $# )); then val=$1; shift
+          elif (( $# )); then val=$1; consumed=1; shift
           else print -u2 -r -- "$name: Expected argument for option $o"; return 2; fi
         fi
         acc[$k]+="${acc[$k]+$us}$val"
       else
         acc[$k]+="${acc[$k]+$us}$o"
       fi
+      if [[ -z $noopt[$k] ]]; then opts+=($a); [[ -n $consumed ]] && opts+=($val); fi
     elif [[ $a == -?* ]]; then
       i=2
       while (( i <= ${#a} )); do
         c=${a[i]}
         k=$alias[-$c]
         if [[ -z $k ]]; then
+          [[ -n $mu ]] && { opts+=($a); break }
           [[ -n $ign ]] && { rest+=($a); break }
           print -u2 -r -- "$name: Unknown option '-$c'"; return 2
         fi
         if [[ -n $kind[$k] ]]; then
-          val=${a[i+1,-1]}
+          val=${a[i+1,-1]} consumed=
           if [[ -z $val ]]; then
             if [[ $kind[$k] == o ]]; then val=
-            elif (( $# )); then val=$1; shift
+            elif (( $# )); then val=$1; consumed=1; shift
             else print -u2 -r -- "$name: Expected argument for option -$c"; return 2; fi
           fi
           acc[$k]+="${acc[$k]+$us}$val"
+          if [[ -z $noopt[$k] ]]; then opts+=(-$c); [[ -n $consumed ]] && opts+=($val); fi
           break
         fi
         acc[$k]+="${acc[$k]+$us}-$c"
+        [[ -z $noopt[$k] ]] && opts+=(-$c)
         (( i++ ))
       done
     else
@@ -408,8 +453,9 @@ __fish_argparse() {
       builtin eval "_flag_$a=(\"\${(@)vals}\")"
     done
   done
-  typeset -ga __fish_argv
+  typeset -ga __fish_argv __fish_argv_opts
   __fish_argv=("${(@)rest}")
+  __fish_argv_opts=("${(@)opts}")
   return 0
 }
 fish_vi_key_bindings() { return 0 }

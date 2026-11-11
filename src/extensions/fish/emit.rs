@@ -432,7 +432,7 @@ impl Emitter {
             Some("argparse") => {
                 let all: Vec<String> = rest[1..].iter().map(|w| self.word_list(w)).collect();
                 format!(
-                    "{{ __fish_argparse {}; __fish_cs=$?; set -- \"${{__fish_argv[@]}}\"; __fish_ret $__fish_cs; }}",
+                    "{{ __fish_argparse {}; __fish_cs=$?; set -- \"${{__fish_argv[@]}}\"; argv_opts=(\"${{__fish_argv_opts[@]}}\"); __fish_ret $__fish_cs; }}",
                     all.join(" ")
                 )
             }

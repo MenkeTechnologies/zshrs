@@ -123,7 +123,8 @@ impl Emitter {
         let operands = &args[at..];
         let Some((name, idx)) = operands.first().and_then(Self::set_target) else {
             if operands.is_empty() {
-                return "__fish_set_list".into();
+                let flags: Vec<String> = args[..at].iter().map(|w| self.word_scalar(w)).collect();
+                return format!("__fish_set_list {}", flags.join(" "));
             }
             // `set $name …`: the variable is named at run time; hand it to the shim
             let all: Vec<String> = args.iter().map(|w| self.word_list(w)).collect();
@@ -133,7 +134,8 @@ impl Emitter {
         let values = &operands[1..];
 
         if f.list {
-            return "__fish_set_list".into();
+            let flags: Vec<String> = args[..at].iter().map(|w| self.word_scalar(w)).collect();
+            return format!("__fish_set_list {}", flags.join(" "));
         }
         if f.erase {
             return operands
