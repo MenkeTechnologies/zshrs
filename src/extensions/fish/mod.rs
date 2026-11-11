@@ -60,7 +60,12 @@ mod tests {
         assert_eq!(t("echo \"$x\""), "echo \"${(j: :)x}\"");
         assert_eq!(t("echo $x[2]"), "echo \"${(@)x[2,2]}\"");
         assert_eq!(t("echo $x[2..3]"), "echo \"${(@)x[2,3]}\"");
-        assert_eq!(t("echo $x.txt"), "echo ${^x}.txt");
+        // a list inside a word is a loop, so an unset variable leaves no word at all
+        assert_eq!(
+            t("echo $x.txt"),
+            "{ __fc1=(); for __fi1_0 in ${x+\"${x[@]}\"}; do __fc1+=(\"${__fi1_0}\".txt); done; echo \"${__fc1[@]}\"; }"
+        );
+        assert_eq!(t("echo $HOME/x"), "echo ${^HOME}/x");
     }
 
     #[test]
@@ -93,10 +98,32 @@ mod tests {
     }
 
     #[test]
-    fn globs_and_literals() {
-        assert_eq!(t("echo *.txt ?x [a]"), "echo *.txt '?x' '[a]'");
+    fn literals_that_zsh_would_glob_are_quoted() {
+        assert_eq!(t("echo ?x [a]"), "echo '?x' '[a]'");
         assert_eq!(t("echo ~/a"), "echo ~/a");
         assert_eq!(t("echo {a,b}c"), "echo {a,b}c");
+    }
+
+    #[test]
+    fn a_wildcard_command_is_isolated_so_no_match_ends_only_that_command() {
+        let out = t("echo *.txt ?x");
+        assert!(out.starts_with("{ __fish_g=; builtin eval 'echo *.txt '\\''?x'\\''; __fish_cs=$?; __fish_g=1'"), "{out}");
+        assert!(out.contains("|| __fish_cs=124"), "{out}");
+    }
+
+    #[test]
+    fn set_l_in_a_block_is_scoped_to_the_block() {
+        let out = t("set -l a 1\nif true\nset -l a 2\necho $a\nend\necho $a");
+        // top level stays plain; the block's `a` lives under its own name
+        assert!(out.starts_with("a=(1)\nif true\nthen\ntypeset -ga _fl1_a=(2)\necho "), "{out}");
+        assert!(out.contains("${_fl1_a+\"${_fl1_a[@]}\"}"), "{out}");
+        assert!(out.ends_with("fi\necho ${a+\"${a[@]}\"}"), "{out}");
+    }
+
+    #[test]
+    fn two_list_variables_in_a_word_vary_the_first_fastest() {
+        let out = t("echo $a$b");
+        assert!(out.contains("for __fi1_1 in ${b+\"${b[@]}\"}; do for __fi1_0 in ${a+\"${a[@]}\"}; do"), "{out}");
     }
 
     #[test]

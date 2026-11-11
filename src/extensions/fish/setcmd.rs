@@ -2,7 +2,7 @@
 //! zsh: `set`, `read`, `alias` and `abbr`. Each is rewritten to the zsh
 //! construct with the same effect on the caller's scope.
 
-use super::emit::{quote_lit, squote, zname, Emitter};
+use super::emit::{quote_lit, squote, Emitter};
 use super::parse::Word;
 
 /// Options of `set`, after the combined short flags (`-gx`) are split.
@@ -10,6 +10,7 @@ use super::parse::Word;
 struct SetFlags {
     local: bool,
     global: bool,
+    universal: bool,
     export: bool,
     unexport: bool,
     erase: bool,
@@ -58,7 +59,11 @@ impl Emitter {
             for c in letters {
                 match c {
                     'l' | 'f' => f.local = true,
-                    'g' | 'U' => f.global = true,
+                    'g' => f.global = true,
+                    'U' => {
+                        f.global = true;
+                        f.universal = true;
+                    }
                     'x' => f.export = true,
                     'u' => f.unexport = true,
                     'e' => f.erase = true,
@@ -95,7 +100,25 @@ impl Emitter {
         }
     }
 
+    /// `set -U` also writes the variable to the universal store; `set -U -e` removes it.
     pub(super) fn set_cmd(&mut self, args: &[Word]) -> String {
+        let (f, at) = self.set_flags(args);
+        let text = self.set_inner(args);
+        if !f.universal || f.query || f.list {
+            return text;
+        }
+        let names: Vec<String> = args[at..]
+            .iter()
+            .filter_map(Self::set_target)
+            .take(if f.erase { usize::MAX } else { 1 })
+            .map(|(n, _)| self.zn(&n))
+            .collect();
+        let call = if f.erase { "__fish_uvar_erase" } else { "__fish_uvar_save" };
+        let saves: Vec<String> = names.iter().map(|n| format!("{call} {n}")).collect();
+        format!("{text}; {}", saves.join("; "))
+    }
+
+    fn set_inner(&mut self, args: &[Word]) -> String {
         let (f, at) = self.set_flags(args);
         let operands = &args[at..];
         let Some((name, idx)) = operands.first().and_then(Self::set_target) else {
@@ -106,7 +129,7 @@ impl Emitter {
             let all: Vec<String> = args.iter().map(|w| self.word_list(w)).collect();
             return format!("__fish_set_dynamic {}", all.join(" "));
         };
-        let z = zname(&name);
+        let mut z = self.zn(&name);
         let values = &operands[1..];
 
         if f.list {
@@ -117,8 +140,8 @@ impl Emitter {
                 .iter()
                 .filter_map(Self::set_target)
                 .map(|(n, i)| match i {
-                    Some(i) => format!("{}[{}]=()", zname(&n), Self::subscript(&i)),
-                    None => format!("unset {}", zname(&n)),
+                    Some(i) => format!("{}[{}]=()", self.zn(&n), Self::subscript(&i)),
+                    None => format!("unset {}", self.zn(&n)),
                 })
                 .collect::<Vec<_>>()
                 .join("; ");
@@ -128,7 +151,7 @@ impl Emitter {
                 .iter()
                 .filter_map(Self::set_target)
                 .map(|(n, i)| {
-                    let zn = zname(&n);
+                    let zn = self.zn(&n);
                     match (n.as_str(), i) {
                         ("argv", None) => "1".to_string(),
                         (_, None) => format!("${{+{zn}}}"),
@@ -159,6 +182,10 @@ impl Emitter {
         }
         if f.prepend {
             return format!("{z}=({list} \"${{{z}[@]}}\")");
+        }
+        if f.local && self.block_level() > 0 {
+            z = self.declare_block_local(&name);
+            return format!("typeset -ga {z}=({list})");
         }
         if f.local && self.fn_depth > 0 {
             return format!("local -a {z}=({list})");
@@ -226,7 +253,8 @@ impl Emitter {
                 }
                 "--" => {}
                 s if s.starts_with('-') && s.len() > 1 => {}
-                _ => names.push(zname(&t)),
+                _ if local && self.block_level() > 0 => names.push(self.declare_block_local(&t)),
+                _ => names.push(self.zn(&t)),
             }
         }
         if names.is_empty() {

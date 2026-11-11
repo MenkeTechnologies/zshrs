@@ -17,6 +17,19 @@ __fish_echo() {
   return 0
 }
 __fish_ret() { return $1 }
+__fish_slice() {
+  local -a src=("${(@P)2}") r
+  local n=$#src a=$3 b=$4 i
+  (( a < 0 )) && a=$(( n + a + 1 ))
+  (( b < 0 )) && b=$(( n + b + 1 ))
+  if (( a <= b )); then
+    for (( i = a; i <= b; i++ )); do (( i >= 1 && i <= n )) && r+=("${src[i]}"); done
+  else
+    for (( i = a; i >= b; i-- )); do (( i >= 1 && i <= n )) && r+=("${src[i]}"); done
+  fi
+  typeset -ga $1
+  builtin eval "$1=(\"\${(@)r}\")"
+}
 status() {
   case ${1-} in
     is-interactive|-i|--is-interactive) [[ -o interactive ]] ;;
@@ -121,10 +134,191 @@ random() {
   esac
 }
 isatty() { local fd=${1-1}; case $fd in stdin) fd=0;; stdout) fd=1;; stderr) fd=2;; esac; [[ -t $fd ]] }
+dirprev=()
+dirnext=()
+__fish_chpwd() {
+  [[ -n ${__fish_nav-} ]] && return
+  dirprev+=($OLDPWD)
+  dirnext=()
+  (( ${#dirprev} > 25 )) && dirprev[1]=()
+}
+chpwd_functions+=(__fish_chpwd)
+prevd() {
+  local n=1 d
+  [[ ${1-} == -l ]] && shift
+  [[ ${1-} == <-> ]] && n=$1
+  while (( n-- > 0 )); do
+    (( ${#dirprev} )) || { print -u2 -r -- 'prevd: Hit end of history'; return 1 }
+    d=$dirprev[-1]
+    dirprev[-1]=()
+    dirnext+=($PWD)
+    __fish_nav=1
+    builtin cd -- $d
+    __fish_nav=
+  done
+}
+nextd() {
+  local n=1 d
+  [[ ${1-} == -l ]] && shift
+  [[ ${1-} == <-> ]] && n=$1
+  while (( n-- > 0 )); do
+    (( ${#dirnext} )) || { print -u2 -r -- 'nextd: Hit end of history'; return 1 }
+    d=$dirnext[-1]
+    dirnext[-1]=()
+    dirprev+=($PWD)
+    __fish_nav=1
+    builtin cd -- $d
+    __fish_nav=
+  done
+}
+dirh() {
+  local i d
+  for (( i = 1; i <= ${#dirprev}; i++ )); do
+    print -r -- "$(printf '%2d' $(( ${#dirprev} - i + 1 )))) ${dirprev[i]}"
+  done
+  print -r -- "${PWD}"
+  for (( i = ${#dirnext}; i >= 1; i-- )); do
+    print -r -- "$(printf '%2d' $(( ${#dirnext} - i + 1 )))) ${dirnext[i]}"
+  done
+}
+history() {
+  local sub=${1-} term limit= mode=contains a
+  case $sub in
+    search) shift
+      while [[ ${1-} == -* ]]; do
+        case $1 in
+          -e|--exact) mode=exact ;; -p|--prefix) mode=prefix ;; -c|--contains) mode=contains ;;
+          -n|--max) limit=$2; shift ;;
+        esac
+        shift
+      done
+      term=${1-}
+      local -a hits
+      case $mode in
+        exact) hits=(${(M)${(Oa)history}:#${term}}) ;;
+        prefix) hits=(${(M)${(Oa)history}:#${term}*}) ;;
+        *) hits=(${(M)${(Oa)history}:#*${term}*}) ;;
+      esac
+      [[ -n $limit ]] && hits=(${hits[1,limit]})
+      (( ${#hits} )) && print -rl -- $hits ;;
+    clear|merge|save|delete) return 0 ;;
+    '') (( ${#history} )) && print -rl -- ${(Oa)history} ;;
+  esac
+  return 0
+}
 bind() { return 0 }
 complete() { return 0 }
 commandline() { return 0 }
-emit() { return 0 }
+typeset -gA __fish_events
+__fish_on_event() {
+  case $1 in
+    fish_preexec) preexec_functions+=($2) ;;
+    fish_postexec|fish_prompt) precmd_functions+=($2) ;;
+    fish_exit) zshexit_functions+=($2) ;;
+    *) __fish_events[$1]+="${__fish_events[$1]:+ }$2" ;;
+  esac
+}
+emit() {
+  local ev=$1 f
+  shift
+  for f in ${=__fish_events[$ev]}; do $f "$@"; done
+  return 0
+}
+__fish_argparse() {
+  local name=argparse ign= stop= spec s sfx short long id a o val k i c us=$'\x1f'
+  local -a vals
+  local -A kind=() alias=() acc=()
+  local -a specs=() rest=() ids=()
+  while (( $# )); do
+    case $1 in
+      -n|--name) name=$2; shift 2 ;;
+      -x|--exclusive|-N|--min-args|-X|--max-args) shift 2 ;;
+      -i|--ignore-unknown) ign=1; shift ;;
+      -s|--stop-nonopt) stop=1; shift ;;
+      -h|--help) shift ;;
+      --) shift; break ;;
+      *) specs+=($1); shift ;;
+    esac
+  done
+  for spec in $specs; do
+    s=${spec%%!*} sfx= short= long=
+    case $s in
+      *'=?') sfx=o; s=${s%=?} ;;
+      *'=+') sfx=m; s=${s%=+} ;;
+      *=) sfx=r; s=${s%=} ;;
+    esac
+    if [[ $s == */* ]]; then short=${s%%/*}; long=${s#*/}
+    elif (( ${#s} > 1 )); then long=$s
+    else short=$s; fi
+    id=${long:-$short}
+    ids+=($id)
+    kind[$id]=$sfx
+    [[ -n $short ]] && alias[-$short]=$id
+    [[ -n $long ]] && alias[--$long]=$id
+    alias[ids:$id]="$short $long"
+    for a in $short $long; do unset "_flag_${a//-/_}"; done
+  done
+  while (( $# )); do
+    a=$1; shift
+    if [[ $a == -- ]]; then rest+=("$@"); break; fi
+    if [[ $a == --?* ]]; then
+      o=${a%%=*} val=
+      [[ $a == *=* ]] && val=${a#*=}
+      k=$alias[$o]
+      if [[ -z $k ]]; then
+        [[ -n $ign ]] && { rest+=($a); continue }
+        print -u2 -r -- "$name: Unknown option '$o'"; return 2
+      fi
+      if [[ -n $kind[$k] ]]; then
+        if [[ $a != *=* ]]; then
+          if [[ $kind[$k] == o ]]; then val=
+          elif (( $# )); then val=$1; shift
+          else print -u2 -r -- "$name: Expected argument for option $o"; return 2; fi
+        fi
+        acc[$k]+="${acc[$k]+$us}$val"
+      else
+        acc[$k]+="${acc[$k]+$us}$o"
+      fi
+    elif [[ $a == -?* ]]; then
+      i=2
+      while (( i <= ${#a} )); do
+        c=${a[i]}
+        k=$alias[-$c]
+        if [[ -z $k ]]; then
+          [[ -n $ign ]] && { rest+=($a); break }
+          print -u2 -r -- "$name: Unknown option '-$c'"; return 2
+        fi
+        if [[ -n $kind[$k] ]]; then
+          val=${a[i+1,-1]}
+          if [[ -z $val ]]; then
+            if [[ $kind[$k] == o ]]; then val=
+            elif (( $# )); then val=$1; shift
+            else print -u2 -r -- "$name: Expected argument for option -$c"; return 2; fi
+          fi
+          acc[$k]+="${acc[$k]+$us}$val"
+          break
+        fi
+        acc[$k]+="${acc[$k]+$us}-$c"
+        (( i++ ))
+      done
+    else
+      if [[ -n $stop ]]; then rest+=($a "$@"); break; fi
+      rest+=($a)
+    fi
+  done
+  for k in $ids; do
+    [[ -n ${acc[$k]+x} ]] || continue
+    vals=("${(@ps:\x1f:)acc[$k]}")
+    for a in ${=alias[ids:$k]}; do
+      a=${a//-/_}
+      typeset -ga _flag_$a
+      builtin eval "_flag_$a=(\"\${(@)vals}\")"
+    done
+  done
+  typeset -ga __fish_argv
+  __fish_argv=("${(@)rest}")
+  return 0
+}
 fish_vi_key_bindings() { return 0 }
 fish_default_key_bindings() { return 0 }
 fish_config() { return 0 }
@@ -140,6 +334,30 @@ eval() {
   __t=$(print -r -- "$*" | '@ZSHRS@' --fish-translate -) || return
   builtin eval "$__t"
 }
+__fish_uvar_file=${HOME}/.zshrs/fish_universal.zsh
+__fish_uvar_save() {
+  local n=$1 f=$__fish_uvar_file line
+  local -a keep v
+  [[ -r $f ]] && keep=("${(@f)$(<$f)}")
+  keep=("${(@)keep:#(typeset -gx |)${n}=*}")
+  if [[ ${(Pt)n} == *export* ]]; then
+    line="typeset -gx $n=${(q)${(P)n}}"
+  else
+    v=("${(@P)n}")
+    line="$n=(${(j: :)${(@q)v}})"
+  fi
+  [[ -d ${f:h} ]] || mkdir -p ${f:h}
+  print -rl -- "${(@)keep:#}" $line > $f
+}
+__fish_uvar_erase() {
+  local n=$1 f=$__fish_uvar_file
+  local -a keep
+  [[ -r $f ]] || return 0
+  keep=("${(@f)$(<$f)}")
+  keep=("${(@)keep:#(typeset -gx |)${n}=*}")
+  print -rl -- "${(@)keep:#}" > $f
+}
+[[ -r $__fish_uvar_file ]] && builtin source $__fish_uvar_file
 FISH_VERSION=4.9.3
 version=(4.9.3)
 fish_prompt() { print -rn -- "${USER}@${HOST%%.*} ${PWD/#$HOME/~}> " }

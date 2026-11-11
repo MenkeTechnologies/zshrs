@@ -43,6 +43,20 @@ pub struct Emitter {
     /// `__fcN="$(…)"` assignments the command being emitted needs ahead of it.
     hoists: Vec<String>,
     hoist_id: usize,
+    /// Lexical scopes, innermost last; see [`Frame`].
+    scopes: Vec<Frame>,
+    local_id: usize,
+}
+
+/// One lexical scope. fish scopes `set -l` to the enclosing block (`if`, `while`,
+/// `for`, `switch` case, `begin`) and to a function body; zsh has only function scope.
+/// A block-local variable therefore lives under a unique zsh name for as long as its
+/// block is being emitted, and a function body is a `barrier`, since a fish function
+/// does not see the locals of the block it is defined in.
+#[derive(Default)]
+struct Frame {
+    vars: std::collections::HashMap<String, String>,
+    barrier: bool,
 }
 
 /// The zsh parameter that holds a fish variable.
@@ -105,6 +119,37 @@ fn dq_escape(s: &str) -> String {
 }
 
 impl Emitter {
+    /// The zsh parameter a fish name currently refers to, block-locals included.
+    pub(super) fn zn(&self, name: &str) -> String {
+        for f in self.scopes.iter().rev() {
+            if let Some(m) = f.vars.get(name) {
+                return m.clone();
+            }
+            if f.barrier {
+                break;
+            }
+        }
+        zname(name)
+    }
+
+    /// Blocks open since the enclosing function (or the script) began.
+    pub(super) fn block_level(&self) -> usize {
+        self.scopes.iter().rev().take_while(|f| !f.barrier).count()
+    }
+
+    /// Register `name` as local to the innermost block and return its zsh name.
+    pub(super) fn declare_block_local(&mut self, name: &str) -> String {
+        if let Some(m) = self.scopes.last().and_then(|f| f.vars.get(name)) {
+            return m.clone();
+        }
+        self.local_id += 1;
+        let m = format!("_fl{}_{name}", self.local_id);
+        if let Some(f) = self.scopes.last_mut() {
+            f.vars.insert(name.to_string(), m.clone());
+        }
+        m
+    }
+
     pub fn script(&mut self, script: &Script) -> String {
         let mut out = String::new();
         for (n, st) in script.iter().enumerate() {
@@ -124,7 +169,9 @@ impl Emitter {
 
     /// A body, never empty: zsh rejects an empty `then`/`do`/`{}`.
     fn body(&mut self, s: &Script) -> String {
+        self.scopes.push(Frame::default());
         let t = self.script(s);
+        self.scopes.pop();
         if t.trim().is_empty() {
             ":".into()
         } else {
@@ -208,7 +255,7 @@ impl Emitter {
                 body,
                 redirs,
             } => {
-                let v = var.text().map(|t| zname(&t)).unwrap_or_else(|| "_fish_v".into());
+                let v = var.text().map(|t| self.zn(&t)).unwrap_or_else(|| "_fish_v".into());
                 let items: Vec<String> = list.iter().map(|w| self.word_list(w)).collect();
                 let text = format!(
                     "for {v} in {}\ndo\n{}\ndone{}",
@@ -217,7 +264,7 @@ impl Emitter {
                     self.redirs(redirs)
                 );
                 if has_glob(list) {
-                    format!("builtin eval {}", squote(&text))
+                    null_glob_loop(&text)
                 } else {
                     text
                 }
@@ -238,17 +285,7 @@ impl Emitter {
             }
             Cmd::Function { header, body } => self.function(header, body),
             Cmd::Begin { body, redirs } => {
-                // `set -l` inside `begin … end` is scoped to the block. An anonymous
-                // function gives zsh the same scope, unless the block leaves through
-                // `return`/`break`/`continue`, which would then leave only the function.
-                if declares_local(body) && !leaves_block(body) {
-                    self.fn_depth += 1;
-                    let inner = self.body(body);
-                    self.fn_depth -= 1;
-                    format!("() {{\n{inner}\n}} \"$@\"{}", self.redirs(redirs))
-                } else {
-                    format!("{{\n{}\n}}{}", self.body(body), self.redirs(redirs))
-                }
+                format!("{{\n{}\n}}{}", self.body(body), self.redirs(redirs))
             }
         }
     }
@@ -274,6 +311,8 @@ impl Emitter {
     fn function(&mut self, header: &[Word], body: &Script) -> String {
         let mut name = None;
         let mut argnames: Vec<String> = Vec::new();
+        let mut events: Vec<String> = Vec::new();
+        let mut signals: Vec<String> = Vec::new();
         let mut i = 0;
         while i < header.len() {
             let t = header[i].text().unwrap_or_default();
@@ -285,9 +324,16 @@ impl Emitter {
                         i += 1;
                     }
                 }
-                "-d" | "--description" | "-w" | "--wraps" | "-e" | "--on-event" | "-v"
-                | "--on-variable" | "-j" | "--on-job-exit" | "-p" | "--on-process-exit" | "-s"
-                | "--on-signal" | "-V" | "--inherit-variable" => i += 1,
+                "-e" | "--on-event" => {
+                    events.extend(header.get(i).and_then(Word::text));
+                    i += 1;
+                }
+                "-s" | "--on-signal" => {
+                    signals.extend(header.get(i).and_then(Word::text));
+                    i += 1;
+                }
+                "-d" | "--description" | "-w" | "--wraps" | "-v" | "--on-variable" | "-j"
+                | "--on-job-exit" | "-p" | "--on-process-exit" | "-V" | "--inherit-variable" => i += 1,
                 s if s.starts_with('-') => {}
                 _ if name.is_none() => name = Some(t),
                 _ => {}
@@ -304,9 +350,23 @@ impl Emitter {
                 k + 1
             ));
         }
-        inner.push_str(&self.body(body));
+        // the body is the function's own scope: `set -l` there is a zsh `local`
+        self.scopes.push(Frame {
+            barrier: true,
+            ..Frame::default()
+        });
+        let text = self.script(body);
+        self.scopes.pop();
+        inner.push_str(if text.trim().is_empty() { ":" } else { &text });
         self.fn_depth -= 1;
-        format!("function {} {{\n{inner}\n}}", quote_lit(&name))
+        let mut out = format!("function {} {{\n{inner}\n}}", quote_lit(&name));
+        for e in &events {
+            out.push_str(&format!("\n__fish_on_event {} {}", squote(e), quote_lit(&name)));
+        }
+        for sig in &signals {
+            out.push_str(&format!("\ntrap {} {}", quote_lit(&name), quote_lit(sig)));
+        }
+        out
     }
 
     // ---- simple commands --------------------------------------------------------
@@ -326,6 +386,15 @@ impl Emitter {
             Some("read") => self.read_cmd(&rest[1..]),
             Some("alias") => self.alias_cmd(&rest[1..]),
             Some("abbr") => self.abbr_cmd(&rest[1..]),
+            // argparse sets the caller's `argv`, which a function cannot do: the parse
+            // leaves the operands in `__fish_argv` and the caller's own `set --` takes them
+            Some("argparse") => {
+                let all: Vec<String> = rest[1..].iter().map(|w| self.word_list(w)).collect();
+                format!(
+                    "{{ __fish_argparse {}; __fish_cs=$?; set -- \"${{__fish_argv[@]}}\"; __fish_ret $__fish_cs; }}",
+                    all.join(" ")
+                )
+            }
             Some(n) if ZSH_ONLY_RESERVED.contains(&n) => {
                 let tail: Vec<String> = rest[1..].iter().map(|w| self.word_list(w)).collect();
                 format!("{} {}", squote(n), tail.join(" "))
@@ -350,7 +419,7 @@ impl Emitter {
         // A wildcard with no match is an error in both shells, but zsh ends the whole
         // script on it and fish only skips the command. `eval` confines the abort.
         if has_glob(&rest[1.min(rest.len())..]) {
-            out = format!("builtin eval {}", squote(&out));
+            out = isolate_glob(&out);
         }
         out
     }
@@ -413,8 +482,54 @@ impl Emitter {
             [] => "''".into(),
             [Part::Var(v)] => self.var_list(v),
             [Part::Cmd(s, idx)] => self.cmd_list(s, idx.as_deref()),
+            // a list part makes the word as many words as it has elements: none for an
+            // unset variable, which only a loop can express
+            parts if parts.iter().any(|p| is_list_part(p) && !always_set(p)) => self.cartesian(parts),
             parts => parts.iter().map(|p| self.part(p, false)).collect(),
         }
+    }
+
+    /// A word with two or more list parts. fish varies the first list fastest
+    /// (`$a$b` with a=(1 2) b=(x y) is `1x 2x 1y 2y`); zsh's `${^a}${^b}` varies the last,
+    /// so the product is built by nested loops, first part innermost.
+    fn cartesian(&mut self, parts: &[Part]) -> String {
+        self.hoist_id += 1;
+        let id = self.hoist_id;
+        let mut word = String::new();
+        let mut loops: Vec<String> = Vec::new();
+        for p in parts {
+            if is_list_part(p) {
+                let var = format!("__fi{id}_{}", loops.len());
+                let list = match p {
+                    Part::Var(v) => self.var_list(v),
+                    Part::Cmd(s, idx) => self.cmd_list(s, idx.as_deref()),
+                    _ => String::new(),
+                };
+                loops.push(format!("for {var} in {list}; do"));
+                word.push_str(&format!("\"${{{var}}}\""));
+            } else {
+                word.push_str(&self.part(p, false));
+            }
+        }
+        let v = format!("__fc{id}");
+        let mut text = format!("{v}=(); ");
+        for l in loops.iter().rev() {
+            text.push_str(l);
+            text.push(' ');
+        }
+        text.push_str(&format!("{v}+=({word}); "));
+        text.push_str(&vec!["done"; loops.len()].join("; "));
+        self.hoists.push(text);
+        format!("\"${{{v}[@]}}\"")
+    }
+
+    /// `$x[a..b]` where the direction is only known at run time (`-1..1`, `$i..$j`):
+    /// the slice is built by `__fish_slice` into a hoisted array.
+    fn dynamic_slice(&mut self, z: &str, a: &str, b: &str) -> String {
+        self.hoist_id += 1;
+        let v = format!("__fc{}", self.hoist_id);
+        self.hoists.push(format!("__fish_slice {v} {z} {a} {b}"));
+        v
     }
 
     /// The word as zsh text that expands to exactly one word.
@@ -513,15 +628,21 @@ impl Emitter {
         if !valid_param(n) {
             return "\"\"".into();
         }
-        let z = zname(n);
+        let z = self.zn(n);
         if v.deref {
             return format!("\"${{(@P){z}}}\"");
         }
         if let Some(idx) = &v.index {
             let idx = self.index_tokens(idx);
-            return ranges(&idx)
+            return idx
                 .iter()
-                .map(|(r, rev)| format!("\"${{(@{}){z}[{r}]}}\"", if *rev { "Oa" } else { "" }))
+                .map(|t| match dyn_range(t) {
+                    Some((a, b)) => format!("\"${{{}[@]}}\"", self.dynamic_slice(&z, a, b)),
+                    None => {
+                        let (r, rev) = range_of(t);
+                        format!("\"${{(@{}){z}[{r}]}}\"", if rev { "Oa" } else { "" })
+                    }
+                })
                 .collect::<Vec<_>>()
                 .join(" ");
         }
@@ -540,7 +661,7 @@ impl Emitter {
         if !valid_param(n) {
             return "\"\"".into();
         }
-        let z = zname(n);
+        let z = self.zn(n);
         if v.deref || v.index.is_some() {
             return format!("\"{}\"", self.var_join(v));
         }
@@ -559,15 +680,21 @@ impl Emitter {
         if !valid_param(n) {
             return String::new();
         }
-        let z = zname(n);
+        let z = self.zn(n);
         if v.deref {
             return format!("${{(P){z}}}");
         }
         if let Some(idx) = &v.index {
             let idx = self.index_tokens(idx);
-            let parts: Vec<String> = ranges(&idx)
+            let parts: Vec<String> = idx
                 .iter()
-                .map(|(r, rev)| format!("${{({}j: :){z}[{r}]}}", if *rev { "Oa" } else { "" }))
+                .map(|t| match dyn_range(t) {
+                    Some((a, b)) => format!("${{(j: :){}}}", self.dynamic_slice(&z, a, b)),
+                    None => {
+                        let (r, rev) = range_of(t);
+                        format!("${{({}j: :){z}[{r}]}}", if rev { "Oa" } else { "" })
+                    }
+                })
                 .collect();
             return parts.join(" ");
         }
@@ -588,22 +715,50 @@ fn special_scalar(name: &str) -> Option<&'static str> {
     }
 }
 
-/// fish index tokens (`1`, `-1`, `2..4`, `$i`) as zsh subscript ranges. A descending
-/// range of plain numbers is returned with `true` so the caller reverses it.
-fn ranges(tokens: &[String]) -> Vec<(String, bool)> {
-    tokens
-        .iter()
-        .map(|t| match t.split_once("..") {
-            Some((a, b)) => match (a.parse::<i64>(), b.parse::<i64>()) {
-                (Ok(x), Ok(y)) if x > y && (x < 0) == (y < 0) => (format!("{y},{x}"), true),
-                _ => (format!("{a},{b}"), false),
-            },
-            None => (format!("{t},{t}"), false),
-        })
-        .collect()
+/// One fish index token (`1`, `-1`, `2..4`, `$i`) as a zsh subscript range. A
+/// descending range of plain numbers is returned with `true` so the caller reverses it.
+fn range_of(t: &str) -> (String, bool) {
+    match t.split_once("..") {
+        Some((a, b)) => match (a.parse::<i64>(), b.parse::<i64>()) {
+            (Ok(x), Ok(y)) if x > y && (x < 0) == (y < 0) => (format!("{y},{x}"), true),
+            _ => (format!("{a},{b}"), false),
+        },
+        None => (format!("{t},{t}"), false),
+    }
 }
 
-/// Does any argument contain an unquoted wildcard?
+/// `a..b` whose direction cannot be known when translating: a bound that is not a
+/// number, or numbers of opposite sign (`-1..1`).
+fn dyn_range(t: &str) -> Option<(&str, &str)> {
+    let (a, b) = t.split_once("..")?;
+    match (a.parse::<i64>(), b.parse::<i64>()) {
+        (Ok(x), Ok(y)) if (x < 0) == (y < 0) => None,
+        _ => Some((a, b)),
+    }
+}
+
+/// Variables every shell session has, so `$HOME/x` need not pay for a loop.
+fn always_set(p: &Part) -> bool {
+    matches!(p, Part::Var(v) if matches!(v.name.as_str(), "HOME" | "PWD" | "OLDPWD" | "USER" | "SHELL"))
+}
+
+/// Does the part expand to a list that multiplies the word it is in?
+fn is_list_part(p: &Part) -> bool {
+    match p {
+        Part::Var(v) => {
+            !v.deref && special_scalar(&v.name).is_none() && valid_param(&v.name)
+        }
+        Part::Cmd(_, idx) => idx.is_none(),
+        _ => false,
+    }
+}
+
+/// fish index tokens as zsh subscript ranges.
+fn ranges(tokens: &[String]) -> Vec<(String, bool)> {
+    tokens.iter().map(|t| range_of(t)).collect()
+}
+
+/// Does any word contain an unquoted wildcard?
 fn has_glob(words: &[Word]) -> bool {
     words.iter().any(|w| {
         w.parts
@@ -612,53 +767,19 @@ fn has_glob(words: &[Word]) -> bool {
     })
 }
 
-/// Words of every simple command in a script, not descending into function bodies.
-fn simple_commands(script: &Script, out: &mut Vec<Vec<Word>>) {
-    for st in script {
-        for (cmd, _) in &st.job.cmds {
-            match cmd {
-                Cmd::Simple { words, .. } => out.push(words.clone()),
-                Cmd::If { arms, els, .. } => {
-                    for (cond, body) in arms {
-                        simple_commands(cond, out);
-                        simple_commands(body, out);
-                    }
-                    if let Some(e) = els {
-                        simple_commands(e, out);
-                    }
-                }
-                Cmd::While { cond, body, .. } => {
-                    simple_commands(cond, out);
-                    simple_commands(body, out);
-                }
-                Cmd::For { body, .. } | Cmd::Begin { body, .. } => simple_commands(body, out),
-                Cmd::Switch { cases, .. } => cases.iter().for_each(|(_, b)| simple_commands(b, out)),
-                Cmd::Function { .. } => {}
-            }
-        }
-    }
+/// Run `text` so that a wildcard with no match ends only this command, with status
+/// 124 as in fish; zsh would end the whole script. The marker is set after the command
+/// ran, so a failed expansion (which skips it) is told from a command that failed.
+fn isolate_glob(text: &str) -> String {
+    format!(
+        "{{ __fish_g=; builtin eval {}; [[ -n $__fish_g ]] || __fish_cs=124; __fish_ret $__fish_cs; }}",
+        squote(&format!("{text}; __fish_cs=$?; __fish_g=1"))
+    )
 }
 
-/// Does the block contain a `set -l` / `set --local`?
-fn declares_local(script: &Script) -> bool {
-    let mut cmds = Vec::new();
-    simple_commands(script, &mut cmds);
-    cmds.iter().any(|w| {
-        w.first().and_then(Word::bare) == Some("set")
-            && w[1..].iter().any(|a| {
-                a.bare().is_some_and(|t| {
-                    t == "--local" || (t.starts_with('-') && !t.starts_with("--") && t.contains('l'))
-                })
-            })
-    })
-}
-
-/// Does the block contain `return`, `break` or `continue`?
-fn leaves_block(script: &Script) -> bool {
-    let mut cmds = Vec::new();
-    simple_commands(script, &mut cmds);
-    cmds.iter()
-        .any(|w| matches!(w.first().and_then(Word::bare), Some("return" | "break" | "continue")))
+/// A `for` list whose wildcard matches nothing is an empty list in fish, not an error.
+fn null_glob_loop(text: &str) -> String {
+    format!("() {{ setopt local_options null_glob; {text}\n}} \"$@\"")
 }
 
 /// Is the last command of the script `string collect`?
