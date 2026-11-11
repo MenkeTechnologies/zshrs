@@ -299,7 +299,30 @@ history() {
       (( ${#hits} )) && print -rl -- $hits ;;
     save) builtin fc -W 2>/dev/null; return 0 ;;
     merge) builtin fc -R 2>/dev/null; return 0 ;;
-    clear|delete) return 0 ;;
+    clear)
+      builtin fc -p
+      return 0 ;;
+    delete) shift
+      local dmode=exact dterm k
+      local -a all=() keep=()
+      while [[ ${1-} == -* ]]; do
+        case $1 in
+          -e|--exact) dmode=exact ;; -p|--prefix) dmode=prefix ;; -c|--contains) dmode=contains ;;
+          -C|--case-sensitive) ;;
+        esac
+        shift
+      done
+      dterm=${1-}
+      [[ -n $dterm ]] || return 1
+      for k in ${(kon)history}; do all+=("${history[$k]}"); done
+      case $dmode in
+        exact) keep=("${(@)all:#${(b)dterm}}") ;;
+        prefix) keep=("${(@)all:#${(b)dterm}*}") ;;
+        *) keep=("${(@)all:#*${(b)dterm}*}") ;;
+      esac
+      builtin fc -p
+      for k in "${keep[@]}"; do print -s -r -- "$k"; done
+      return 0 ;;
     '') (( ${#history} )) && print -rl -- ${(Oa)history} ;;
   esac
   return 0
@@ -513,8 +536,9 @@ __fish_argparse() {
   __fish_argv_opts=("${(@)opts}")
   return 0
 }
-fish_vi_key_bindings() { return 0 }
-fish_default_key_bindings() { return 0 }
+fish_vi_key_bindings() { bindkey -v; return 0 }
+fish_default_key_bindings() { bindkey -e; return 0 }
+fish_hybrid_key_bindings() { bindkey -e; return 0 }
 fish_config() { return 0 }
 # `complete` reached indirectly (`set c complete …; $c …`); a literal `complete`
 # word is rewritten to __fish_complete by the translator
@@ -570,6 +594,9 @@ if [[ -o interactive ]]; then
   }
   __fish_uvar_cleanup() { command rm -f $__fish_uvar_marker }
   precmd_functions+=(__fish_uvar_sync)
+  # fish_title, when the user defines one, sets the terminal title before each prompt
+  __fish_title_hook() { (( $+functions[fish_title] )) && print -rn -- $'\e]0;'"$(fish_title)"$'\a'; return 0 }
+  precmd_functions+=(__fish_title_hook)
   zshexit_functions+=(__fish_uvar_cleanup)
 fi
 umask=(${(l:4::0:)$(builtin umask)})
