@@ -859,7 +859,7 @@ impl Emitter {
         let z = self.zn(n);
         if v.deref {
             // the variable named by `$name` (its first element, when it is a list)
-            return format!("\"${{(@P)${{(j: :){z}}}}}\"");
+            return format!("\"{}\"", deref_expr(&z, "@P"));
         }
         if let Some(idx) = &v.index {
             return self.index_words(&z, idx);
@@ -900,7 +900,7 @@ impl Emitter {
         }
         let z = self.zn(n);
         if v.deref {
-            return format!("${{(P)${{(j: :){z}}}}}");
+            return deref_expr(&z, "P");
         }
         if let Some(idx) = &v.index {
             let idx = self.index_tokens(idx);
@@ -1132,4 +1132,12 @@ fn fish_escape(s: &str) -> String {
     } else {
         format!("'{}'", s.replace('\\', "\\\\").replace('\'', "\\'"))
     }
+}
+
+/// `${(P)…}` of the variable named by the value of `z`, through the map of fish names to
+/// the zsh parameters that hold them (`PATH` lives in `path`, an exported list in `__fx_NAME`).
+fn deref_expr(z: &str, flags: &str) -> String {
+    let n = format!("${{(j: :){z}}}");
+    let fx = format!("${{parameters[__fx_{n}]:+__fx_{n}}}");
+    format!("${{({flags})${{__fish_zmap[{n}]:-${{{fx}:-{n}}}}}}}")
 }

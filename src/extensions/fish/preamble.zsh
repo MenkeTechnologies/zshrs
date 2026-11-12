@@ -88,6 +88,11 @@ __fish_set_list() {
       _fl<->_*) __k=${__n#_fl<->_}; [[ $__sc == g ]] && continue ;;
       __fx_*) continue ;;
       __*|_fish_x|_fl*|_fish_v_*|.*) continue ;;
+      # zsh's own parameters, which fish does not have
+      CPUTYPE|HOST|INFOPATH|KEYTIMEOUT|LISTMAX|LOGNAME|MACHTYPE|MAILCHECK|OSTYPE|TIMEFMT|TMPPREFIX|TTY|VENDOR|ZSH_*|signals) continue ;;
+      chpwd_functions|precmd_functions|preexec_functions|zshexit_functions|periodic_functions|*_functions) continue ;;
+      dirprev|dirnext) (( ${#${(P)__n}} )) || continue ;;
+      PWD|SHLVL|OLDPWD) [[ -n $__ex ]] || continue ;;
       path) __k=PATH; [[ $__sc == l ]] && continue ;;
       cdpath) __k=CDPATH; [[ $__sc == l ]] && continue ;;
       manpath) __k=MANPATH; [[ $__sc == l ]] && continue ;;
@@ -108,6 +113,28 @@ __fish_set_list() {
     fi
     __out+=($__line)
   done
+  if [[ $__sc != l ]]; then
+    # variables fish has that no zsh parameter stands for
+    local -A __virtual=(
+      _ '' __fish_bin_dir /usr/local/bin __fish_cache_dir ${XDG_CACHE_HOME:-$HOME/.cache}/fish
+      __fish_config_dir ${XDG_CONFIG_HOME:-$HOME/.config}/fish __fish_data_dir /usr/local/share/fish
+      __fish_help_dir /usr/local/share/doc/fish __fish_man_dir /usr/local/share/fish/man
+      __fish_sysconf_dir /etc/fish __fish_user_data_dir ${XDG_DATA_HOME:-$HOME/.local/share}/fish
+      argv '' fish_bind_mode default fish_history '' fish_killring '' fish_pid $$
+      fish_private_mode '' fish_terminal_color_theme '' history '' hostname ${HOST%%.*}
+      pipestatus 0 status 0 status_generation 0 COLUMNS ${COLUMNS:-80} LINES ${LINES:-24}
+      EUID $EUID IFS ' \t\n'
+    )
+    for __k in ${(k)__virtual}; do
+      [[ -n $__ex ]] && continue
+      (( ${+__out[(r)$__k]} )) && continue
+      [[ -n ${(M)__out:#$__k( *|)} ]] && continue
+      if [[ -n $__nm ]]; then __out+=($__k)
+      elif [[ -n ${__virtual[$__k]} ]]; then __out+=("$__k ${(q-)__virtual[$__k]}")
+      else __out+=($__k); fi
+    done
+    __out=("${(@o)__out}")
+  fi
   (( ${#__out} )) && print -rl -- "${(@)__out}"
   return 0
 }
@@ -129,6 +156,12 @@ __fish_set_show() {
   return 0
 }
 typeset -gA __fish_abbrs __fish_fnsrc __fish_fnline __fish_fnfile
+# fish variable name -> zsh parameter, for names only known at run time (`$$name`)
+typeset -gA __fish_zmap=(PATH path CDPATH cdpath MANPATH manpath hostname HOST)
+for __n in path cdpath fpath manpath mailpath module_path signals options commands functions aliases parameters history dirstack widgets keymaps modules nameddirs userdirs galiases saliases funcstack jobtexts builtins reswords status prompt psvar watch; do
+  [[ -n ${__fish_zmap[$__n]+x} ]] || __fish_zmap[$__n]=_fish_v_$__n
+done
+unset __n
 typeset -ga __fish_abbr_order
 __fish_abbr() {
   local op=show pos=command a name exp
