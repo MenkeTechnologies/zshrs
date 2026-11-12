@@ -1669,10 +1669,17 @@ fn zexecve_spawn(pth: &str, argv: &[String], drop_argv0: bool, in_place: bool) -
     underscore_entry.extend_from_slice(&crate::ported::utils::unmetafy_str(&underscore));
     let mut envp: Vec<CString> = Vec::new();
     let mut have_underscore = false;
+    // !!! RUST-ONLY: fish does not put `_` in a child's environment, so `--fish` neither
+    // replaces nor adds it (c:520 is zsh's own `_=<command path>`).
+    let fish = crate::extensions::emulation_startup::personality()
+        == crate::extensions::emulation_startup::Personality::Fish;
     for (k, v) in std::env::vars_os() {
         let k = k.as_bytes();
         if drop_argv0 && k == b"ARGV0" {
             continue; // c:768 `unsetenv("ARGV0")`
+        }
+        if fish && k == b"_" {
+            continue;
         }
         let entry = if k == b"_" {
             have_underscore = true;
@@ -1687,7 +1694,7 @@ fn zexecve_spawn(pth: &str, argv: &[String], drop_argv0: bool, in_place: bool) -
             envp.push(c);
         }
     }
-    if !have_underscore {
+    if !have_underscore && !fish {
         if let Ok(c) = CString::new(underscore_entry) {
             envp.push(c); // c:520 — appended
         }

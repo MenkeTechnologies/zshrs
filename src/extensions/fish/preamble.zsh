@@ -321,6 +321,30 @@ funcsave() {
     print -r -- "funcsave: wrote $dir/$a.fish"
   done
 }
+funced() {
+  local ed= save= n tmp
+  while [[ ${1-} == -* ]]; do
+    case $1 in
+      -e|--editor) ed=$2; shift ;;
+      -s|--save) save=1 ;;
+      -i|--interactive|-t|--transient) ;;
+    esac
+    shift
+  done
+  n=${1-}
+  [[ -n $n && $# == 1 ]] || { print -u2 -r -- 'funced: Expected exactly one function name'; return 1 }
+  tmp=$(mktemp "${TMPDIR:-/tmp}/funced.XXXXXX") || return 1
+  if [[ -n ${__fish_fnsrc[$n]+x} ]]; then
+    print -r -- "${__fish_fnsrc[$n]}" > $tmp
+  else
+    print -r -- "function $n"$'\n    \nend' > $tmp
+  fi
+  ${=ed:-${VISUAL:-${EDITOR:-vi}}} $tmp || { command rm -f $tmp; return 1 }
+  source $tmp
+  command rm -f $tmp
+  [[ -n $save ]] && funcsave $n
+  return 0
+}
 set_color() {
   local a c= bg= r=() esc=$'\e'
   local -A fg=(black 30 red 31 green 32 yellow 33 blue 34 magenta 35 cyan 36 white 37 brblack 90 brred 91 brgreen 92 bryellow 93 brblue 94 brmagenta 95 brcyan 96 brwhite 97 brgrey 90 grey 90)
