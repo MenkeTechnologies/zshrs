@@ -225,6 +225,7 @@ fn completions_match_fish() {
     let cwd = scratch("complete-cwd");
     let comp_dir = home.join(".config/fish/completions");
     std::fs::create_dir_all(&comp_dir).unwrap();
+    std::fs::create_dir_all(home.join("zqdir")).unwrap();
     std::fs::write(comp_dir.join("zqauto.fish"), "complete -c zqauto -f -l from-file -d 'Autoloaded'\n").unwrap();
     let script = home.join("complete.fish");
     std::fs::write(
@@ -251,6 +252,13 @@ complete -C 'zsub zq --v'
 complete -C 'zsub zq --c'
 complete -C 'which --'
 complete -C 'not -'
+abbr -a zqab echo x
+complete -C 'zqa'
+complete -C 'set_co'
+complete -C 'echo $HOM'
+complete -C 'echo foo$HOM'
+complete -C 'echo ~roo'
+complete -C 'ls $HOME/zqd'
 "#,
     )
     .unwrap();

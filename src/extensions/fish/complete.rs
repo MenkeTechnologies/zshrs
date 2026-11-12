@@ -1242,9 +1242,60 @@ struct Line {
 enum Position {
     /// completing the command word itself (or nothing typed yet)
     Command(String),
-    /// a `$var` or `~user`: compsys does those
-    Special,
+    /// the current word ends in a variable name (`$HO`, `foo$HO`, `"$HO`):
+    /// `before` is the word up to and including the `$`, `name` the part typed
+    Variable { before: String, name: String },
+    /// `~us`: the part after the `~`
+    User(String),
+    /// nothing fish completes (a redirection where the command goes)
+    Nothing,
     Argument(Line),
+}
+
+/// fish `try_complete_variable`: the index of the `$` whose variable name
+/// runs to the end of `s`, quoting taken into account.
+fn variable_start(s: &[char]) -> Option<usize> {
+    #[derive(PartialEq)]
+    enum Q {
+        None,
+        Single,
+        Double,
+    }
+    let mut mode = Q::None;
+    let mut start = None;
+    let mut skip = false;
+    for (i, &c) in s.iter().enumerate() {
+        if skip {
+            skip = false;
+            continue;
+        }
+        if !(c.is_alphanumeric() || c == '_') {
+            start = None;
+        }
+        match c {
+            '\\' => skip = true,
+            '$' if mode != Q::Single => start = Some(i),
+            '\'' if mode == Q::Single => mode = Q::None,
+            '\'' if mode == Q::None => mode = Q::Single,
+            '"' if mode == Q::Double => mode = Q::None,
+            '"' if mode == Q::None => mode = Q::Double,
+            _ => {}
+        }
+    }
+    start
+}
+
+/// The current word as a variable or `~user` completion, when it is one.
+fn special_position(raw: &str) -> Option<Position> {
+    let chars: Vec<char> = raw.chars().collect();
+    if let Some(at) = variable_start(&chars) {
+        return Some(Position::Variable {
+            before: chars[..=at].iter().collect(),
+            name: chars[at + 1..].iter().collect(),
+        });
+    }
+    let user = raw.strip_prefix('~')?;
+    (!user.contains(['/', '~'])).then(|| Position::User(user.to_string()))
 }
 
 /// fish `perform_for_commandline_impl`, up to the point where the argument
@@ -1271,10 +1322,16 @@ fn locate(text: &str) -> Position {
     let Some(cmd_tok) = toks.first().copied() else {
         return Position::Command(String::new());
     };
-    if cmd_tok.kind != TokKind::Str {
-        return Position::Special;
-    }
     let tok_text = |t: &Tok| -> String { s[t.start..t.end].iter().collect() };
+    // a variable name or `~user` being typed, wherever the word is
+    if let Some(last) = toks.last().filter(|t| at_end(t) && t.kind == TokKind::Str) {
+        if let Some(p) = special_position(&tok_text(last)) {
+            return p;
+        }
+    }
+    if cmd_tok.kind != TokKind::Str {
+        return Position::Nothing;
+    }
     let last = *toks.last().expect("non-empty");
     let cursor_in_ws = !at_end(&last);
     if !cursor_in_ws && toks.len() == 1 {
@@ -1285,9 +1342,6 @@ fn locate(text: &str) -> Position {
     } else {
         (tok_text(&last), (toks.len() >= 2).then(|| toks[toks.len() - 2]))
     };
-    if cur_raw.contains('$') || cur_raw.starts_with('~') && !cur_raw.contains('/') {
-        return Position::Special;
-    }
     let in_redirection = (!cursor_in_ws && last.kind == TokKind::Redirect)
         || prev_tok.is_some_and(|p| p.kind == TokKind::Redirect);
     let prev = prev_tok
@@ -1749,7 +1803,15 @@ fn complete_dash_c(text: &str) -> Vec<Comp> {
             let comps = command_names(&typed);
             (typed, comps)
         }
-        Position::Special => (String::new(), Vec::new()),
+        Position::Nothing => (String::new(), Vec::new()),
+        Position::Variable { before, name } => {
+            let comps = variable_comps(&before, &name);
+            (name, comps)
+        }
+        Position::User(name) => {
+            let comps = user_comps(&name);
+            (name, comps)
+        }
         Position::Argument(line) => {
             let ans = complete_argument(&line, &mut ShellEval);
             let do_file = ans.as_ref().is_none_or(|a| a.do_file);
@@ -2000,7 +2062,8 @@ fn command_names(prefix: &str) -> Vec<Comp> {
             .filter(|c| c.word.ends_with('/') || is_executable(&expand_tilde(&c.word)))
             .collect();
     }
-    let mut out = Vec::new();
+    // fish `complete_abbr` runs before `complete_cmd`: an abbreviation wins
+    let mut out = abbr_comps();
     let path = crate::ported::params::getsparam("PATH").unwrap_or_default();
     for dir in path.split(':').filter(|d| !d.is_empty()) {
         let Ok(rd) = std::fs::read_dir(dir) else { continue };
@@ -2059,6 +2122,161 @@ pub fn function_names(hidden: bool) -> Vec<String> {
     fns
 }
 
+/// Run fish source in the current shell and capture what it prints.
+fn fish_output(src: &str) -> String {
+    let _keep = KeepStatus::new();
+    match crate::fish::translate(src) {
+        Ok(z) => capture_in_shell(&format!("{{\n{z}\n}} 2>/dev/null </dev/null")),
+        Err(_) => String::new(),
+    }
+}
+
+/// fish `expand_escape_variable`: the elements one after another, each
+/// quoted when there are several or it holds a space.
+fn describe_value(elems: &[String]) -> String {
+    elems
+        .iter()
+        .map(|e| {
+            if (elems.len() > 1 || e.contains(' ')) && !e.contains(['\n', '\t', '\r', '\x08', '\x1b']) {
+                format!("'{e}'")
+            } else {
+                escape(e)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// fish `complete_variable`: every variable fish can see whose name the
+/// typed part matches, described by its value (`Variable: …`). A word that is
+/// just the variable gets a `/` instead of a space when the value is a
+/// directory (reader.rs `maybe_add_slash`).
+fn variable_comps(before: &str, typed: &str) -> Vec<Comp> {
+    let names: Vec<String> = fish_output("set -n")
+        .lines()
+        .filter(|n| !n.is_empty() && fuzzy_rank(typed, n).is_some())
+        .map(str::to_string)
+        .collect();
+    if names.is_empty() {
+        return Vec::new();
+    }
+    // one shell run for all the values: per variable its element count, then
+    // each element d onto its own line (a value may hold newlines)
+    let src = format!(
+        "for __fcv in {}\n    set -l __fce $$__fcv\n    count $__fce\n    string escape -- $__fce\nend",
+        names.iter().map(|n| escape(n)).collect::<Vec<_>>().join(" ")
+    );
+    let out = fish_output(&src);
+    tracing::debug!(target: "fish_complete", src = %src, out = %out.chars().take(200).collect::<String>(), "variable values");
+    let mut lines = out.lines();
+    let mut values: Vec<Vec<String>> = Vec::with_capacity(names.len());
+    for _ in &names {
+        let n: usize = lines.next().and_then(|c| c.trim().parse().ok()).unwrap_or(0);
+        values.push((0..n).filter_map(|_| lines.next().map(unescape)).collect());
+    }
+    let lit = before.trim_end_matches('$');
+    names
+        .iter()
+        .zip(values)
+        .map(|(n, elems)| {
+            let is_dir = elems.len() == 1
+                && !lit.contains(['$', '(', '\'', '"'])
+                && Path::new(&format!("{}{}", expand_tilde(lit), elems[0])).is_dir();
+            Comp {
+                word: format!("{before}{n}{}", if is_dir { "/" } else { "" }),
+                desc: format!("Variable: {}", describe_value(&elems)),
+                no_space: is_dir,
+                keep: false,
+                matched_as: Some(n.clone()),
+            }
+        })
+        .collect()
+}
+
+/// fish `try_complete_user`: user names the typed part begins (any case),
+/// described `Home for NAME`, no space after.
+fn user_comps(typed: &str) -> Vec<Comp> {
+    let mut out = Vec::new();
+    let started = std::time::Instant::now();
+    unsafe { libc::setpwent() };
+    loop {
+        let pw = unsafe { libc::getpwent() };
+        if pw.is_null() {
+            break;
+        }
+        let name = unsafe { std::ffi::CStr::from_ptr((*pw).pw_name) }.to_string_lossy().into_owned();
+        if fuzzy_rank(typed, &name).is_some_and(|r| r <= PREFIX_ICASE) && !out.iter().any(|c: &Comp| c.matched_as.as_deref() == Some(name.as_str())) {
+            out.push(Comp {
+                word: format!("~{name}"),
+                desc: format!("Home for {name}"),
+                no_space: true,
+                keep: false,
+                matched_as: Some(name),
+            });
+        }
+        // fish gives up after 200 ms (a slow directory service)
+        if started.elapsed() > std::time::Duration::from_millis(200) {
+            break;
+        }
+    }
+    unsafe { libc::endpwent() };
+    out
+}
+
+/// fish `complete_abbr`: the abbreviations (not the regex ones), described
+/// `Abbreviation: REPLACEMENT`, no space after. Read from `abbr --show`.
+fn abbr_comps() -> Vec<Comp> {
+    let mut out = Vec::new();
+    for line in fish_output("abbr --show").lines() {
+        let chars: Vec<char> = line.chars().collect();
+        let words: Vec<String> = tokenize(&chars)
+            .iter()
+            .filter(|t| t.kind == TokKind::Str)
+            .map(|t| unescape(&chars[t.start..t.end].iter().collect::<String>()))
+            .collect();
+        if words.iter().any(|w| w == "--regex" || w == "-r") {
+            continue;
+        }
+        let function = words.iter().position(|w| w == "--function" || w == "-f").and_then(|i| words.get(i + 1)).cloned();
+        let Some(dd) = words.iter().position(|w| w == "--") else { continue };
+        let Some(name) = words.get(dd + 1) else { continue };
+        let replacement = function.or_else(|| words.get(dd + 2).cloned()).unwrap_or_default();
+        out.push(Comp {
+            word: name.clone(),
+            desc: format!("Abbreviation: {replacement}"),
+            no_space: true,
+            keep: false,
+            matched_as: None,
+        });
+    }
+    out
+}
+
+/// `$NAME` in a path, replaced by the variable's value (its elements joined
+/// by a space, as fish joins a list in a string); an unset name is empty.
+fn expand_vars(p: &str) -> String {
+    let mut out = String::new();
+    let mut it = p.chars().peekable();
+    while let Some(c) = it.next() {
+        if c != '$' {
+            out.push(c);
+            continue;
+        }
+        let mut name = String::new();
+        while let Some(&n) = it.peek().filter(|n| n.is_alphanumeric() || **n == '_') {
+            name.push(n);
+            it.next();
+        }
+        if name.is_empty() {
+            out.push('$');
+            continue;
+        }
+        let value = fish_output(&format!("string join ' ' -- ${name}"));
+        out.push_str(value.trim_end_matches('\n'));
+    }
+    out
+}
+
 fn expand_tilde(p: &str) -> String {
     match p.strip_prefix("~/") {
         Some(rest) => format!("{}/{rest}", std::env::var("HOME").unwrap_or_default()),
@@ -2099,7 +2317,9 @@ fn file_names(prefix: &str, describe: bool) -> Vec<Comp> {
         Some(i) => (&prefix[..=i], &prefix[i + 1..]),
         None => ("", prefix),
     };
-    let real_dir = if dir.is_empty() { ".".to_string() } else { expand_tilde(dir) };
+    // the directory part is expanded to be read, and kept as typed in the
+    // words: fish completes `$HOME/Doc` to `$HOME/Documents/`
+    let real_dir = if dir.is_empty() { ".".to_string() } else { expand_vars(&expand_tilde(dir)) };
     let Ok(rd) = std::fs::read_dir(&real_dir) else {
         return Vec::new();
     };
@@ -2283,17 +2503,34 @@ pub fn commandline_read(args: &[String], buffer: &str, cursor: usize) -> i32 {
 /// definition covers the command.
 fn query_cmd(argv: &[String]) -> i32 {
     let text = argv.iter().skip(1).find(|a| *a != "--").cloned().unwrap_or_default();
-    let Position::Argument(line) = locate(&text) else {
-        return 1;
-    };
-    let Some(mut ans) = complete_argument(&line, &mut ShellEval) else {
-        return 1;
+    // (what was typed for ranking, the completions; files are compsys's)
+    let (typed, mut ans) = match locate(&text) {
+        Position::Argument(line) => {
+            let Some(ans) = complete_argument(&line, &mut ShellEval) else {
+                return 1;
+            };
+            (line.cur, ans)
+        }
+        Position::Command(prefix) => {
+            let typed = unescape(&prefix);
+            let comps = command_names(&typed);
+            (typed, Answer { comps, ..Answer::default() })
+        }
+        Position::Variable { before, name } => {
+            let comps = variable_comps(&before, &name);
+            (name, Answer { comps, ..Answer::default() })
+        }
+        Position::User(name) => {
+            let comps = user_comps(&name);
+            (name, Answer { comps, ..Answer::default() })
+        }
+        Position::Nothing => return 1,
     };
     // fish keeps only the best kind of match. Files count as prefix matches
     // when one exists; when the best is weaker than a prefix (`-v` finding
     // `--verbose`) the word is replaced rather than extended (`__fish_cu`).
-    let ranks: Vec<Option<u32>> = ans.comps.iter().map(|c| rank_of(&line.cur, c)).collect();
-    let files_match = ans.do_file && file_names(&line.cur, false).iter().any(|c| fuzzy_rank(&line.cur, &c.word) == Some(PREFIX));
+    let ranks: Vec<Option<u32>> = ans.comps.iter().map(|c| rank_of(&typed, c)).collect();
+    let files_match = ans.do_file && file_names(&typed, false).iter().any(|c| fuzzy_rank(&typed, &c.word) == Some(PREFIX));
     let best = ranks.iter().flatten().copied().chain(files_match.then_some(PREFIX)).min();
     let mut keep = ranks.iter().map(|r| r.is_some() && *r == best);
     ans.comps.retain(|_| keep.next().unwrap_or(false));
@@ -2301,8 +2538,16 @@ fn query_cmd(argv: &[String]) -> i32 {
     if replace {
         ans.do_file = false;
     }
+    // a path through a variable (`$HOME/Doc`): fish keeps `$HOME` in the word,
+    // which zsh's _files would not, so the files come from here
+    if ans.do_file && typed.contains('$') {
+        ans.comps.extend(file_names(&typed, false).into_iter().filter(|c| fuzzy_rank(&typed, &c.word).is_some()));
+        ans.do_file = false;
+    }
     use crate::ported::params::{setaparam, setsparam};
     setsparam("__fish_cu", if replace { "1" } else { "0" });
+    // a word through a variable goes in as written, `$` and all
+    setsparam("__fish_cq", if typed.contains('$') { "1" } else { "0" });
     setaparam("__fish_cw", ans.comps.iter().map(|c| c.word.clone()).collect());
     setaparam("__fish_cd", ans.comps.iter().map(|c| c.desc.clone()).collect());
     setaparam("__fish_cs", ans.comps.iter().map(|c| if c.no_space { "1" } else { "0" }.to_string()).collect());
@@ -2501,7 +2746,12 @@ mod tests {
     fn command_word_variables_and_unknown_commands_are_left_to_compsys() {
         assert!(matches!(locate("gi"), Position::Command(_)));
         assert!(matches!(locate("echo hi; gi"), Position::Command(_)));
-        assert!(matches!(locate("echo $HO"), Position::Special));
+        assert!(matches!(locate("echo $HO"), Position::Variable { ref before, ref name } if before == "$" && name == "HO"));
+        assert!(matches!(locate("echo \"a$HO"), Position::Variable { ref before, .. } if before == "\"a$"));
+        assert!(matches!(locate("echo '$HO"), Position::Argument(_)));
+        assert!(matches!(locate("echo $HOME/x"), Position::Argument(_)));
+        assert!(matches!(locate("echo ~ro"), Position::User(ref u) if u == "ro"));
+        assert!(matches!(locate("$HO"), Position::Variable { .. }));
         assert!(words("zt-nothing-defined arg", &[]).is_none());
     }
 
