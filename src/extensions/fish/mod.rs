@@ -79,6 +79,26 @@ fn passwd_user() -> Option<String> {
     }
 }
 
+/// fish's `__fish_*_dir` variables: the user's directories from the XDG settings, and the
+/// install directories relative to the running binary's prefix.
+fn install_dirs() -> String {
+    let q = |s: &str| s.replace('\'', "'\\''");
+    let prefix = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().and_then(|b| b.parent()).map(|p| p.to_path_buf()))
+        .map_or_else(|| "/usr/local".to_string(), |p| p.to_string_lossy().into_owned());
+    let bin = format!("{prefix}/bin");
+    let data = format!("{prefix}/share/fish");
+    let help = format!("{prefix}/share/doc/fish");
+    let man = format!("{data}/man");
+    format!(
+        "__fish_bin_dir=('{}') __fish_data_dir=('{}') __fish_help_dir=('{}') __fish_man_dir=('{}') __fish_sysconf_dir=(/etc/fish)\n\
+         __fish_config_dir=(${{XDG_CONFIG_HOME:-$HOME/.config}}/fish) __fish_cache_dir=(${{XDG_CACHE_HOME:-$HOME/.cache}}/fish) \
+         __fish_user_data_dir=(${{XDG_DATA_HOME:-$HOME/.local/share}}/fish)\n",
+        q(&bin), q(&data), q(&help), q(&man)
+    )
+}
+
 fn env_fixups() -> String {
     let inherited = |name: &str| {
         crate::ported::params::environ
@@ -93,6 +113,7 @@ fn env_fixups() -> String {
         "__fish_uvar_file='{}'\n",
         builtins::uvar_path().to_string_lossy().replace('\'', "'\\''")
     );
+    out.push_str(&install_dirs());
     if !extras.is_empty() {
         // one statement each: a failure on one must not skip the rest
         for n in &extras {

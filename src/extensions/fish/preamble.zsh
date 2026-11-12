@@ -116,10 +116,10 @@ __fish_set_list() {
   if [[ $__sc != l ]]; then
     # variables fish has that no zsh parameter stands for
     local -A __virtual=(
-      _ '' __fish_bin_dir /usr/local/bin __fish_cache_dir ${XDG_CACHE_HOME:-$HOME/.cache}/fish
-      __fish_config_dir ${XDG_CONFIG_HOME:-$HOME/.config}/fish __fish_data_dir /usr/local/share/fish
-      __fish_help_dir /usr/local/share/doc/fish __fish_man_dir /usr/local/share/fish/man
-      __fish_sysconf_dir /etc/fish __fish_user_data_dir ${XDG_DATA_HOME:-$HOME/.local/share}/fish
+      _ '' __fish_bin_dir ${__fish_bin_dir[1]} __fish_cache_dir ${__fish_cache_dir[1]}
+      __fish_config_dir ${__fish_config_dir[1]} __fish_data_dir ${__fish_data_dir[1]}
+      __fish_help_dir ${__fish_help_dir[1]} __fish_man_dir ${__fish_man_dir[1]}
+      __fish_sysconf_dir ${__fish_sysconf_dir[1]} __fish_user_data_dir ${__fish_user_data_dir[1]}
       argv '' fish_bind_mode default fish_history '' fish_killring '' fish_pid $$
       fish_private_mode '' fish_terminal_color_theme '' history '' hostname ${HOST%%.*}
       pipestatus 0 status 0 status_generation 0 COLUMNS ${COLUMNS:-80} LINES ${LINES:-24}
