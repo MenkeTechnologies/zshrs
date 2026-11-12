@@ -841,10 +841,10 @@ fn bundle_zsh_docs() {
     // `vendor/zsh/man1/zsh.1` ships as `man/man1/zsh.1`. Emitting the
     // vendored name verbatim put the pages in `~/.zshrs/man1` while
     // MANPATH named `~/.zshrs/man`, which did not exist.
-    // (vendored dir, installed path, required). `info` and `man1` are the
-    // OPTIONAL trees: both are excluded from the published crate to keep
-    // the .crate under crates.io's size ceiling, so a crates.io build has
-    // neither vendor/zsh/info nor vendor/zsh/man1 to read. Every other
+    // (vendored dir, installed path, required). `info`, `man1` and `help` are
+    // the OPTIONAL trees: all three are excluded from the published crate to
+    // keep the .crate under crates.io's size ceiling, so a crates.io build
+    // has none of vendor/zsh/info, man1 or help to read. Every other
     // tree is required -- a missing one is a build error, never a quiet
     // short bundle.
     //
@@ -871,7 +871,13 @@ fn bundle_zsh_docs() {
         // HELPDIR to the <prefix>/share/zsh/<ver>/help of whichever zsh
         // built it, which is a dead path on a host without that exact
         // install -- so zshrs ships the tree and points HELPDIR at it.
-        ("help", "help", true),
+        // OPTIONAL since 0.13.63: excluded from the published crate when the
+        // fish frontend pushed the .crate past crates.io's 10 MiB ceiling
+        // again. Without it a crates.io build seeds no HELPDIR
+        // (bundled_docs.rs `helpdir_value` checks the tree exists) and
+        // `run-help` falls back to its compiled-in default. Git and Homebrew
+        // builds still bundle it. Restore to required with `man1`.
+        ("help", "help", false),
         // `newuser`, sourced by zsh's first-run path.
         ("scripts", "scripts", true),
     ];

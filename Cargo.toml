@@ -54,6 +54,12 @@ exclude = [
     # this tree as optional -- restore it to required if crates.io grants
     # a size-limit increase.
     "/vendor/zsh/man1/",
+    # zsh's run-help database (107 files), dropped from the PUBLISHED crate
+    # only -- 0.13.63 packaged at 10.50 MiB against the 10 MiB ceiling, the
+    # growth being the fish frontend's source. build.rs treats this tree as
+    # optional; a crates.io install seeds no HELPDIR and `run-help` uses its
+    # compiled-in default. Git and Homebrew builds still bundle it.
+    "/vendor/zsh/help/",
     # The differential fuzzer's source, dropped from the PUBLISHED crate
     # only -- 0.57 MiB of it, and the crate is against crates.io's 10 MiB
     # ceiling again (0.12.58 shipped at 9.99 MiB). It is a development
