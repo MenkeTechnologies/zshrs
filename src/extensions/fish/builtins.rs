@@ -12,7 +12,7 @@ use std::io::{BufRead, Read, Write};
 
 /// Register every fish command in the native-command table.
 pub fn register_all() {
-    for name in ["string", "math", "count", "contains", "path", "__fish_printf", "__fish_uvar_load", "__fish_uvar_write"] {
+    for name in ["string", "math", "count", "contains", "path", "__fish_printf", "__fish_uvar_load", "__fish_uvar_write", "__fish_history_delete"] {
         crate::native_cmds::register(name, move |argv| run(argv));
     }
 }
@@ -28,6 +28,7 @@ pub fn run(argv: &[String]) -> i32 {
         "path" => path(args),
         "__fish_printf" => printf(args),
         "__fish_uvar_load" => uvar_load(),
+        "__fish_history_delete" => history_delete(args),
         "__fish_uvar_write" => uvar_write(args),
         _ => 127,
     }
@@ -1303,6 +1304,23 @@ fn uvar_write(args: &[String]) -> i32 {
         let _ = std::fs::remove_file(&tmp);
     }
     i32::from(!ok)
+}
+
+// ---- history ---------------------------------------------------------------------
+
+/// `__fish_history_delete --exact|--prefix|--contains TERM` / `--all`: remove matching
+/// commands from the persistent history (sqlite index and text file).
+fn history_delete(args: &[String]) -> i32 {
+    let Some(mode) = args.first() else { return 1 };
+    let term = args.get(1).cloned().unwrap_or_default();
+    let Ok(engine) = crate::history::HistoryEngine::new() else { return 1 };
+    let drop: Box<dyn Fn(&str) -> bool> = match mode.as_str() {
+        "--all" => Box::new(|_| true),
+        "--exact" => Box::new(move |c| c == term),
+        "--prefix" => Box::new(move |c| c.starts_with(&term)),
+        _ => Box::new(move |c| c.contains(&term)),
+    };
+    i32::from(engine.forget(&*drop).is_err())
 }
 
 // ---- path ------------------------------------------------------------------------

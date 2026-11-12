@@ -467,6 +467,7 @@ history() {
     save) builtin fc -W 2>/dev/null; return 0 ;;
     merge) builtin fc -R 2>/dev/null; return 0 ;;
     clear)
+      __fish_history_delete --all
       builtin fc -p
       return 0 ;;
     delete) shift
@@ -487,6 +488,7 @@ history() {
         prefix) keep=("${(@)all:#${(b)dterm}*}") ;;
         *) keep=("${(@)all:#*${(b)dterm}*}") ;;
       esac
+      __fish_history_delete --$dmode "$dterm"
       builtin fc -p
       for k in "${keep[@]}"; do print -s -r -- "$k"; done
       return 0 ;;

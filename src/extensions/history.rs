@@ -531,6 +531,62 @@ impl HistoryEngine {
         entries.collect()
     }
 
+    /// Remove every history record whose command satisfies `drop`, from the sqlite index and
+    /// from the text file (which is the authoritative store and is rewritten whole, keeping
+    /// the other records byte for byte). Returns how many commands were dropped.
+    pub fn forget(&self, drop: &dyn Fn(&str) -> bool) -> std::io::Result<usize> {
+        let io = |e: rusqlite::Error| std::io::Error::other(e.to_string());
+        let mut ids = Vec::new();
+        {
+            let mut q = self.conn.prepare("SELECT id, command FROM history").map_err(io)?;
+            let rows = q
+                .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
+                .map_err(io)?;
+            for row in rows.flatten() {
+                if drop(&row.1) {
+                    ids.push(row.0);
+                }
+            }
+        }
+        for id in &ids {
+            self.delete(*id).map_err(io)?;
+        }
+        let path = Self::text_path();
+        let Ok(text) = std::fs::read_to_string(&path) else { return Ok(ids.len()) };
+        let mut kept = String::new();
+        let mut record = String::new();
+        let mut command = String::new();
+        let mut flush = |record: &mut String, command: &mut String, kept: &mut String| {
+            if !record.is_empty() && !drop(&unescape_text_command(command.trim_end_matches('\n'))) {
+                kept.push_str(record);
+            }
+            record.clear();
+            command.clear();
+        };
+        for line in text.split_inclusive('\n') {
+            let starts_record = line.strip_prefix(": ").is_some_and(|r| {
+                r.split_once(';').is_some_and(|(head, _)| {
+                    head.split_once(':').is_some_and(|(a, b)| {
+                        !a.is_empty() && a.bytes().all(|c| c.is_ascii_digit()) && b.trim_start_matches('-').bytes().all(|c| c.is_ascii_digit())
+                    })
+                })
+            });
+            let continues = record.ends_with("\\\n");
+            if starts_record && !continues {
+                flush(&mut record, &mut command, &mut kept);
+                command.push_str(line.split_once(';').map_or("", |(_, c)| c));
+            } else {
+                command.push_str(line);
+            }
+            record.push_str(line);
+        }
+        flush(&mut record, &mut command, &mut kept);
+        let tmp = path.with_extension(format!("tmp{}", std::process::id()));
+        std::fs::write(&tmp, kept)?;
+        std::fs::rename(&tmp, &path)?;
+        Ok(ids.len())
+    }
+
     /// Delete a history entry
     pub fn delete(&self, id: i64) -> rusqlite::Result<()> {
         self.conn
@@ -795,6 +851,24 @@ fn is_sqlite_file(path: &std::path::Path) -> bool {
     &header == b"SQLite format 3\0"
 }
 
+/// The inverse of the escaping [`format_text_line`] applies: `\\` is a backslash and a
+/// backslash before a newline is the newline.
+fn unescape_text_command(s: &str) -> String {
+    let mut out = String::new();
+    let mut it = s.chars().peekable();
+    while let Some(c) = it.next() {
+        if c == '\\' {
+            match it.peek() {
+                Some('\\') | Some('\n') => out.push(it.next().unwrap_or('\\')),
+                _ => out.push(c),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// Format one zsh-extended-history line:
 ///
 /// ```text
@@ -940,6 +1014,31 @@ mod tests {
             let id = engine.add("print scratch", None).unwrap();
             engine.update_last(id, 0, 0).unwrap();
             assert!(!home.join("zshrs_history").exists());
+        });
+    }
+
+    #[test]
+    fn forget_drops_matches_from_index_and_text_file() {
+        let _g = crate::test_util::global_state_lock();
+        with_private_home(|home| {
+            let engine = HistoryEngine::new().unwrap();
+            for c in ["echo keep", "echo secret", "ls -la"] {
+                engine.add(c, None).unwrap();
+            }
+            let text = home.join("zshrs_history");
+            std::fs::write(
+                &text,
+                ": 1:0;echo keep\n: 2:0;echo secret\n: 3:0;echo multi\\\nline secret\n: 4:0;ls -la\n",
+            )
+            .unwrap();
+            let n = engine.forget(&|c| c.contains("secret")).unwrap();
+            assert_eq!(n, 1);
+            assert_eq!(
+                std::fs::read_to_string(&text).unwrap(),
+                ": 1:0;echo keep\n: 4:0;ls -la\n"
+            );
+            assert_eq!(engine.search("secret", 10).unwrap().len(), 0);
+            assert_eq!(engine.search("keep", 10).unwrap().len(), 1);
         });
     }
 
