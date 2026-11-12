@@ -163,17 +163,53 @@ fn fish_own_scripts_translate() {
         return; // a fish built without embedded files
     }
     let mut bad = Vec::new();
+    let mut translated: Vec<(String, String)> = Vec::new();
     for name in &names {
         let out = Command::new(&reference)
             .args(["--no-config", "-c", &format!("status get-file {name}")])
             .output()
             .expect("spawn fish");
         let src = String::from_utf8_lossy(&out.stdout);
-        if let Err(e) = zsh::fish::translate(&src) {
-            bad.push(format!("{name}: {e}"));
+        match zsh::fish::translate(&src) {
+            Ok(text) => translated.push((name.clone(), text)),
+            Err(e) => bad.push(format!("{name}: {e}")),
         }
     }
     assert!(bad.is_empty(), "{} of {} fish scripts do not translate:\n{}", bad.len(), names.len(), bad.join("\n"));
+
+    // ...and what comes out has to be zsh the parser accepts
+    let dir = scratch("zsyntax");
+    let files: Vec<(String, PathBuf)> = translated
+        .iter()
+        .enumerate()
+        .map(|(i, (name, text))| {
+            let f = dir.join(format!("{i}.zsh"));
+            std::fs::write(&f, text).unwrap();
+            (name.clone(), f)
+        })
+        .collect();
+    let failures = std::sync::Mutex::new(Vec::new());
+    std::thread::scope(|sc| {
+        for chunk in files.chunks(files.len().div_ceil(8).max(1)) {
+            let failures = &failures;
+            sc.spawn(move || {
+                for (name, f) in chunk {
+                    let out = Command::new(env!("CARGO_BIN_EXE_zshrs"))
+                        .args(["--zsh", "-f", "-n"])
+                        .arg(f)
+                        .output()
+                        .expect("spawn zshrs");
+                    if !out.status.success() {
+                        let why = String::from_utf8_lossy(&out.stderr).lines().next().unwrap_or("").to_string();
+                        failures.lock().unwrap().push(format!("{name}: {why}"));
+                    }
+                }
+            });
+        }
+    });
+    let _ = std::fs::remove_dir_all(&dir);
+    let failures = failures.into_inner().unwrap();
+    assert!(failures.is_empty(), "{} translations are not valid zsh:\n{}", failures.len(), failures.join("\n"));
 }
 
 /// `complete` definitions answer `complete -C` as fish answers it: options with

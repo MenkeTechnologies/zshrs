@@ -396,6 +396,8 @@ impl Emitter {
     /// escaped.
     fn case_pattern(&mut self, w: &Word) -> String {
         match w.text() {
+            // (an empty pattern matches the empty string; zsh's `()` is not a pattern)
+            Some(t) if t.is_empty() => "''".to_string(),
             Some(t) => t
                 .chars()
                 .map(|c| match c {

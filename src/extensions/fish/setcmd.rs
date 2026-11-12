@@ -147,6 +147,9 @@ impl Emitter {
             .filter(|(_, idx)| !plain_erase || idx.is_none())
             .map(|(n, _)| self.zn(&n))
             .collect();
+        if names.is_empty() {
+            return text; // `set -U` alone lists the universal variables
+        }
         let call = if f.erase { "__fish_uvar_erase" } else { "__fish_uvar_save" };
         let saves: Vec<String> = names.iter().map(|n| format!("{call} {n}")).collect();
         format!("{text}; {}", saves.join("; "))
@@ -363,12 +366,14 @@ impl Emitter {
         };
         let mut targets = vec![if prompt.is_some() { squote(&first) } else { first }];
         targets.extend(names[1..].iter().cloned());
+        // (a group, so the declarations travel with the read when it is a pipeline's last stage)
+        let group = |text: String| if pre.is_empty() { text } else { format!("{{ {text}; }}") };
         if as_list {
-            return format!("{pre}builtin read {flags}A {}", targets.join(" "));
+            return group(format!("{pre}builtin read {flags}A {}", targets.join(" ")));
         }
         // one variable takes the whole line, as fish does; several split on IFS
         let ifs = if names.len() == 1 { "IFS= " } else { "" };
-        format!("{pre}{ifs}builtin read {flags} {}", targets.join(" "))
+        group(format!("{pre}{ifs}builtin read {flags} {}", targets.join(" ")))
     }
 
     /// `alias name 'command args'` / `alias name=command`: a function, as in fish.
