@@ -894,6 +894,11 @@ pub struct Comp {
     /// itself: an `-a` result is matched with its `\tdescription` still on
     /// (fish wildcard_complete), so `ksh --` finds `-e\tfail on non-zero…`.
     pub matched_as: Option<String>,
+    /// The rank this completion can be no better than: a path reached through
+    /// a fuzzily matched directory (`s/e/f` → `src/extensions/fish.rs`) is at
+    /// least as fuzzy as that directory's match (fish
+    /// `expand_literal_intermediate_segment_with_fuzz`).
+    pub rank_floor: u32,
 }
 
 /// What a query found.
@@ -1019,6 +1024,7 @@ impl Completer<'_> {
                 no_space,
                 keep: keep_order,
                 matched_as: Some(raw),
+                rank_floor: 0,
             });
         }
     }
@@ -1163,6 +1169,7 @@ impl Completer<'_> {
                         no_space: false,
                         keep: false,
         matched_as: None,
+        rank_floor: 0,
                     });
                     continue;
                 }
@@ -1183,6 +1190,7 @@ impl Completer<'_> {
                         no_space: true,
                         keep: false,
         matched_as: None,
+        rank_floor: 0,
                     });
                 }
                 self.out.comps.push(Comp {
@@ -1191,6 +1199,7 @@ impl Completer<'_> {
                     no_space: false,
                     keep: false,
         matched_as: None,
+        rank_floor: 0,
                 });
             }
         }
@@ -1871,7 +1880,7 @@ const SUBSEQ: u32 = 4;
 
 /// The rank of `c` for the typed word (see [`Comp::matched_as`]).
 fn rank_of(typed: &str, c: &Comp) -> Option<u32> {
-    fuzzy_rank(typed, c.matched_as.as_deref().unwrap_or(&c.word))
+    fuzzy_rank(typed, c.matched_as.as_deref().unwrap_or(&c.word)).map(|r| r.max(c.rank_floor))
 }
 
 /// fish `string_fuzzy_match_string(typed, candidate)` as a rank.
@@ -2058,6 +2067,7 @@ fn comp(word: String, desc: &str, no_space: bool) -> Comp {
         no_space,
         keep: false,
         matched_as: None,
+        rank_floor: 0,
     }
 }
 
@@ -2198,6 +2208,7 @@ fn variable_comps(before: &str, typed: &str) -> Vec<Comp> {
                 no_space: is_dir,
                 keep: false,
                 matched_as: Some(n.clone()),
+                rank_floor: 0,
             }
         })
         .collect()
@@ -2222,6 +2233,7 @@ fn user_comps(typed: &str) -> Vec<Comp> {
                 no_space: true,
                 keep: false,
                 matched_as: Some(name),
+                rank_floor: 0,
             });
         }
         // fish gives up after 200 ms (a slow directory service)
@@ -2257,6 +2269,7 @@ fn abbr_comps() -> Vec<Comp> {
             no_space: true,
             keep: false,
             matched_as: None,
+            rank_floor: 0,
         });
     }
     out
@@ -2327,18 +2340,82 @@ fn file_names(prefix: &str, describe: bool) -> Vec<Comp> {
         Some(i) => (&prefix[..=i], &prefix[i + 1..]),
         None => ("", prefix),
     };
-    // the directory part is expanded to be read, and kept as typed in the
-    // words: fish completes `$HOME/Doc` to `$HOME/Documents/`
-    let real_dir = if dir.is_empty() { ".".to_string() } else { expand_vars(&expand_tilde(dir)) };
-    let Ok(rd) = std::fs::read_dir(&real_dir) else {
-        return Vec::new();
+    // no fuzzy file matching for a word that starts with a dash (fish #568)
+    let fuzzy_ok = !prefix.starts_with('-');
+    let segs: Vec<&str> = if dir.is_empty() { Vec::new() } else { dir[..dir.len() - 1].split('/').collect() };
+    let mut out = Vec::new();
+    expand_dir_segments(String::new(), &segs, None, &mut |found, fuzz| {
+        let entries = dir_entries(&found, base, fuzzy_ok, describe);
+        let n = entries.len();
+        for mut c in entries {
+            if let Some(rank) = fuzz {
+                // the word replaces the token; its last component still ranks
+                // against what was typed for it, and no better than the
+                // directories it went through
+                c.matched_as = Some(format!("{dir}{}", &c.word[found.len()..]));
+                c.rank_floor = rank;
+            }
+            out.push(c);
+        }
+        n
+    });
+    out.sort_by(|a, b| wcsfilecmp(&a.word, &b.word));
+    out
+}
+
+/// fish `WildCardExpander::expand` over the directory segments of a path being
+/// completed. A segment is first taken literally; when that finds nothing and
+/// no such directory exists (fish #3211), every directory whose name fuzzily
+/// matches it stands in for it (`expand_literal_intermediate_segment_with_fuzz`,
+/// fish #94). `found` is the directory part so far, as it goes in the words;
+/// `emit` gets each whole directory part and, when a segment was matched
+/// fuzzily, the fuzziest rank on the way, and says how many completions it
+/// found there; the total is returned.
+fn expand_dir_segments(found: String, segs: &[&str], fuzz: Option<u32>, emit: &mut dyn FnMut(String, Option<u32>) -> usize) -> usize {
+    let Some((seg, rest)) = segs.split_first() else {
+        return emit(found, fuzz);
     };
-    let mut out: Vec<Comp> = rd
+    let literal = format!("{found}{seg}/");
+    let found_literally = expand_dir_segments(literal.clone(), rest, fuzz, emit);
+    // `$VAR` / `~` segments are expanded, never fuzzily replaced
+    if found_literally > 0 || seg.is_empty() || seg.contains(['$', '~']) || std::path::Path::new(&real_path(&literal)).exists() {
+        return found_literally;
+    }
+    let Ok(rd) = std::fs::read_dir(real_path(&found)) else {
+        return 0;
+    };
+    let mut dirs: Vec<(String, u32)> = rd
         .flatten()
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().into_owned();
-            // no fuzzy file matching for a word that starts with a dash (fish #568)
-            let fuzzy_ok = !prefix.starts_with('-');
+            let rank = fuzzy_rank(seg, &name)?;
+            e.path().is_dir().then_some((name, rank))
+        })
+        .collect();
+    dirs.sort();
+    dirs.into_iter()
+        .map(|(name, rank)| {
+            let fuzz = Some(fuzz.map_or(rank, |f| f.max(rank)));
+            expand_dir_segments(format!("{found}{name}/"), rest, fuzz, emit)
+        })
+        .sum()
+}
+
+/// A directory part as typed (`$VAR`, `~/`) expanded to be read; `.` for none.
+fn real_path(dir: &str) -> String {
+    if dir.is_empty() { ".".to_string() } else { expand_vars(&expand_tilde(dir)) }
+}
+
+/// The entries of the directory `dir` (as typed) that the last component
+/// `base` matches, with `dir` kept as typed in the words: fish completes
+/// `$HOME/Doc` to `$HOME/Documents/`.
+fn dir_entries(dir: &str, base: &str, fuzzy_ok: bool, describe: bool) -> Vec<Comp> {
+    let Ok(rd) = std::fs::read_dir(real_path(dir)) else {
+        return Vec::new();
+    };
+    rd.flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
             let matched = fuzzy_rank(base, &name).is_some_and(|r| fuzzy_ok || r <= PREFIX_ICASE);
             if (name.starts_with('.') && !base.starts_with('.')) || !matched {
                 return None;
@@ -2353,9 +2430,7 @@ fn file_names(prefix: &str, describe: bool) -> Vec<Comp> {
             };
             Some(comp(format!("{dir}{name}{}", if is_dir { "/" } else { "" }), desc, is_dir))
         })
-        .collect();
-    out.sort_by(|a, b| wcsfilecmp(&a.word, &b.word));
-    out
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -2539,12 +2614,19 @@ fn query_cmd(argv: &[String]) -> i32 {
     // fish keeps only the best kind of match. Files count as prefix matches
     // when one exists; when the best is weaker than a prefix (`-v` finding
     // `--verbose`) the word is replaced rather than extended (`__fish_cu`).
+    let files = if ans.do_file { file_names(&typed, false) } else { Vec::new() };
+    // a path through a fuzzily matched directory (`s/e/f`): zsh's _files does
+    // not match that way, so those files are ranked and offered from here
+    if files.iter().any(|c| c.matched_as.is_some()) {
+        ans.comps.extend(files.iter().cloned());
+        ans.do_file = false;
+    }
     let ranks: Vec<Option<u32>> = ans.comps.iter().map(|c| rank_of(&typed, c)).collect();
-    let files_match = ans.do_file && file_names(&typed, false).iter().any(|c| fuzzy_rank(&typed, &c.word) == Some(PREFIX));
+    let files_match = ans.do_file && files.iter().any(|c| fuzzy_rank(&typed, &c.word) == Some(PREFIX));
     let best = ranks.iter().flatten().copied().chain(files_match.then_some(PREFIX)).min();
     let mut keep = ranks.iter().map(|r| r.is_some() && *r == best);
     ans.comps.retain(|_| keep.next().unwrap_or(false));
-    let replace = best.is_some_and(|b| b > PREFIX);
+    let replace = best.is_some_and(|b| b > PREFIX) || ans.comps.iter().any(|c| c.matched_as.is_some() && !c.word.starts_with(typed.as_str()));
     if replace {
         ans.do_file = false;
     }
