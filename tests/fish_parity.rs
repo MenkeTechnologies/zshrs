@@ -259,6 +259,10 @@ complete -C 'echo $HOM'
 complete -C 'echo foo$HOM'
 complete -C 'echo ~roo'
 complete -C 'ls $HOME/zqd'
+function zqp; end
+complete -c zqp -f -xa plain
+complete -p '*zqp*' -f -xa wild
+complete -C 'zqp '
 "#,
     )
     .unwrap();

@@ -853,19 +853,28 @@ fn is_var_assignment(tok: &str) -> bool {
 }
 
 
-/// fish `wildcard_match` for command names: `*` and `?`.
-fn wildcard_match(s: &str, pat: &str) -> bool {
-    fn go(s: &[char], p: &[char]) -> bool {
-        match p.first() {
-            None => s.is_empty(),
-            Some('*') => (0..=s.len()).any(|k| go(&s[k..], &p[1..])),
-            Some('?') => !s.is_empty() && go(&s[1..], &p[1..]),
-            Some(c) => s.first() == Some(c) && go(&s[1..], &p[1..]),
-        }
+/// fish `CmdString::new`: the command's path — searched on `$PATH` for a
+/// bare name, made absolute when relative (`wrealpath`) — or `None` when it
+/// is not found. `complete -p` entries compare against this path and `-c`
+/// entries against its basename, both for equality: a `*` in a name is a
+/// literal character (fish's `wildcard_match` needs its internal wildcard
+/// tokens, which a quoted `-p '*clang*'` does not carry, so clang.fish's rule
+/// matches nothing in fish either).
+fn command_path(cmd: &str) -> Option<String> {
+    let found = if cmd.contains('/') {
+        Path::new(cmd).is_file().then(|| cmd.to_string())
+    } else {
+        let path = crate::ported::params::getsparam("PATH").unwrap_or_default();
+        path.split(':')
+            .filter(|d| !d.is_empty())
+            .map(|d| format!("{d}/{cmd}"))
+            .find(|p| is_executable(p))
+    }?;
+    if found.starts_with('/') {
+        Some(found)
+    } else {
+        std::fs::canonicalize(&found).ok().map(|p| p.to_string_lossy().into_owned())
     }
-    let s: Vec<char> = s.chars().collect();
-    let p: Vec<char> = pat.chars().collect();
-    go(&s, &p)
 }
 
 // ---------------------------------------------------------------------------
@@ -1019,7 +1028,11 @@ impl Completer<'_> {
     fn param_for_command(&mut self, cmd: &str, popt: &str, s: &str, use_switches: bool, do_file: &mut bool) {
         let mut use_files = true;
         let mut has_force = false;
-        let name = cmd.rsplit('/').next().unwrap_or(cmd).to_string();
+        let path = command_path(cmd);
+        let name = path
+            .as_deref()
+            .map_or(cmd, |p| p.rsplit('/').next().unwrap_or(p))
+            .to_string();
         self.eval.load(&name);
         let all: Vec<Vec<Opt>> = {
             let st = store();
@@ -1028,10 +1041,7 @@ impl Completer<'_> {
             }
             st.map
                 .iter()
-                .filter(|((n, is_path), _)| {
-                    let subject = if *is_path { cmd } else { name.as_str() };
-                    wildcard_match(subject, n)
-                })
+                .filter(|((n, is_path), _)| if *is_path { path.as_deref() == Some(n.as_str()) } else { *n == name })
                 .map(|(_, e)| e.options.iter().rev().cloned().collect())
                 .collect()
         };
