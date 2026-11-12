@@ -739,6 +739,7 @@ if [[ -o interactive ]]; then
 fi
 umask=(${(l:4::0:)$(builtin umask)})
 CMD_DURATION=(0)
+fish_pid=($$)
 fish_kill_signal=(0)
 FISH_VERSION=4.9.3
 version=(4.9.3)
