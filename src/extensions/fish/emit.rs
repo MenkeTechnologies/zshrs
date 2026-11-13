@@ -370,7 +370,7 @@ impl Emitter {
                 let items: Vec<String> = list.iter().map(|w| self.word_list(w)).collect();
                 // a loop variable is local to the function, even when a global of that name
                 // exists; a list that reads the variable itself must see the outer value first
-                let local_var = self.fn_depth > 0 && !v.starts_with("_fish") && !items.iter().any(|i| i.contains(&v));
+                let local_var = self.fn_depth > 0 && !v.starts_with("_fish") && !items.iter().any(|i| reads_var(i, &v));
                 let pre = if local_var { format!("local {v}=\n") } else { String::new() };
                 let text = format!(
                     "for {v} in {}\ndo\n{}\ndone{}",
@@ -432,7 +432,14 @@ impl Emitter {
                     c => format!("\\{c}"),
                 })
                 .collect(),
-            None => self.word_scalar(w),
+            // a variable holds patterns, one per element
+            None => {
+                let s = self.word_scalar(w);
+                match s.strip_prefix("\"${(j: :)").and_then(|r| r.strip_suffix("}\"")) {
+                    Some(name) if name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') => format!("${{~${{(j:|:){name}}}}}"),
+                    _ => s,
+                }
+            }
         }
     }
 
@@ -1373,4 +1380,12 @@ fn canonical_header(words: &[String]) -> String {
         }
     }
     head
+}
+
+/// Does the expanded text `s` read the zsh parameter `v` (`$v`, `${v…}`)?
+fn reads_var(s: &str, v: &str) -> bool {
+    [format!("${v}"), format!("${{{v}")].iter().any(|pat| {
+        s.match_indices(pat.as_str())
+            .any(|(i, _)| !s[i + pat.len()..].starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_'))
+    })
 }
