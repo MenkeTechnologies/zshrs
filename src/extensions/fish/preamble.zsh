@@ -108,7 +108,7 @@ __fish_set_list() {
       __fx_*) continue ;;
       # this function's own locals and the shell's scratch variables
       __sc|__nm|__ex|__lg|__n|__k|__line|__v|__t|__vals|__out|__in|__hasin|__virtual|__fn|__fv) continue ;;
-      __fx_*|__fc<->|__fa<->|__fi<->_<->|__fish_(cs|ps|rc|nrc|nq|av|nav|srcfile|argv|argv_opts|argflags)) continue ;;
+      __fx_*|__fc<->|__fa<->|__fi<->_<->|__fish_(cs|ps|rc|nrc|nq|av|nav|srcfile|argv|argv_opts|argflags|ipf|ips)) continue ;;
       # every other `__` name is a user's (fish's own scripts set many), bar what this file made
       __fish_uvar_*|__fish_(bin|cache|config|data|help|man|sysconf|user_data)_dir) continue ;;
       __*) (( ${+__fish_internal[$__n]} )) && continue; [[ $__sc == l ]] && continue ;;

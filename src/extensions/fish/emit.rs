@@ -326,7 +326,7 @@ impl Emitter {
                     }
                 }
                 out = format!(
-                    "if __fish_inproc {q}; then __fish_pt=$(mktemp \"${{TMPDIR:-/tmp}}/.zrp.XXXXXX\"); {{ {head}\n}} >$__fish_pt; {{ {rest}\n}} <$__fish_pt; __fish_cs=$?; command rm -f $__fish_pt; (exit $__fish_cs); else {out}; fi",
+                    "if __fish_inproc {q}; then __fish_ipf=$(mktemp \"${{TMPDIR:-/tmp}}/.zrp.XXXXXX\"); {{ {head}\n}} >$__fish_ipf; {{ {rest}\n}} <$__fish_ipf; __fish_ips=$?; command rm -f $__fish_ipf; (exit $__fish_ips); else {out}; fi",
                     q = quote_lit(name)
                 );
             }
@@ -1005,7 +1005,7 @@ impl Emitter {
         };
         match global_setter {
             Some(name) => self.hoists.push(format!(
-                "if __fish_inproc {q}; then __fish_ct=$(mktemp \"${{TMPDIR:-/tmp}}/.zrcs.XXXXXX\"); {{ {inner}\n}} >$__fish_ct; __fish_cs=$?; IFS= read -rd '' {v} <$__fish_ct; {v}+=x; command rm -f $__fish_ct; (exit $__fish_cs); else {captured}; fi",
+                "if __fish_inproc {q}; then __fish_ipf=$(mktemp \"${{TMPDIR:-/tmp}}/.zrcs.XXXXXX\"); {{ {inner}\n}} >$__fish_ipf; __fish_ips=$?; IFS= read -rd '' {v} <$__fish_ipf; {v}+=x; command rm -f $__fish_ipf; (exit $__fish_ips); else {captured}; fi",
                 q = quote_lit(name)
             )),
             None => self.hoists.push(captured),
