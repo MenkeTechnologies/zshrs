@@ -435,7 +435,10 @@ funced() {
   return $st
 }
 __fish_defined_in() {
-  if [[ -n ${__fish_fnline[$1]-} ]]; then
+  if [[ -n ${__fish_fnline[$1]-} && ! -f ${__fish_fnfile[$1]-} ]]; then
+    # defined by `-c` or at the prompt: no file to name
+    print -r -- '# Defined interactively'
+  elif [[ -n ${__fish_fnline[$1]-} ]]; then
     print -r -- "# Defined in ${__fish_fnfile[$1]} @ line ${__fish_fnline[$1]}"
   else
     print -r -- '# Defined via `source`'

@@ -498,6 +498,8 @@ impl Emitter {
             // one line, `function f; body; end`: fish shows the text between the header's
             // `;` and `end` as the body
             None => match src.split_once(';').and_then(|(_, r)| r.strip_suffix("end")) {
+                // (an empty body is indented by fish)
+                Some(body) if body.trim().is_empty() => format!("{head}\n    {body}\nend"),
                 Some(body) => format!("{head}\n{body}\nend"),
                 None => src.to_string(),
             },

@@ -1651,8 +1651,9 @@ fn math(args: &[String]) -> i32 {
                 }
             }
         }
-        Err(e) => {
-            eprintln!("math: Error: {e}\n'{expr}'");
+        Err((e, col, len)) => {
+            let carets = if len > 1 { format!("^{}^", "~".repeat(len - 2)) } else { "^".to_string() };
+            eprintln!("math: Error: {e}\n'{expr}'\n{}{carets}", " ".repeat(col));
             1
         }
     }
@@ -1731,22 +1732,40 @@ fn format_math(v: f64, scale: usize, base: Option<&str>) -> Option<String> {
 struct MathParser<'a> {
     s: &'a [u8],
     i: usize,
+    /// Where fish's caret goes for the error returned: (column, token length).
+    at: (usize, usize),
 }
 
-fn eval_math(src: &str) -> Result<f64, String> {
+/// Evaluate a `math` expression; an error carries the caret position and token length
+/// fish underlines in the echoed expression.
+fn eval_math(src: &str) -> Result<f64, (String, usize, usize)> {
     let mut p = MathParser {
         s: src.as_bytes(),
         i: 0,
+        at: (0, 1),
     };
-    let v = p.expr()?;
+    let v = match p.expr() {
+        Ok(v) => v,
+        Err(e) => return Err((e, p.at.0, p.at.1)),
+    };
+    let end = src[..p.i].trim_end().len();
     p.ws();
     if p.i < p.s.len() {
-        return Err(format!("Unexpected token '{}'", &src[p.i..]));
+        return Err(if p.s[p.i] == b')' {
+            ("Too many arguments".into(), p.i + 2, 1)
+        } else {
+            ("Missing operator".into(), end + 1, 1)
+        });
     }
     Ok(v)
 }
 
 impl MathParser<'_> {
+    /// An error whose caret is drawn `col` columns in, under `len` characters.
+    fn fail<T>(&mut self, msg: &str, col: usize, len: usize) -> Result<T, String> {
+        self.at = (col, len);
+        Err(msg.into())
+    }
     fn ws(&mut self) {
         while self.s.get(self.i).is_some_and(|c| c.is_ascii_whitespace()) {
             self.i += 1;
@@ -1780,18 +1799,26 @@ impl MathParser<'_> {
             if self.s[self.i..].starts_with(b"**") {
                 return Ok(v);
             }
-            if self.eat("*") || self.eat("x") {
+            let star = self.eat("*");
+            let ex = !star && self.eat("x");
+            if ex && self.s[self.i..].iter().all(u8::is_ascii_whitespace) {
+                // a trailing `x` has nothing to multiply by: fish reads it as a function name
+                return self.fail("Unknown function", self.i, 1);
+            }
+            if star || ex {
                 v *= self.power()?;
             } else if self.eat("/") {
+                let op_end = self.i;
                 let d = self.power()?;
                 if d == 0.0 {
-                    return Err("Division by zero".into());
+                    return self.fail("Division by zero", op_end, 1);
                 }
                 v /= d;
             } else if self.eat("%") {
+                let op_end = self.i;
                 let d = self.power()?;
                 if d == 0.0 {
-                    return Err("Division by zero".into());
+                    return self.fail("Division by zero", op_end, 1);
                 }
                 v %= d;
             } else {
@@ -1821,7 +1848,7 @@ impl MathParser<'_> {
         if self.eat("(") {
             let v = self.expr()?;
             if !self.eat(")") {
-                return Err("Expected ')'".into());
+                return self.fail("Missing closing parenthesis", self.s.len() + 1, 1);
             }
             return Ok(v);
         }
@@ -1860,10 +1887,10 @@ impl MathParser<'_> {
             self.i += 1;
         }
         if self.i == start {
-            return Err(match self.s.get(self.i) {
-                Some(c) => format!("Unexpected token '{}'", *c as char),
-                None => "Unexpected end of expression".to_string(),
-            });
+            return match self.s.get(self.i) {
+                Some(_) => self.fail("Unexpected token", self.i + 2, 1),
+                None => self.fail("Too few arguments", self.s.len() + 1, 1),
+            };
         }
         let name = std::str::from_utf8(&self.s[start..self.i]).unwrap_or("").to_string();
         match name.as_str() {
@@ -1872,13 +1899,17 @@ impl MathParser<'_> {
             "tau" => return Ok(std::f64::consts::TAU),
             _ => {}
         }
+        // an unknown name is reported before its arguments are looked at
+        if matches!(math_fn(&name, &[1.0, 1.0]), Err(e) if e.starts_with("Unknown")) {
+            return self.fail("Unknown function", start + 1, name.len());
+        }
         let args = if self.eat("(") {
             let mut v = vec![self.expr()?];
             while self.eat(",") {
                 v.push(self.expr()?);
             }
             if !self.eat(")") {
-                return Err("Expected ')'".into());
+                return self.fail("Missing closing parenthesis", self.s.len() + 1, 1);
             }
             v
         } else {
@@ -1889,15 +1920,16 @@ impl MathParser<'_> {
             }
             v
         };
-        math_fn(&name, &args)
+        let len = self.s.len();
+        math_fn(&name, &args).or_else(|e| self.fail(&e, len + 1, 1))
     }
 }
 
 fn math_fn(name: &str, a: &[f64]) -> Result<f64, String> {
-    let one = || a.first().copied().ok_or_else(|| format!("Too few arguments to '{name}'"));
+    let one = || a.first().copied().ok_or_else(|| "Too few arguments".to_string());
     let two = || match a {
         [x, y, ..] => Ok((*x, *y)),
-        _ => Err(format!("Too few arguments to '{name}'")),
+        _ => Err("Too few arguments".to_string()),
     };
     Ok(match name {
         "abs" => one()?.abs(),
@@ -1954,7 +1986,7 @@ fn math_fn(name: &str, a: &[f64]) -> Result<f64, String> {
             let (x, y) = two()?;
             ((x as i64) ^ (y as i64)) as f64
         }
-        other => return Err(format!("Unknown function '{other}'")),
+        _ => return Err("Unknown function".into()),
     })
 }
 
