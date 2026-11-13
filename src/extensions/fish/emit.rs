@@ -290,7 +290,9 @@ impl Emitter {
             }
         }
         if j.bg {
-            out.push_str(" &");
+            // (the registry is what `jobs` lists: zsh's own table is not visible in a pipeline)
+            let text = squote(out.trim_start_matches("! "));
+            out.push_str(&format!(" & __fish_jobreg $! {text}"));
         }
         if wrap_not {
             out = format!("{{ {out}; __fish_nrc=$?; if (( __fish_nrc == 127 )); then (exit 127); else (( __fish_nrc != 0 )); fi; }}");
@@ -429,6 +431,7 @@ impl Emitter {
         let mut events: Vec<String> = Vec::new();
         let mut signals: Vec<String> = Vec::new();
         let mut watched: Vec<String> = Vec::new();
+        let mut wraps: Vec<String> = Vec::new();
         let mut no_shadow = false;
         let mut i = 0;
         while i < header.len() {
@@ -453,7 +456,12 @@ impl Emitter {
                     watched.extend(header.get(i).and_then(Word::text));
                     i += 1;
                 }
-                "-d" | "--description" | "-w" | "--wraps" | "-j"
+                "-w" | "--wraps" => {
+                    wraps.extend(header.get(i).and_then(Word::text));
+                    i += 1;
+                }
+                w if w.starts_with("--wraps=") => wraps.push(w["--wraps=".len()..].to_string()),
+                "-d" | "--description" | "-j"
                 | "--on-job-exit" | "-p" | "--on-process-exit" | "-V" | "--inherit-variable" => i += 1,
                 "-S" | "--no-scope-shadowing" => no_shadow = true,
                 s if s.starts_with('-') => {}
@@ -487,7 +495,12 @@ impl Emitter {
         let shown = match src.split_once('\n') {
             Some((_, rest)) if rest.trim() == "end" => format!("{head}\n\nend"),
             Some((_, rest)) => format!("{head}\n{rest}"),
-            None => src.to_string(),
+            // one line, `function f; body; end`: fish shows the text between the header's
+            // `;` and `end` as the body
+            None => match src.split_once(';').and_then(|(_, r)| r.strip_suffix("end")) {
+                Some(body) => format!("{head}\n{body}\nend"),
+                None => src.to_string(),
+            },
         };
         out.push_str(&format!(
             "\n__fish_fnsrc[{q}]={}; __fish_fnline[{q}]={line}; __fish_fnfile[{q}]=\"${{__fish_srcfile:-${{(%):-%x}}}}\"",
@@ -502,6 +515,11 @@ impl Emitter {
         }
         for sig in &signals {
             out.push_str(&format!("\ntrap {} {}", quote_lit(&name), quote_lit(sig)));
+        }
+        // fish `function --wraps`: the function completes like the wrapped command
+        // (`complete_add_wrapper`)
+        for w in &wraps {
+            out.push_str(&format!("\n__fish_complete -c {} --wraps {}", quote_lit(&name), quote_lit(w)));
         }
         out
     }

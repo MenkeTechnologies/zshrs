@@ -474,6 +474,58 @@ __fish_time_end() {
   unfunction __fish_dur
   return $st
 }
+# background jobs by pid -> "number<TAB>command", recorded when the job starts
+typeset -gA __fish_jobtab
+__fish_jobreg() {
+  local n=1 p
+  for p in ${(k)__fish_jobtab}; do
+    kill -0 $p 2>/dev/null || { unset "__fish_jobtab[$p]"; continue }
+    (( ${__fish_jobtab[$p]%%$'\t'*} >= n )) && n=$(( ${__fish_jobtab[$p]%%$'\t'*} + 1 ))
+  done
+  __fish_jobtab[$1]=$n$'\t'$2
+}
+# fish's `jobs`: newest first, `Job Group State Command` columns without a header,
+# and a status of 1 when nothing is listed
+jobs() {
+  local mode= q= p e last= a f
+  local -a rows=() want=() c
+  while [[ ${1-} == -* ]]; do
+    case $1 in
+      --) shift; break ;;
+      -p|--pid) mode=p ;;
+      -g|--group) mode=g ;;
+      -c|--command) mode=c ;;
+      -l|--last) last=1 ;;
+      -q|--query) q=1 ;;
+      -h|--help) return 0 ;;
+    esac
+    shift
+  done
+  for p e in ${(kv)__fish_jobtab}; do
+    kill -0 $p 2>/dev/null && rows+=("${e%%$'\t'*}"$'\t'$p$'\t'"${e#*$'\t'}")
+  done
+  rows=(${(On)rows})
+  for a in "$@"; do
+    f=(${(M)rows:#*$'\t'$a$'\t'*})
+    (( ${#f} )) || { [[ -n $q ]] || print -u2 -r -- "jobs: No suitable job: $a"; return 1 }
+    want+=($f)
+  done
+  (( $# )) && rows=($want)
+  (( ${#rows} )) || { [[ -n $q || $# -gt 0 ]] || print -r -- "jobs: There are no jobs"; return 1 }
+  [[ -n $q ]] && return 0
+  [[ -n $last ]] && rows=($rows[1])
+  [[ $mode == c ]] && print -r -- Command
+  for e in $rows; do
+    c=("${(@ps:\t:)e}")
+    case $mode in
+      p) print -r -- $c[2] ;;
+      g) print -r -- - ;;
+      c) print -r -- ${c[3]%% *} ;;
+      *) print -r -- "$c[1]"$'\t'"-"$'\t'"running"$'\t'"$c[3] &" ;;
+    esac
+  done
+  return 0
+}
 set_color() {
   local a c= bg= r=() esc=$'\e'
   local -A fg=(black 30 red 31 green 32 yellow 33 blue 34 magenta 35 cyan 36 white 37 brblack 90 brred 91 brgreen 92 bryellow 93 brblue 94 brmagenta 95 brcyan 96 brwhite 97 brgrey 90 grey 90)
@@ -757,6 +809,11 @@ __fish_argparse() {
       *'=+') sfx=m; s=${s%=+} ;;
       *=) sfx=r; s=${s%=} ;;
     esac
+    if [[ $s == *[^[:alnum:]_/-]* ]]; then
+      c=${s#${s%%[^[:alnum:]_/-]*}}
+      print -u2 -r -- "$name: Invalid option spec '$spec' at char '${c[1]}'"
+      return 2
+    fi
     skipshort=
     if [[ $s == */* ]]; then short=${s%%/*}; long=${s#*/}
     elif [[ ${s[2]-} == - && ${#s} > 2 ]]; then short=${s[1]}; long=${s[3,-1]}; skipshort=1   # `m-min`: --min, variable also _flag_m
