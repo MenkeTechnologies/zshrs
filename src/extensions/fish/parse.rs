@@ -858,6 +858,17 @@ impl Parser {
                     }
                     parts.push(Part::Raw(t));
                 }
+                '{' if self.brace_unclosed() => {
+                    return Err("fish: Unexpected end of string, incomplete parameter expansion".to_string());
+                }
+                // `{a;b}`: a `;` inside closed literal braces does not end the command
+                '{' if self.brace_expansion_ahead().is_none()
+                    && self.brace_close().is_some_and(|e| self.s[self.i..e].contains(&';')) =>
+                {
+                    let e = self.brace_close().unwrap_or(self.i);
+                    lit.extend(self.s[self.i..=e].iter());
+                    self.i = e + 1;
+                }
                 '{' if self.brace_expansion_ahead().is_some() => {
                     flush!();
                     // `{a,b}` expands; `{$x}` (no comma) just yields its contents
@@ -889,6 +900,44 @@ impl Parser {
         }
         flush!();
         Ok((!parts.is_empty() || self.i > start).then_some(Word { parts }))
+    }
+
+    /// At `{`: true when no `}` closes it anywhere in the rest of the input (the braces of
+    /// `{a b}` or `{a;b}` are literal text once closed, but an open one is an error).
+    fn brace_unclosed(&self) -> bool {
+        self.brace_close().is_none()
+    }
+
+    /// The index of the `}` that closes the `{` at the cursor.
+    fn brace_close(&self) -> Option<usize> {
+        let mut depth = 0i32;
+        let mut j = self.i;
+        while let Some(&c) = self.s.get(j) {
+            match c {
+                '\\' => j += 1,
+                '\'' | '"' => {
+                    j += 1;
+                    while let Some(&q) = self.s.get(j) {
+                        if q == '\\' {
+                            j += 1;
+                        } else if q == c {
+                            break;
+                        }
+                        j += 1;
+                    }
+                }
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(j);
+                    }
+                }
+                _ => {}
+            }
+            j += 1;
+        }
+        None
     }
 
     /// At `{`: `Some(true)` for a brace expansion (matching `}` with a top-level comma),
