@@ -12,7 +12,7 @@ use std::io::{BufRead, Read, Write};
 
 /// Register every fish command in the native-command table.
 pub fn register_all() {
-    for name in ["string", "math", "count", "contains", "path", "__fish_printf", "__fish_uvar_load", "__fish_uvar_write", "__fish_history_delete", "__fish_inherited", "__fish_rusage"] {
+    for name in ["string", "math", "count", "contains", "path", "__fish_printf", "__fish_uvar_load", "__fish_uvar_write", "__fish_history_delete", "__fish_inherited", "__fish_rusage", "__fish_test"] {
         crate::native_cmds::register(name, move |argv| run(argv));
     }
 }
@@ -24,6 +24,7 @@ pub fn run(argv: &[String]) -> i32 {
         "string" => string(args),
         "math" => math(args),
         "count" => count(args),
+        "__fish_test" => test(args),
         "contains" => contains(args),
         "path" => path(args),
         "__fish_printf" => printf(args),
@@ -2101,4 +2102,210 @@ mod tests {
 fn next_token_len(s: &str) -> usize {
     let word = s.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.')).unwrap_or(s.len());
     if word > 0 { word } else { s.chars().next().map_or(0, char::len_utf8) }
+}
+
+// ---- test --------------------------------------------------------------------------
+
+/// A node of fish's `test` expression.
+enum TestExpr {
+    Str(String),
+    Unary(String, String),
+    Binary(String, String, String),
+    Not(Box<TestExpr>),
+    And(Box<TestExpr>, Box<TestExpr>),
+    Or(Box<TestExpr>, Box<TestExpr>),
+}
+
+struct TestParser<'a> {
+    toks: &'a [String],
+    i: usize,
+}
+
+const TEST_UNARY: &str = "-b -c -d -e -f -G -g -h -k -L -O -p -r -S -s -t -u -w -x -n -z";
+const TEST_BINARY: &str = "= == != -eq -ne -gt -ge -lt -le -nt -ot -ef";
+
+impl TestParser<'_> {
+    fn peek(&self) -> Option<&str> {
+        self.toks.get(self.i).map(String::as_str)
+    }
+    fn or(&mut self) -> Result<TestExpr, String> {
+        let mut l = self.and()?;
+        while self.peek() == Some("-o") {
+            self.i += 1;
+            l = TestExpr::Or(Box::new(l), Box::new(self.and()?));
+        }
+        Ok(l)
+    }
+    fn and(&mut self) -> Result<TestExpr, String> {
+        let mut l = self.not()?;
+        while self.peek() == Some("-a") {
+            self.i += 1;
+            l = TestExpr::And(Box::new(l), Box::new(self.not()?));
+        }
+        Ok(l)
+    }
+    fn not(&mut self) -> Result<TestExpr, String> {
+        if self.peek() == Some("!") && self.toks.len() > self.i + 1 {
+            self.i += 1;
+            return Ok(TestExpr::Not(Box::new(self.not()?)));
+        }
+        self.primary()
+    }
+    fn primary(&mut self) -> Result<TestExpr, String> {
+        let Some(t) = self.peek().map(str::to_string) else {
+            return Err(format!("Missing argument at index {}", self.i + 1));
+        };
+        if t == "(" {
+            self.i += 1;
+            let e = self.or()?;
+            if self.peek() != Some(")") {
+                return Err(format!("Missing argument at index {}", self.i + 1));
+            }
+            self.i += 1;
+            return Ok(e);
+        }
+        let left = self.toks.get(self.i + 1).map(String::as_str);
+        let right = self.toks.get(self.i + 2).map(String::as_str);
+        // a binary operator in the middle wins over everything else: `test = = =`
+        if let Some(op) = left.filter(|o| TEST_BINARY.split(' ').any(|b| b == *o)) {
+            let Some(r) = right else {
+                return Err(format!("Missing argument at index {}", self.i + 3));
+            };
+            let e = TestExpr::Binary(op.to_string(), t, r.to_string());
+            self.i += 3;
+            return Ok(e);
+        }
+        if TEST_UNARY.split(' ').any(|u| u == t) {
+            // `test -n` alone is the string "-n"
+            if let Some(arg) = left {
+                let e = TestExpr::Unary(t, arg.to_string());
+                self.i += 2;
+                return Ok(e);
+            }
+        }
+        self.i += 1;
+        Ok(TestExpr::Str(t))
+    }
+}
+
+fn test_number(s: &str) -> Result<f64, String> {
+    let t = s.trim();
+    let hex = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X"));
+    let v = match hex {
+        Some(h) => i64::from_str_radix(h, 16).ok().map(|n| n as f64),
+        None => t.parse::<f64>().ok().filter(|v| v.is_finite()),
+    };
+    v.ok_or_else(|| format!("Argument is not a number: '{s}'"))
+}
+
+fn test_file(op: &str, path: &str) -> bool {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
+    let meta = std::fs::metadata(path);
+    let lmeta = || std::fs::symlink_metadata(path);
+    let access = |mode| {
+        std::ffi::CString::new(path).is_ok_and(|c| unsafe { libc::access(c.as_ptr(), mode) } == 0)
+    };
+    match op {
+        "-e" => meta.is_ok(),
+        "-f" => meta.is_ok_and(|m| m.is_file()),
+        "-d" => meta.is_ok_and(|m| m.is_dir()),
+        "-L" | "-h" => lmeta().is_ok_and(|m| m.file_type().is_symlink()),
+        "-p" => meta.is_ok_and(|m| m.file_type().is_fifo()),
+        "-S" => meta.is_ok_and(|m| m.file_type().is_socket()),
+        "-b" => meta.is_ok_and(|m| m.file_type().is_block_device()),
+        "-c" => meta.is_ok_and(|m| m.file_type().is_char_device()),
+        "-s" => meta.is_ok_and(|m| m.len() > 0),
+        "-r" => access(libc::R_OK),
+        "-w" => access(libc::W_OK),
+        "-x" => access(libc::X_OK),
+        "-u" => meta.is_ok_and(|m| m.permissions().mode() & 0o4000 != 0),
+        "-g" => meta.is_ok_and(|m| m.permissions().mode() & 0o2000 != 0),
+        "-k" => meta.is_ok_and(|m| m.permissions().mode() & 0o1000 != 0),
+        "-O" => meta.is_ok_and(|m| m.uid() == unsafe { libc::geteuid() }),
+        "-G" => meta.is_ok_and(|m| m.gid() == unsafe { libc::getegid() }),
+        "-t" => path.parse::<i32>().is_ok_and(|fd| unsafe { libc::isatty(fd) } == 1),
+        _ => false,
+    }
+}
+
+fn test_eval(e: &TestExpr) -> Result<bool, String> {
+    use std::os::unix::fs::MetadataExt;
+    Ok(match e {
+        TestExpr::Str(s) => !s.is_empty(),
+        TestExpr::Not(x) => !test_eval(x)?,
+        TestExpr::And(a, b) => test_eval(a)? && test_eval(b)?,
+        TestExpr::Or(a, b) => test_eval(a)? || test_eval(b)?,
+        TestExpr::Unary(op, arg) => match op.as_str() {
+            "-n" => !arg.is_empty(),
+            "-z" => arg.is_empty(),
+            _ => test_file(op, arg),
+        },
+        TestExpr::Binary(op, a, b) => match op.as_str() {
+            "=" | "==" => a == b,
+            "!=" => a != b,
+            "-nt" | "-ot" => {
+                let (ma, mb) = (std::fs::metadata(a), std::fs::metadata(b));
+                match (ma, mb) {
+                    (Ok(x), Ok(y)) if op == "-nt" => x.mtime() > y.mtime() || (x.mtime() == y.mtime() && x.mtime_nsec() > y.mtime_nsec()),
+                    (Ok(x), Ok(y)) => x.mtime() < y.mtime() || (x.mtime() == y.mtime() && x.mtime_nsec() < y.mtime_nsec()),
+                    (Ok(_), Err(_)) => op == "-nt",
+                    (Err(_), Ok(_)) => op == "-ot",
+                    _ => false,
+                }
+            }
+            "-ef" => match (std::fs::metadata(a), std::fs::metadata(b)) {
+                (Ok(x), Ok(y)) => x.dev() == y.dev() && x.ino() == y.ino(),
+                _ => false,
+            },
+            _ => {
+                let (x, y) = (test_number(a)?, test_number(b)?);
+                match op.as_str() {
+                    "-eq" => x == y,
+                    "-ne" => x != y,
+                    "-gt" => x > y,
+                    "-ge" => x >= y,
+                    "-lt" => x < y,
+                    _ => x <= y,
+                }
+            }
+        },
+    })
+}
+
+/// fish's `test` / `[`: its own grammar (numbers may be floats or hex, `-n` alone is a
+/// string, errors are status 2), not zsh's.
+fn test(args: &[String]) -> i32 {
+    let mut toks = args;
+    if toks.first().is_some_and(|a| a == "--bracket") {
+        toks = &toks[1..];
+        if toks.last().map(String::as_str) != Some("]") {
+            eprintln!("[: the last argument must be ']'");
+            return 2;
+        }
+        toks = &toks[..toks.len() - 1];
+    }
+    if toks.is_empty() {
+        return 2;
+    }
+    let mut p = TestParser { toks, i: 0 };
+    // a malformed expression is status 1, a value that is no number status 2
+    let expr = match p.or() {
+        Ok(e) if p.i < toks.len() => Err(format!("unexpected argument at index {}: '{}'", p.i + 1, toks[p.i])),
+        other => other,
+    };
+    let expr = match expr {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("test: {e}");
+            return 1;
+        }
+    };
+    match test_eval(&expr) {
+        Ok(true) => 0,
+        Ok(false) => 1,
+        Err(e) => {
+            eprintln!("test: {e}");
+            2
+        }
+    }
 }

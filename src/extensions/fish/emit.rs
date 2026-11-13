@@ -641,6 +641,10 @@ impl Emitter {
             }
             // fish's bare `test` is a usage error (status 2); zsh's is false (1)
             Some("test") if rest.len() == 1 => "__fish_ret 2".to_string(),
+            Some(t @ ("test" | "[")) => {
+                let all: Vec<String> = rest[1..].iter().map(|w| self.word_list(w)).collect();
+                format!("__fish_test{} {}", if t == "[" { " --bracket" } else { "" }, all.join(" "))
+            }
             // argparse sets the caller's `argv`, which a function cannot do: the parse
             // leaves the operands in `__fish_argv` and the caller's own `set --` takes them
             Some("argparse") => {
@@ -1096,6 +1100,10 @@ impl Emitter {
         }
         if is_colon_scalar(n) && !z.starts_with("__fx_") {
             return format!("${{{z}}}");
+        }
+        // the path variables join with `:` in a string
+        if matches!(n.as_str(), "PATH" | "CDPATH" | "MANPATH") {
+            return format!("${{(j.:.){z}}}");
         }
         format!("${{(j: :){z}}}")
     }

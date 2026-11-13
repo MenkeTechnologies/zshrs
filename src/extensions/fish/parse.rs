@@ -782,6 +782,23 @@ impl Parser {
     }
 
     /// One word, or `None` at a delimiter.
+    /// At a `[`: where its `]` is when what lies between looks like an index list that has
+    /// a space in it (digits, `..`, `-`, spaces), so the whole `[1 2]` belongs to the word.
+    fn index_list_end(&self) -> Option<usize> {
+        let mut j = self.i + 1;
+        let mut spaced = false;
+        while let Some(&ch) = self.s.get(j) {
+            match ch {
+                ']' => return spaced.then_some(j),
+                ' ' => spaced = true,
+                '0'..='9' | '.' | '-' => {}
+                _ => return None,
+            }
+            j += 1;
+        }
+        None
+    }
+
     fn word(&mut self) -> PResult<Option<Word>> {
         let mut parts: Vec<Part> = Vec::new();
         let start = self.i;
@@ -800,6 +817,16 @@ impl Parser {
                 break;
             }
             match c {
+                // `name[1 2]`: an index list keeps its spaces inside the word (`set -e l[1 2]`)
+                '[' if parts.is_empty()
+                    && !lit.is_empty()
+                    && lit.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+                    && self.index_list_end().is_some() =>
+                {
+                    let end = self.index_list_end().unwrap_or(self.i);
+                    lit.extend(self.s[self.i..=end].iter());
+                    self.i = end + 1;
+                }
                 '\\' => {
                     self.i += 1;
                     if let Some(s) = self.escape()? {

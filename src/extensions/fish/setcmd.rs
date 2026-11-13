@@ -76,7 +76,7 @@ impl Emitter {
                     'q' => f.query = true,
                     'a' => f.append = true,
                     'p' => f.prepend = true,
-                    'S' => {
+                    'S' | 's' => {
                         f.list = true;
                         f.show = true;
                     }
@@ -214,6 +214,13 @@ impl Emitter {
             }
             return self.set_inner(&split);
         }
+        // fish variable names are letters, digits and underscores
+        if !f.query && !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            return format!(
+                "{{ print -u2 -r -- {}; print -u2; (exit 1); }}",
+                squote(&format!("set: {name}: invalid variable name. See `help language#shell-variable-and-function-names`"))
+            );
+        }
         let mut z = self.zn(&name);
         let values = &operands[1..];
 
@@ -235,6 +242,8 @@ impl Emitter {
                 .iter()
                 .filter_map(|w| self.set_target(w))
                 .map(|(n, i)| match i {
+                    // (several indices go through a helper, which cannot reach `argv`)
+                    Some(i) if i.contains(' ') && n != "argv" => format!("__fish_erase_idx {} {}", self.zn(&n), squote(&i)),
                     Some(i) => format!("{}[{}]=()", self.zn(&n), Self::subscript(&i)),
                     // erasing a variable that is not set is status 4
                     None => {
@@ -261,17 +270,29 @@ impl Emitter {
                             None,
                         ) if zn == zname(&n) => "1".to_string(),
                         (_, None) => format!("${{+{zn}}}"),
-                        (_, Some(i)) => format!("${{#{zn}}} >= {}", i.trim_start_matches('-')),
+                        (_, Some(i)) => {
+                            // every index named must exist: the largest decides
+                            let top = i.split(|c: char| c == ' ' || c == '.').filter(|t| !t.is_empty()).map(|t| t.trim_start_matches('-').parse::<usize>().unwrap_or(1)).max().unwrap_or(1);
+                            format!("${{#{zn}}} >= {top}")
+                        }
                     }
                 })
                 .collect();
-            return format!("(( {} ))", tests.join(" && "));
+            // the status is how many of the names are not set
+            let checks: Vec<String> = tests.iter().map(|t| format!("(( {t} )) || (( ++__fish_nq ))")).collect();
+            return format!("{{ __fish_nq=0; {}; (exit $__fish_nq); }}", checks.join("; "));
         }
 
         // `set x[2] value`: one element
         if let Some(i) = idx {
+            let sub = Self::subscript(&i);
+            // several indices take several values, one each
+            if sub.contains(',') && values.len() > 1 {
+                let list: Vec<String> = values.iter().map(|w| self.word_list(w)).collect();
+                return format!("{z}[{sub}]=({})", list.join(" "));
+            }
             let v = values.first().map(|w| self.word_scalar(w)).unwrap_or_else(|| "''".into());
-            return format!("{z}[{}]={v}", Self::subscript(&i));
+            return format!("{z}[{sub}]={v}");
         }
 
         let words: Vec<String> = values.iter().map(|w| self.word_list(w)).collect();

@@ -259,6 +259,21 @@ __fish_abbr() {
   esac
   return 0
 }
+# `set -e name[1 3 5..6 -1]`: drop every element named, highest first
+__fish_erase_idx() {
+  local n=$1 t a b k len
+  local -a arr=("${(@P)n}") drop=()
+  len=${#arr}
+  for t in ${=2}; do
+    a=${t%%..*} b=${t##*..}
+    (( a < 0 )) && a=$(( len + a + 1 ))
+    (( b < 0 )) && b=$(( len + b + 1 ))
+    (( a > b )) && { k=$a; a=$b; b=$k }
+    for (( k = a; k <= b; k++ )); do (( k >= 1 && k <= len )) && drop+=($k); done
+  done
+  for k in ${(Onu)drop}; do arr[$k]=(); done
+  builtin eval "$n=(\"\${(@)arr}\")"
+}
 __fish_set_dynamic() {
   local exp= erase= query= app= pre= n sep=' '
   local o ch
