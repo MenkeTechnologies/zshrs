@@ -12,6 +12,13 @@ __fish_echo() {
     shift
   done
   out=${(pj.$sep.)@}
+  # fish reads `\0` and up to three octal digits; zsh reads `\0` with up to three digits differently
+  if [[ -n $esc ]]; then
+    setopt localoptions extendedglob
+    while [[ $out == (#b)(*)\\0([0-7](#c1,3))(*) ]]; do
+      out=$match[1]\\x${(l:2::0:)${$(( [##16] 8#$match[2] ))#16#}}$match[3]
+    done
+  fi
   if [[ -n $esc ]]; then print -n -- "$out"; else print -rn -- "$out"; fi
   [[ -n $nl ]] && print
   return 0
@@ -60,6 +67,7 @@ status() {
     job-control|-j) return 1 ;;
     filename|-f|--current-filename) print -r -- ${ZSH_ARGZERO:-Standard input} ;;
     current-command) print -r -- ${funcstack[2]:-fish} ;;
+    current-function|function) print -r -- ${funcstack[2]:-Not a function} ;;
     fish-path) print -r -- '@ZSHRS@' ;;
     current-line-number|-n) print -r -- $LINENO ;;
     stack-trace|print-stack-trace|test-feature|buildinfo|terminal-os) return 0 ;;
@@ -319,8 +327,11 @@ type() {
   done
   return $r
 }
+# fish remembers an erased function: it is not autoloaded again
+typeset -gA __fish_erased
+__fish_autoload_ok() { [[ -z ${__fish_erased[$1]+x} ]] && __fish_autoload "$1" }
 functions() {
-  local a n=() q= e= listnames= alln= details= miss=0 args=() i
+  local a n=() q= e= listnames= alln= details= miss=0 args=() i cp=
   # fish's getopt takes short flags together (`functions -na`)
   for a; do
     if [[ $a == -[^-]?* ]]; then
@@ -333,6 +344,7 @@ functions() {
     case $a in
       -q|--query) q=1 ;;
       -e|--erase) e=1 ;;
+      -c|--copy) cp=1 ;;
       -D|--details) details=1 ;;
       -n|--names) listnames=1 ;;
       -a|--all) alln=1 ;;
@@ -347,13 +359,25 @@ functions() {
   # fish autoloads each name (get_props_autoload); -q returns how many are missing
   if [[ -n $q ]]; then
     (( ${#n} )) || return 1
-    for a in $n; do (( $+functions[$a] )) || __fish_autoload $a || (( ++miss )); done
+    for a in $n; do (( $+functions[$a] )) || __fish_autoload_ok $a || (( ++miss )); done
     return miss
   fi
-  if [[ -n $e ]]; then for a in $n; do unfunction -- $a 2>/dev/null; done; return 0; fi
+  if [[ -n $cp ]]; then
+    (( ${#n} == 2 )) || { print -u2 -r -- "functions: Expected exactly two names (current function name, and new function name)"; return 1 }
+    (( $+functions[$n[1]] )) || __fish_autoload_ok $n[1] || { print -u2 -r -- "functions: Function '$n[1]' does not exist"; return 1 }
+    (( $+functions[$n[2]] )) && { print -u2 -r -- "functions: Function '$n[2]' already exists. Cannot create copy '$n[1]'"; return 1 }
+    builtin functions -c -- $n[1] $n[2] || return 1
+    if [[ -n ${__fish_fnsrc[$n[1]]+x} ]]; then
+      __fish_fnsrc[$n[2]]=${__fish_fnsrc[$n[1]]/function $n[1]/function $n[2]}
+      __fish_fnline[$n[2]]=${__fish_fnline[$n[1]]-1}
+      __fish_fnfile[$n[2]]=${__fish_fnfile[$n[1]]-}
+    fi
+    return 0
+  fi
+  if [[ -n $e ]]; then for a in $n; do unfunction -- $a 2>/dev/null; __fish_erased[$a]=1; unset "__fish_aliases[$a]" "__fish_fnsrc[$a]" "__fish_fnline[$a]" "__fish_fnfile[$a]" 2>/dev/null; done; return 0; fi
   if (( ! ${#n} )); then print -rl -- ${(ko)functions}; return 0; fi
   for a in $n; do
-    (( $+functions[$a] )) || __fish_autoload $a || { print -u2 -r -- "functions: Unknown function '$a'"; return 1 }
+    (( $+functions[$a] )) || __fish_autoload_ok $a || { print -u2 -r -- "functions: Unknown function '$a'"; return 1 }
     if [[ -n ${__fish_fnsrc[$a]+x} ]]; then
       if [[ -n $details ]]; then print -r -- ${__fish_fnfile[$a]}; continue; fi
       __fish_defined_in $a
@@ -953,7 +977,7 @@ fish_config() { return 0 }
 complete() { __fish_complete "$@" }
 command_not_found_handler() {
   # fish autoloads a function from NAME.fish on $fish_function_path (and its own functions)
-  if __fish_autoload "$1"; then "$@"; return; fi
+  if __fish_autoload_ok "$1"; then "$@"; return; fi
   print -u2 -r -- "fish: Unknown command: $1"; return 127
 }
 __fish_cl_words() { (( $# )) && print -rl -- "$@"; return 0 }

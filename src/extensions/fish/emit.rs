@@ -455,6 +455,7 @@ impl Emitter {
         let mut signals: Vec<String> = Vec::new();
         let mut watched: Vec<String> = Vec::new();
         let mut wraps: Vec<String> = Vec::new();
+        let mut exit_pids: Vec<String> = Vec::new();
         let mut no_shadow = false;
         let mut i = 0;
         while i < header.len() {
@@ -484,8 +485,15 @@ impl Emitter {
                     i += 1;
                 }
                 w if w.starts_with("--wraps=") => wraps.push(w["--wraps=".len()..].to_string()),
+                "-p" | "--on-process-exit" => {
+                    if let Some(w) = header.get(i) {
+                        let pid = self.word_scalar(w);
+                        exit_pids.push(pid);
+                    }
+                    i += 1;
+                }
                 "-d" | "--description" | "-j"
-                | "--on-job-exit" | "-p" | "--on-process-exit" | "-V" | "--inherit-variable" => i += 1,
+                | "--on-job-exit" | "-V" | "--inherit-variable" => i += 1,
                 "-S" | "--no-scope-shadowing" => no_shadow = true,
                 s if s.starts_with('-') => {}
                 _ if name.is_none() => name = Some(t),
@@ -521,8 +529,6 @@ impl Emitter {
             // one line, `function f; body; end`: fish shows the text between the header's
             // `;` and `end` as the body
             None => match src.split_once(';').and_then(|(_, r)| r.strip_suffix("end")) {
-                // (an empty body is indented by fish)
-                Some(body) if body.trim().is_empty() => format!("{head}\n    {body}\nend"),
                 Some(body) => format!("{head}\n{body}\nend"),
                 None => src.to_string(),
             },
@@ -540,6 +546,10 @@ impl Emitter {
         }
         for sig in &signals {
             out.push_str(&format!("\ntrap {} {}", quote_lit(&name), quote_lit(sig)));
+        }
+        // `--on-process-exit` with the shell's own pid fires when the shell exits
+        for pid in &exit_pids {
+            out.push_str(&format!("\n[[ {pid} == $$ ]] && zshexit_functions+=({})", quote_lit(&name)));
         }
         // fish `function --wraps`: the function completes like the wrapped command
         // (`complete_add_wrapper`)

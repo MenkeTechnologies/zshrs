@@ -461,7 +461,7 @@ impl Emitter {
         let (name, body, eq) = match texts.as_slice() {
             [one] => match one.split_once('=') {
                 Some((n, b)) => (n.to_string(), b.to_string(), true),
-                None => return "__fish_alias_list".into(),
+                None => return "{ print -u2 -r -- 'alias: body cannot be empty'; (exit 1); }".into(),
             },
             [n, rest @ ..] => (n.clone(), rest.join(" "), false),
             [] => return "__fish_alias_list".into(),

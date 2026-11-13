@@ -860,12 +860,17 @@ fn escape(s: &str, style: &str) -> String {
                 && s.chars().all(|c| c.is_alphanumeric() || "_./-+,:@%=".contains(c));
             if plain {
                 s.to_string()
-            } else if s.chars().any(|c| (c as u32) < 0x20) {
+            } else if s.chars().any(|c| (c as u32) < 0x20 || c == '\x7f') {
                 s.chars()
                     .map(|c| match c {
                         '\n' => "\\n".to_string(),
                         '\t' => "\\t".to_string(),
-                        c if (c as u32) < 0x20 => format!("\\x{:02x}", c as u32),
+                        '\r' => "\\r".to_string(),
+                        '\x08' => "\\b".to_string(),
+                        '\x1b' => "\\e".to_string(),
+                        c if (1..0x1a).contains(&(c as u32)) => format!("\\c{}", (b'a' + c as u8 - 1) as char),
+                        '\x1a'..='\x1f' => c.to_string(),
+                        c if (c as u32) < 0x20 || c == '\x7f' => format!("\\x{:02x}", c as u32),
                         c if c.is_alphanumeric() => c.to_string(),
                         c => format!("\\{c}"),
                     })
