@@ -953,6 +953,22 @@ impl Parser {
             'b' => simple('\x08'),
             'f' => simple('\x0c'),
             'v' => simple('\x0b'),
+            '0'..='7' => {
+                // `\101`: up to three octal digits
+                let mut v = c.to_digit(8).unwrap_or(0);
+                let mut n = 1;
+                while n < 3 {
+                    match self.peek().and_then(|d| d.to_digit(8)) {
+                        Some(d) => {
+                            v = v * 8 + d;
+                            self.i += 1;
+                            n += 1;
+                        }
+                        None => break,
+                    }
+                }
+                Ok(Some(char::from_u32(v).map(String::from).unwrap_or_default()))
+            }
             'x' | 'X' => Ok(Some(self.hex_escape(2, c))),
             'u' => Ok(Some(self.hex_escape(4, c))),
             'U' => Ok(Some(self.hex_escape(8, c))),
