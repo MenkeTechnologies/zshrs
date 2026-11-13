@@ -845,15 +845,22 @@ __fish_pwd_event() {
 }
 __fish_argparse() {
   local name=${${funcstack[2,-1]:#(argparse|__fish_argparse)}[1]:-argparse} ign= stop= mu= amp= consumed= skipshort= spec s sfx short long id a o val k i c us=$'\x1f'
-  local -a vals opts=()
+  local -a vals opts=() excl=()
+  typeset -ga __fish_argflags
+  __fish_argflags=(argv_opts)
+  local intid= intidname= minargs= maxargs= nov=$'\x02' xs xa xb present p
   local -A kind=() alias=() acc=() noopt=() valid=()
   local -a specs=() rest=() ids=()
   while (( $# )); do
     case $1 in
       -n|--name) name=$2; shift 2 ;;
-      -x|--exclusive|-N|--min-args|-X|--max-args) shift 2 ;;
+      -x|--exclusive) excl+=($2); shift 2 ;;
+      -N|--min-args) minargs=$2; shift 2 ;;
+      -X|--max-args) maxargs=$2; shift 2 ;;
       --name=*) name=${1#*=}; shift ;;
-      --exclusive=*|--min-args=*|--max-args=*) shift ;;
+      --exclusive=*) excl+=(${1#*=}); shift ;;
+      --min-args=*) minargs=${1#*=}; shift ;;
+      --max-args=*) maxargs=${1#*=}; shift ;;
       -i|--ignore-unknown) ign=1; shift ;;
       -u|--move-unknown) mu=1; shift ;;
       -s|--stop-nonopt) stop=1; shift ;;
@@ -863,13 +870,15 @@ __fish_argparse() {
     esac
   done
   for spec in $specs; do
-    s=${spec%%!*} sfx= short= long= amp=
+    s=${spec%%!*} sfx= short= long= amp= intid=
     [[ $s == *'&' ]] && { amp=1; s=${s%&}; }
     case $s in
       *'=?') sfx=o; s=${s%=?} ;;
       *'=+') sfx=m; s=${s%=+} ;;
       *=) sfx=r; s=${s%=} ;;
     esac
+    # `m#max`: any `-NUM` sets the flag (the value form, as with `=`)
+    if [[ $s == *'#'* ]]; then s=${s/\#//}; sfx=r; intid=1; fi
     if [[ $s == *[^[:alnum:]_/-]* ]]; then
       c=${s#${s%%[^[:alnum:]_/-]*}}
       print -u2 -r -- "$name: Invalid option spec '$spec' at char '${c[1]}'"
@@ -882,6 +891,7 @@ __fish_argparse() {
     else short=$s; fi
     id=${long:-$short}
     ids+=($id)
+    [[ -n $intid ]] && intidname=$id
     [[ -n $amp ]] && noopt[$id]=1
     [[ $spec == *'!'* ]] && valid[$id]=${spec#*!}
     kind[$id]=$sfx
@@ -893,6 +903,7 @@ __fish_argparse() {
   while (( $# )); do
     a=$1; shift
     if [[ $a == -- ]]; then rest+=("$@"); break; fi
+    if [[ -n $intidname && $a == -<-> ]]; then acc[$intidname]=${a#-}; opts+=($a); continue; fi
     if [[ $a == --?* ]]; then
       o=${a%%=*} val=
       [[ $a == *=* ]] && val=${a#*=}
@@ -904,9 +915,9 @@ __fish_argparse() {
       fi
       if [[ -n $kind[$k] ]]; then
         if [[ $a != *=* ]]; then
-          if [[ $kind[$k] == o ]]; then val=
+          if [[ $kind[$k] == o ]]; then val=$nov
           elif (( $# )); then val=$1; consumed=1; shift
-          else print -u2 -r -- "$name: Expected argument for option $o"; return 2; fi
+          else print -u2 -r -- "$name: $o: option requires an argument"; return 2; fi
         fi
         if [[ -n $valid[$k] ]]; then
           _flag_name=${o#--} _flag_value=$val _argparse_cmd=$name
@@ -930,9 +941,9 @@ __fish_argparse() {
         if [[ -n $kind[$k] ]]; then
           val=${a[i+1,-1]} consumed=
           if [[ -z $val ]]; then
-            if [[ $kind[$k] == o ]]; then val=
+            if [[ $kind[$k] == o ]]; then val=$nov
             elif (( $# )); then val=$1; consumed=1; shift
-            else print -u2 -r -- "$name: Expected argument for option -$c"; return 2; fi
+            else print -u2 -r -- "$name: -$c: option requires an argument"; return 2; fi
           fi
           if [[ -n $valid[$k] ]]; then
             _flag_name=$c _flag_value=$val _argparse_cmd=$name
@@ -951,11 +962,28 @@ __fish_argparse() {
       rest+=($a)
     fi
   done
-  typeset -ga __fish_argflags
-  __fish_argflags=(argv_opts)
+  for xs in $excl; do
+    present=()
+    for p in ${(s:,:)xs}; do
+      k=$alias[-$p]; [[ -n $k ]] || k=$alias[--$p]; [[ -n $k ]] || k=$p
+      [[ -n ${acc[$k]+x} ]] && present+=($k)
+    done
+    present=(${(ou)present})
+    if (( ${#present} > 1 )); then
+      for xa in $present; do xb+="${xb:+ }${(j:/:)${=alias[ids:$xa]}}"; done
+      print -u2 -r -- "$name: $xb: options cannot be used together"; return 2
+    fi
+  done
+  if [[ -n $minargs ]] && (( ${#rest} < minargs )); then
+    print -u2 -r -- "$name: expected >= $minargs arguments; got ${#rest}"; return 1
+  fi
+  if [[ -n $maxargs ]] && (( ${#rest} > maxargs )); then
+    print -u2 -r -- "$name: expected <= $maxargs arguments; got ${#rest}"; return 1
+  fi
   for k in $ids; do
     [[ -n ${acc[$k]+x} ]] || continue
     vals=("${(@ps:\x1f:)acc[$k]}")
+    vals=("${(@)vals:#$nov}")   # an optional value that was not given leaves the list empty
     for a in ${=alias[ids:$k]}; do
       a=${a//-/_}
       typeset -ga _flag_$a

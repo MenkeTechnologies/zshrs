@@ -335,6 +335,9 @@ impl Emitter {
         // `set x (cmd)` leaves the status of `cmd`
         if sets_variable {
             format!("{{ {}; __fish_cs=$?; {text}; __fish_ret $__fish_cs; }}", mine.join("; "))
+        } else if text.contains("$?") && !mine.iter().any(|h| h.contains("$(")) {
+            // building word lists must not change the `$status` the command reads
+            format!("{{ __fish_ps=$?; {}; {}; }}", mine.join("; "), text.replace("$?", "$__fish_ps"))
         } else {
             format!("{{ {}; {text}; }}", mine.join("; "))
         }

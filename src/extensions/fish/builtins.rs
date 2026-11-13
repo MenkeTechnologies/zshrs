@@ -158,12 +158,15 @@ fn inputs(operands: &[String], null_sep: bool) -> Vec<String> {
     }
     let mut lock = stdin.lock();
     let mut line = String::new();
+    let mut unterminated = false;
     while lock.read_line(&mut line).unwrap_or(0) > 0 {
-        if line.ends_with('\n') {
+        unterminated = !line.ends_with('\n');
+        if !unterminated {
             line.pop();
         }
         out.push(std::mem::take(&mut line));
     }
+    STDIN_SHAPE.with(|s| s.set(Some((out.len(), unterminated))));
     out
 }
 
@@ -178,6 +181,12 @@ fn inputs_detecting_nul(forced: bool) -> Vec<String> {
         items.pop();
     }
     items.iter().map(|i| String::from_utf8_lossy(i).into_owned()).collect()
+}
+
+thread_local! {
+    /// What the last read of stdin saw: the number of lines and whether the final one lacked
+    /// its newline. `None` when stdin was not read.
+    static STDIN_SHAPE: std::cell::Cell<Option<(usize, bool)>> = const { std::cell::Cell::new(None) };
 }
 
 struct Out {
@@ -198,6 +207,12 @@ impl Out {
         if !self.quiet {
             self.buf.extend_from_slice(s.as_bytes());
             self.buf.push(if self.nul { 0 } else { b'\n' });
+        }
+    }
+    /// fish ends the output of an item that came from an unterminated stdin line the same way.
+    fn drop_final_newline(&mut self) {
+        if self.buf.last() == Some(&b'\n') {
+            self.buf.pop();
         }
     }
     fn flush(self) {
@@ -239,6 +254,7 @@ const STRING_LONG: &[(&str, char)] = &[
 ];
 
 fn string(args: &[String]) -> i32 {
+    STDIN_SHAPE.with(|s| s.set(None));
     let Some(sub) = args.first() else {
         return err("string", "missing subcommand");
     };
@@ -304,7 +320,7 @@ fn string(args: &[String]) -> i32 {
             let items: Vec<String> = if o.has('n') { items.into_iter().filter(|s| !s.is_empty()).collect() } else { items };
             let joined = items.join(&sep);
             if sub == "join0" {
-                if !quiet {
+                if !quiet && !items.is_empty() {
                     let mut so = std::io::stdout().lock();
                     let _ = so.write_all(joined.as_bytes());
                     let _ = so.write_all(b"\0");
@@ -315,9 +331,20 @@ fn string(args: &[String]) -> i32 {
             i32::from(items.len() < 2)
         }
         "split" | "split0" => str_split(&o, &mut out, sub == "split0"),
+        "collect" if o.rest.is_empty() => {
+            // stdin is one value, written back without a newline; trailing newlines go
+            // unless -N keeps them
+            let mut buf = String::new();
+            let _ = std::io::stdin().lock().read_to_string(&mut buf);
+            let kept = if o.has('N') { buf.as_str() } else { buf.trim_end_matches('\n') };
+            if !quiet {
+                let mut so = std::io::stdout().lock();
+                let _ = so.write_all(kept.as_bytes());
+            }
+            i32::from(kept.is_empty())
+        }
         "collect" => {
-            let all = inputs(&o.rest, false).join("\n");
-            let all = if o.has('N') { all } else { all.trim_end_matches('\n').to_string() };
+            let all = o.rest.join("\n");
             out.line(&all);
             i32::from(all.is_empty())
         }
@@ -341,6 +368,20 @@ fn string(args: &[String]) -> i32 {
             return err("string", &format!("{other}: invalid subcommand"));
         }
     };
+    if let Some((lines, unterminated)) = STDIN_SHAPE.with(|s| s.take()) {
+        let mirrors = matches!(sub.as_str(), "upper" | "lower" | "trim" | "escape" | "unescape" | "collect" | "replace" | "sub" | "pad" | "join" | "repeat");
+        if unterminated && mirrors {
+            out.drop_final_newline();
+        }
+        // pad loses every newline when the last line lacked one
+        if unterminated && sub == "pad" {
+            out.buf.retain(|&b| b != b'\n');
+        }
+        // nothing came in, so nothing goes out
+        if lines == 0 && matches!(sub.as_str(), "collect" | "join" | "join0") {
+            return status;
+        }
+    }
     out.flush();
     status
 }
@@ -390,7 +431,8 @@ fn str_pad(o: &Opts, out: &mut Out) -> i32 {
     let width = o
         .num('w')
         .map(|w| w.max(0) as usize)
-        .unwrap_or_else(|| items.iter().map(|s| s.chars().count()).max().unwrap_or(0));
+        .unwrap_or(0)
+        .max(items.iter().map(|s| s.chars().count()).max().unwrap_or(0));
     for s in &items {
         let pad = width.saturating_sub(s.chars().count());
         let p: String = std::iter::repeat_n(fill, pad).collect();
@@ -427,7 +469,12 @@ fn str_repeat(o: &Opts, out: &mut Out) -> i32 {
             r = r.chars().take(m).collect();
         }
         any |= !r.is_empty();
-        out.line(&r);
+        if !r.is_empty() {
+            out.line(&r);
+        }
+    }
+    if o.has('N') {
+        out.drop_final_newline();
     }
     i32::from(!any)
 }
@@ -1596,7 +1643,8 @@ fn count(args: &[String]) -> i32 {
             0
         } else {
             let _ = std::io::stdin().read_to_string(&mut buf);
-            buf.lines().count()
+            // fish counts newline characters: an unterminated last line is not counted
+            buf.matches('\n').count()
         }
     } else {
         args.len()
