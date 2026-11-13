@@ -63,13 +63,16 @@ status() {
   case ${1-} in
     is-interactive|-i|--is-interactive) [[ -o interactive ]] ;;
     is-login|-l|--is-login) [[ -o login ]] ;;
-    is-command-substitution|is-block|is-breakpoint|is-event|-c|-b|-n) return 1 ;;
+    is-command-substitution|-c) (( ZSH_SUBSHELL )) ;;
+    is-block|is-breakpoint|is-event|-b|-n) return 1 ;;
     job-control|-j) return 1 ;;
     filename|-f|--current-filename) print -r -- ${ZSH_ARGZERO:-Standard input} ;;
     current-command) print -r -- ${funcstack[2]:-fish} ;;
     current-function|function) print -r -- ${funcstack[2]:-Not a function} ;;
     fish-path) print -r -- '@ZSHRS@' ;;
-    current-line-number|-n) print -r -- $LINENO ;;
+    current-line-number|line-number|-n) print -r -- $LINENO ;;
+    basename) print -r -- ${ZSH_ARGZERO:t} ;;
+    dirname) print -r -- ${ZSH_ARGZERO:A:h} ;;
     stack-trace|print-stack-trace|test-feature|buildinfo|terminal-os) return 0 ;;
     *) [[ -o interactive ]] && print -r -- 'This is an interactive session' || print -r -- 'This is a non-interactive session' ;;
   esac
@@ -315,13 +318,19 @@ __fish_set_dynamic() {
   else builtin eval "$n=(\"\$@\")"; fi
 }
 type() {
-  local q= t= a n k r=0
+  local q= t= a n k r=0 pth=
   for a; do
     case $a in
       -q|--quiet) q=1 ;;
       -t|--type) t=1 ;;
+      -P|--path) pth=1 ;;
       -*) ;;
       *) n=$a
+         if [[ -n $pth ]]; then
+           k=$(whence -p -- $n 2>/dev/null)
+           [[ -n $k ]] && { [[ -n $q ]] || print -r -- $k } || r=1
+           continue
+         fi
          k=$(whence -w -- $n 2>/dev/null); k=${k##*: }
          [[ $k == reserved || $n == "begin" ]] && k=builtin
          [[ -n $k && $k != none ]] || { r=1; [[ -n $q ]] || print -u2 -r -- "type: Could not find '$n'"; continue }
@@ -345,6 +354,25 @@ type() {
 # fish remembers an erased function: it is not autoloaded again
 typeset -gA __fish_erased
 __fish_autoload_ok() { [[ -z ${__fish_erased[$1]+x} ]] && __fish_autoload "$1" }
+# fish's `which` finds files only; `umask` prints four octal digits
+which() {
+  local n p r=0
+  for n; do
+    p=$(whence -p -- $n 2>/dev/null) && print -r -- $p || r=1
+  done
+  return $r
+}
+umask() {
+  local m
+  case ${1-} in
+    "") builtin umask | { read -r m; print -r -- ${(l:4::0:)m} } ;;
+    -p|--as-command) print -r -- "umask ${(l:4::0:)$(builtin umask)}" ;;
+    -S|--symbolic) builtin umask -S ;;
+    -*) builtin umask "$@" ;;
+    *) [[ $1 == <-> || $1 == [ugoa]*=* || $1 == [-+ugorwxa,=]# ]] || { print -u2 -r -- "umask: Invalid mask '$1'"; return 1 }
+       builtin umask -- "$@" ;;
+  esac
+}
 functions() {
   local a n=() q= e= listnames= alln= details= miss=0 args=() i cp=
   # fish's getopt takes short flags together (`functions -na`)
