@@ -130,6 +130,8 @@ fn env_fixups() -> String {
         out.push_str(&format!(
             "[[ -n ${{USER-}}  ]] || USER='{}'\n",
             user.replace('\'', "'\\''")
+        ));
+    }
     // fish counts only interactive shells in SHLVL; a script or `-c` keeps what it inherited
     let shlvl = crate::ported::params::environ
         .get()
@@ -137,8 +139,6 @@ fn env_fixups() -> String {
     match shlvl {
         Some(v) => out.push_str(&format!("[[ -o interactive ]] || SHLVL='{}'\n", v.replace('\'', "'\\''"))),
         None => out.push_str("[[ -o interactive ]] || unset SHLVL\n"),
-    }
-        ));
     }
     out.push_str("[[ -n ${USER-} ]] && typeset -gx USER\n:\n"); // (ends with status 0)
     out

@@ -333,13 +333,13 @@ funced() {
   while [[ ${1-} == -* ]]; do
     case $1 in
       -e|--editor) ed=$2; shift ;;
+      --editor=*) ed=${1#--editor=} ;;
       -s|--save) save=1 ;;
       -i|--interactive) ed=fish ;;
       -h|--help) return 0 ;;
     esac
     shift
   done
-      --editor=*) ed=${1#--editor=} ;;
   (( $# )) || { print -r -- 'funced: Expected at least 1 args, got only 0'; return 1 }
   (( $# == 1 )) || { print -u2 -r -- 'funced: expected <= 1 arguments; got '$#; return 1 }
   n=$1
@@ -421,11 +421,6 @@ funced() {
   command rmdir $tmpdir 2>/dev/null
   return $st
 }
-set_color() {
-  local a c= bg= r=() esc=$'\e'
-  local -A fg=(black 30 red 31 green 32 yellow 33 blue 34 magenta 35 cyan 36 white 37 brblack 90 brred 91 brgreen 92 bryellow 93 brblue 94 brmagenta 95 brcyan 96 brwhite 97 brgrey 90 grey 90)
-  local code
-  while (( $# )); do
 __fish_defined_in() {
   if [[ -n ${__fish_fnline[$1]-} ]]; then
     print -r -- "# Defined in ${__fish_fnfile[$1]} @ line ${__fish_fnline[$1]}"
@@ -437,6 +432,11 @@ __fish_alias_list() {
   local k
   for k in ${(ko)__fish_aliases}; do print -r -- "alias $k ${(q-)__fish_aliases[$k]}"; done
 }
+set_color() {
+  local a c= bg= r=() esc=$'\e'
+  local -A fg=(black 30 red 31 green 32 yellow 33 blue 34 magenta 35 cyan 36 white 37 brblack 90 brred 91 brgreen 92 bryellow 93 brblue 94 brmagenta 95 brcyan 96 brwhite 97 brgrey 90 grey 90)
+  local code
+  while (( $# )); do
     a=$1; shift
     case $a in
       normal) print -rn -- "${esc}[m"; return 0 ;;
@@ -674,6 +674,7 @@ emit() {
   shift
   for f in ${=__fish_events[$ev]}; do $f "$@"; done
   return 0
+}
 # `--on-variable NAME`: only PWD can be watched (it changes through chpwd)
 __fish_on_variable() {
   __fish_events[var:$1]+="${__fish_events[var:$1]:+ }$2"
@@ -682,7 +683,6 @@ __fish_on_variable() {
 __fish_pwd_event() {
   local f
   for f in ${=__fish_events[var:PWD]}; do $f VARIABLE SET PWD; done
-}
 }
 __fish_argparse() {
   local name=${${funcstack[2,-1]:#(argparse|__fish_argparse)}[1]:-argparse} ign= stop= mu= amp= consumed= skipshort= spec s sfx short long id a o val k i c us=$'\x1f'
