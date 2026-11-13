@@ -5660,11 +5660,20 @@ impl SubshForkCopy {
         // `finish_module` (c:1930), undoing the feature enables the load
         // made in the module's own statics — and dropped; then the flags
         // of the parent's nodes are put back.
+        //
+        // The same goes for a node the parent had but had not loaded — an
+        // autoload stub (`zmodload -ap zsh/random SRANDOM`): touching
+        // `$SRANDOM` in the body loads it, and putting back only the flags
+        // left its statics initialized, so the parent's next autoload of it
+        // defined nothing ("autoloading module zsh/random failed to define
+        // parameter: SRANDOM" after `x=$(: $SRANDOM)`). Loaded in the body
+        // alone, it is unloaded the same way.
         if let Ok(mut t) = crate::ported::module::MODULESTAB.lock() {
+            let init = crate::ported::zsh_h::MOD_INIT_B;
             let strays: Vec<String> = t
                 .modules
                 .keys()
-                .filter(|n| !self.modules.contains_key(*n))
+                .filter(|n| self.modules.get(*n).is_none_or(|saved| saved & init == 0))
                 .cloned()
                 .collect();
             for name in &strays {
