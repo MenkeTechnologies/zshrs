@@ -157,7 +157,7 @@ mod tests {
     #[test]
     fn scopes_map_to_typeset() {
         assert_eq!(t("set -g y a"), "y=(a)");
-        assert_eq!(t("function f\nset -l z 1\nset -g w 2\nend"), "function f {\nlocal -a _fl1_z=(1)\ntypeset -ga w=(2)\n}\n__fish_fnsrc[f]='function f\nset -l z 1\nset -g w 2\nend'; __fish_fnline[f]=1; __fish_fnfile[f]=\"${(%):-%x}\"");
+        assert_eq!(t("function f\nset -l z 1\nset -g w 2\nend"), "function f {\nlocal -a _fl1_z=(1)\ntypeset -ga w=(2)\n}\n__fish_fnsrc[f]='function f\nset -l z 1\nset -g w 2\nend'; __fish_fnline[f]=1; __fish_fnfile[f]=\"${__fish_srcfile:-${(%):-%x}}\"");
         // an exported list stays a list: the exported scalar is tied to the array __fx_NAME
         assert_eq!(t("set -gx E vim"), "{ _fish_x=(vim); if (( ! ${+__fx_E} )); then unset E 2>/dev/null; typeset -gxT E __fx_E ' '; fi; __fx_E=(\"${_fish_x[@]}\"); }");
         assert_eq!(t("set -x GOPATH a b"), "{ _fish_x=(a b); if (( ! ${+__fx_GOPATH} )); then unset GOPATH 2>/dev/null; typeset -gxT GOPATH __fx_GOPATH ':'; fi; __fx_GOPATH=(\"${_fish_x[@]}\"); }");

@@ -322,28 +322,98 @@ funcsave() {
   done
 }
 funced() {
-  local ed= save= n tmp
+  local ed= save= n tmpdir tmp wp= sum new ans which st=0 init
+  local -a edw
   while [[ ${1-} == -* ]]; do
     case $1 in
       -e|--editor) ed=$2; shift ;;
       -s|--save) save=1 ;;
-      -i|--interactive|-t|--transient) ;;
+      -i|--interactive) ed=fish ;;
+      -h|--help) return 0 ;;
     esac
     shift
   done
-  n=${1-}
-  [[ -n $n && $# == 1 ]] || { print -u2 -r -- 'funced: Expected exactly one function name'; return 1 }
-  tmp=$(mktemp "${TMPDIR:-/tmp}/funced.XXXXXX") || return 1
-  if [[ -n ${__fish_fnsrc[$n]+x} ]]; then
-    print -r -- "${__fish_fnsrc[$n]}" > $tmp
-  else
-    print -r -- "function $n"$'\n    \nend' > $tmp
+      --editor=*) ed=${1#--editor=} ;;
+  (( $# )) || { print -r -- 'funced: Expected at least 1 args, got only 0'; return 1 }
+  (( $# == 1 )) || { print -u2 -r -- 'funced: expected <= 1 arguments; got '$#; return 1 }
+  n=$1
+  if [[ -z $ed ]]; then
+    if [[ -n ${VISUAL+x} ]]; then ed=$VISUAL; which=VISUAL
+    elif [[ -n ${EDITOR+x} ]]; then ed=$EDITOR; which=EDITOR
+    else ed=fish; fi
   fi
-  ${=ed:-${VISUAL:-${EDITOR:-vi}}} $tmp || { command rm -f $tmp; return 1 }
-  source $tmp
+  edw=(${=ed})
+  if [[ $ed != fish ]] && ! (( $+commands[$edw[1]] || $+builtins[$edw[1]] )) && ! [[ $edw[1] == */* && -x $edw[1] ]]; then
+    print -u2 -r -- "funced: The value for \$${which:-EDITOR} '$ed' could not be used because the command '$edw[1]' could not be found"
+    ed=fish
+  fi
+  if [[ $ed == fish ]]; then
+    IFS= read -r ans && eval "$ans"
+    [[ -n $save ]] && funcsave $n
+    return 0
+  fi
+  tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/fish-funced.XXXXXX") || return 1
+  tmp=$tmpdir/$n.fish
+  init="function $n"$'\n\nend'
+  if (( ! $+functions[$n] )); then
+    print -r -- $init > $tmp
+  elif [[ -f ${__fish_fnfile[$n]-} ]]; then
+    wp=${__fish_fnfile[$n]}
+    command cat $wp > $tmp
+  else
+    functions -- $n > $tmp
+  fi
+  sum=$(command cksum < $tmp)
+  while true; do
+    if ! $edw $tmp; then
+      print -r -- "Editing failed or was cancelled"
+    else
+      new=$(command cksum < $tmp)
+      if [[ $new == $sum ]]; then
+        print -r -- "Editor exited but the function was not modified"
+        print -r -- "If the editor is still running, check if it waits for completion, maybe a '--wait' option?"
+        [[ -n $wp ]] && source $wp
+        break
+      fi
+      if ! source < $tmp; then
+        print
+        ans=
+        read -r ans || ans=n
+        if [[ -z $ans || $ans == [Yy]([Ee][Ss]|) ]]; then continue; fi
+        print -r -- "Cancelled function editing"
+      elif [[ -n $wp ]]; then
+        if [[ -z $save ]]; then
+          print -r -- "Warning: the file containing this function has not been saved. Changes may be lost when fish is closed."
+          ans=
+          read -r ans
+          [[ -z $ans || $ans == [Yy]([Ee][Ss]|) ]] && save=1
+        fi
+        if [[ -n $save ]]; then
+          if command cp $tmp $wp 2>&1; then
+            print -r -- "Function saved to $wp"
+            source $wp
+          else
+            print -r -- "Saving to original location failed; saving to user configuration instead."
+            wp=${__fish_config_dir[1]}/functions/${wp:t}
+            if command cp $tmp $wp; then
+              print -r -- "Function saved to $wp"
+              source $wp
+            else
+              print -r -- "Saving to user configuration failed. Changes may be lost when fish is closed."
+            fi
+          fi
+        fi
+      elif [[ -n $save ]]; then
+        funcsave $n
+      else
+        print -r -- "Run funcsave $n to save this function to the configuration directory."
+      fi
+    fi
+    break
+  done
   command rm -f $tmp
-  [[ -n $save ]] && funcsave $n
-  return 0
+  command rmdir $tmpdir 2>/dev/null
+  return $st
 }
 set_color() {
   local a c= bg= r=() esc=$'\e'
@@ -727,6 +797,7 @@ source() {
 }
 __fish_eval() {
   local __t
+  local __fish_srcfile=$__f
   __t=$(print -r -- "$*" | '@ZSHRS@' --fish-translate -) || return
   builtin eval "$__t"
 }

@@ -476,7 +476,7 @@ impl Emitter {
             None => src.to_string(),
         };
         out.push_str(&format!(
-            "\n__fish_fnsrc[{q}]={}; __fish_fnline[{q}]={line}; __fish_fnfile[{q}]=\"${{(%):-%x}}\"",
+            "\n__fish_fnsrc[{q}]={}; __fish_fnline[{q}]={line}; __fish_fnfile[{q}]=\"${{__fish_srcfile:-${{(%):-%x}}}}\"",
             squote(&shown),
             q = quote_lit(&name)
         ));
