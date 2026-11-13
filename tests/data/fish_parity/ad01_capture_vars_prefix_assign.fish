@@ -26,3 +26,7 @@ function ad01_show
 end
 V=hi ad01_show
 rm -r ad01_dir
+
+# a path variable is listed by its elements
+set -gx PATH /usr/bin /bin
+set -x | string match 'PATH *'

@@ -103,7 +103,9 @@ __fish_set_list() {
     [[ $__t == *association* || ( $__t == *special* && $__t != *export* ) ]] && continue
     [[ -n $__ex && $__t != *export* ]] && continue
     if [[ -n $__nm ]]; then __out+=($__k); continue; fi
-    if (( ${+parameters[__fx_$__n]} )); then __vals=("${(@P)${:-__fx_$__n}}")   # an exported list
+    # the path variables are lists in fish: their elements, from the tied arrays
+    if [[ $__n == (PATH|CDPATH|MANPATH) ]]; then __vals=("${(@P)${(L)__n}}")
+    elif (( ${+parameters[__fx_$__n]} )); then __vals=("${(@P)${:-__fx_$__n}}")   # an exported list
     elif [[ $__t == array* ]]; then __vals=("${(@P)__n}")
     else __vals=("${(P)__n}"); fi
     __line=$__k
@@ -134,6 +136,9 @@ __fish_set_list() {
       elif [[ -n ${__virtual[$__k]} ]]; then __out+=("$__k ${(q-)__virtual[$__k]}")
       else __out+=($__k); fi
     done
+    # fish lists SHLVL among the exported variables (no value) even when it
+    # inherited none and a non-interactive shell left it unset
+    [[ -n $__ex ]] && (( ! ${+SHLVL} )) && __out+=(SHLVL)
     __out=("${(@o)__out}")
   fi
   (( ${#__out} )) && print -rl -- "${(@)__out}"
