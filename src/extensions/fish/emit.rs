@@ -528,7 +528,25 @@ impl Emitter {
 
     // ---- simple commands --------------------------------------------------------
 
+    /// True when a word indexes a variable with a literal 0 (`$x[0]`, `$x[-0]`, `$x[1..0]`).
+    fn zero_index(w: &Word) -> bool {
+        let zero = |ix: &Option<Vec<String>>| {
+            ix.as_ref().is_some_and(|toks| {
+                toks.iter().any(|t| t.split("..").any(|e| matches!(e, "0" | "-0")))
+            })
+        };
+        w.parts.iter().any(|p| match p {
+            Part::Var(v) => zero(&v.index),
+            Part::Double(ds) => ds.iter().any(|d| matches!(d, DPart::Var(v) if zero(&v.index))),
+            _ => false,
+        })
+    }
+
     fn simple(&mut self, words: &[Word], redirs: &[Redir]) -> String {
+        // `$list[0]`: fish refuses to run the command (status 121)
+        if words.iter().any(Self::zero_index) {
+            return "{ print -u2 -r -- 'fish: array indices start at 1, not 0.'; (exit 121); }".to_string();
+        }
         // `NAME=value… cmd` is fish's `begin; set -lx NAME value…; cmd; end`: the
         // value expands to a list (`files=$dir/* cmd`) and the command's own words
         // see it (`files=… string join \n $files`), neither of which a zsh prefix
