@@ -157,6 +157,7 @@ fn env_fixups() -> String {
         builtins::uvar_path().to_string_lossy().replace('\'', "'\\''")
     );
     out.push_str(&install_dirs());
+    out.push_str(&complete::search_path_assignments());
     if !extras.is_empty() {
         // one statement each: a failure on one must not skip the rest
         for n in &extras {

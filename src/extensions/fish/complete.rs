@@ -1581,6 +1581,8 @@ fn command_exists(name: &str) -> bool {
         || crate::ported::builtin::BUILTINS.iter().any(|b| b.node.nam == name)
         || crate::native_cmds::is_registered(name)
         || crate::ported::exec::findcmd(name, 0, 0).is_some()
+        // fish `exists_no_autoload`: a function that could be autoloaded counts
+        || find_script("functions", &format!("{name}.fish")).is_some()
 }
 
 /// Translate and run a fish file in the current shell, as fish's autoloader
@@ -1631,6 +1633,8 @@ fn complete_load(cmd: &str) {
     if !command_exists(cmd) {
         return;
     }
+    // the function first: its file may hold a `--wraps` (fish #2466)
+    autoload_function(cmd);
     let file = format!("{cmd}.fish");
     if let Some((text, origin)) = find_script("completions", &file) {
         source_fish(&text, &origin);
@@ -1799,6 +1803,25 @@ fn embedded(rel: &str) -> Option<String> {
 }
 
 /// fish's default `fish_function_path` / `fish_complete_path` (share/config.fish).
+/// fish's `share/config.fish` sets `$fish_function_path` and `$fish_complete_path`
+/// to these defaults before the user's configuration runs, so a `set -p
+/// fish_complete_path ~/x` there adds to them; `--no-config` (`-f`) leaves them
+/// unset. The startup assignments, for the translation preamble.
+pub(crate) fn search_path_assignments() -> String {
+    if !crate::ported::zsh_h::isset(crate::ported::zsh_h::RCS) {
+        return String::new();
+    }
+    let q = |s: &String| format!("'{}'", s.replace('\'', "'\\''"));
+    ["functions", "completions"]
+        .iter()
+        .map(|kind| {
+            let var = if *kind == "functions" { "fish_function_path" } else { "fish_complete_path" };
+            let dirs: Vec<String> = default_search_path(kind).iter().map(q).collect();
+            format!("typeset -ga {var}=({})\n", dirs.join(" "))
+        })
+        .collect()
+}
+
 fn default_search_path(kind: &str) -> Vec<String> {
     let config = format!("{}/fish", env_dir("XDG_CONFIG_HOME", ".config"));
     let user_data = format!("{}/fish", env_dir("XDG_DATA_HOME", ".local/share"));

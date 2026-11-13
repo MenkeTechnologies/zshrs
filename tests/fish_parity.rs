@@ -230,6 +230,11 @@ fn completions_match_fish() {
     std::fs::write(cwd.join("zqsrc/zqext/zqfish.rs"), "").unwrap();
     std::fs::write(cwd.join("zqfile"), "").unwrap();
     std::fs::write(comp_dir.join("zqauto.fish"), "complete -c zqauto -f -l from-file -d 'Autoloaded'\n").unwrap();
+    // a command that is only an autoloadable function still gets its completions
+    let fn_dir = home.join(".config/fish/functions");
+    std::fs::create_dir_all(&fn_dir).unwrap();
+    std::fs::write(fn_dir.join("zqfn.fish"), "function zqfn; end\n").unwrap();
+    std::fs::write(comp_dir.join("zqfn.fish"), "complete -c zqfn -f -l from-fn-file\n").unwrap();
     let script = home.join("complete.fish");
     std::fs::write(
         &script,
@@ -284,14 +289,14 @@ complete -C 'zqp '
     let got = run(Path::new(env!("CARGO_BIN_EXE_zshrs")), &["--fish", "-f"], &script, &home, &cwd);
     // with configuration on, `<cmd>.fish` autoloads from the user's completions dir
     let auto = home.join("auto.fish");
-    std::fs::write(&auto, "function zqauto; end\ncomplete -C 'zqauto --'\ncomplete -C 'zqauto --fr'\n").unwrap();
+    std::fs::write(&auto, "function zqauto; end\ncomplete -C 'zqauto --'\ncomplete -C 'zqauto --fr'\ncomplete -C 'zqfn --'\n").unwrap();
     let want_auto = run(&reference, &[], &auto, &home, &cwd);
     let got_auto = run(Path::new(env!("CARGO_BIN_EXE_zshrs")), &["--fish"], &auto, &home, &cwd);
     let _ = std::fs::remove_dir_all(&home);
     let _ = std::fs::remove_dir_all(&cwd);
     assert!(!want.stdout.is_empty(), "fish produced nothing");
     assert_eq!(got.stdout, want.stdout);
-    assert_eq!(want_auto.stdout, "--from-file\tAutoloaded\n--from-file\tAutoloaded\n");
+    assert_eq!(want_auto.stdout, "--from-file\tAutoloaded\n--from-file\tAutoloaded\n--from-fn-file\n");
     assert_eq!(got_auto.stdout, want_auto.stdout);
 }
 
