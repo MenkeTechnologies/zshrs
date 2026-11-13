@@ -12,7 +12,7 @@ use std::io::{BufRead, Read, Write};
 
 /// Register every fish command in the native-command table.
 pub fn register_all() {
-    for name in ["string", "math", "count", "contains", "path", "__fish_printf", "__fish_uvar_load", "__fish_uvar_write", "__fish_history_delete"] {
+    for name in ["string", "math", "count", "contains", "path", "__fish_printf", "__fish_uvar_load", "__fish_uvar_write", "__fish_history_delete", "__fish_inherited"] {
         crate::native_cmds::register(name, move |argv| run(argv));
     }
 }
@@ -29,6 +29,13 @@ pub fn run(argv: &[String]) -> i32 {
         "__fish_printf" => printf(args),
         "__fish_uvar_load" => uvar_load(),
         "__fish_history_delete" => history_delete(args),
+        "__fish_inherited" => match args.first().and_then(|n| super::inherited_value(n)) {
+            Some(v) => {
+                println!("{v}");
+                0
+            }
+            None => 1,
+        },
         "__fish_uvar_write" => uvar_write(args),
         _ => 127,
     }

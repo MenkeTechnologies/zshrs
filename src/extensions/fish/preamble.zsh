@@ -156,9 +156,16 @@ __fish_set_show() {
     # an exported list is one joined string in the environment
     if [[ $n == *PATH ]]; then vals=("${(@s.:.)${(P)z}}"); else vals=(${=${(P)z}}); fi
   else vals=("${(P)z}"); fi
-  print -r -- "\$${n}: set in $kind scope, $exp, with ${#vals} elements"
+  local what="with ${#vals} elements" orig
+  case $n in
+    PATH|CDPATH|MANPATH)
+      [[ ${(Pt)n} == *export* || ${(t)PATH} == *export* ]] && exp=exported
+      what="a path variable with ${#vals} elements" ;;
+  esac
+  print -r -- "\$${n}: set in $kind scope, $exp, $what"
   local i
   for (( i = 1; i <= ${#vals}; i++ )); do print -r -- "\$${n}[$i]: |${vals[i]}|"; done
+  [[ $exp == exported ]] && orig=$(__fish_inherited $n) && print -r -- "\$${n}: originally inherited as |$orig|"
   return 0
 }
 typeset -gA __fish_abbrs __fish_fnsrc __fish_fnline __fish_fnfile __fish_aliases

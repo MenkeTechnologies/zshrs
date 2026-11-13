@@ -104,7 +104,21 @@ fn install_dirs() -> String {
     )
 }
 
+/// The environment the shell started with, for `set --show`'s "originally inherited as".
+static INHERITED: std::sync::OnceLock<std::collections::HashMap<String, String>> = std::sync::OnceLock::new();
+
+/// What `name` was in the environment at startup.
+pub(crate) fn inherited_value(name: &str) -> Option<String> {
+    INHERITED.get()?.get(name).cloned()
+}
+
 fn env_fixups() -> String {
+    INHERITED.get_or_init(|| {
+        crate::ported::params::environ
+            .get()
+            .map(|env| env.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+            .unwrap_or_default()
+    });
     let inherited = |name: &str| {
         crate::ported::params::environ
             .get()
