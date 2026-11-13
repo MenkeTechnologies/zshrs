@@ -291,6 +291,7 @@ complete -C 'ls "$HOME/zq"'
 complete -C 'echo $__fish_sysconf'
 complete -C 'functions __fish_print_hostn'
 complete -C 'set -e __fish_sysc'
+complete -C 'set LANG C'
 function zqp; end
 complete -c zqp -f -xa plain
 complete -p '*zqp*' -f -xa wild
