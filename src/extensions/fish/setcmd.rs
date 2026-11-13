@@ -230,6 +230,7 @@ impl Emitter {
                 let calls: Vec<String> = operands
                     .iter()
                     .filter_map(|w| self.set_target(w))
+                    .filter(|(n, _)| n != "_")
                     .map(|(n, _)| format!("__fish_set_show {} {}", self.zn(&n), crate::fish::emit::squote(&n)))
                     .collect();
                 return calls.join("; ");
@@ -265,15 +266,19 @@ impl Emitter {
                         // fish's own variables, which no zsh parameter stands for (`_` is not set)
                         ("_", None) => "0".to_string(),
                         (
-                            "status" | "status_generation" | "fish_killring" | "fish_bind_mode" | "fish_private_mode" | "history"
+                            "status" | "status_generation" | "fish_killring" | "fish_history" | "fish_bind_mode" | "fish_private_mode" | "history"
                             | "pipestatus" | "hostname" | "fish_pid" | "COLUMNS" | "LINES" | "EUID" | "IFS",
                             None,
                         ) if zn == zname(&n) => "1".to_string(),
                         (_, None) => format!("${{+{zn}}}"),
                         (_, Some(i)) => {
-                            // every index named must exist: the largest decides
-                            let top = i.split(|c: char| c == ' ' || c == '.').filter(|t| !t.is_empty()).map(|t| t.trim_start_matches('-').parse::<usize>().unwrap_or(1)).max().unwrap_or(1);
-                            format!("${{#{zn}}} >= {top}")
+                            // every index named must exist: the largest decides (an index built from
+                            // variables is left for the shell to evaluate)
+                            let toks: Vec<&str> = i.split(|c: char| c == ' ' || c == '.').filter(|t| !t.is_empty()).collect();
+                            match toks.iter().map(|t| t.trim_start_matches('-').parse::<usize>()).collect::<Result<Vec<_>, _>>() {
+                                Ok(nums) => format!("${{#{zn}}} >= {}", nums.into_iter().max().unwrap_or(1)),
+                                Err(_) => format!("${{#{zn}}} >= {}", i.trim_start_matches('-')),
+                            }
                         }
                     }
                 })

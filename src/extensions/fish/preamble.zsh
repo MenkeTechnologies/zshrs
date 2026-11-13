@@ -103,7 +103,13 @@ __fish_set_list() {
       _fl_top_*) __k=${__n#_fl_top_}; [[ $__sc == g ]] && continue; [[ -n $__hasin ]] && continue ;;
       _fl<->_*) __k=${__n#_fl<->_}; [[ $__sc == g ]] && continue; [[ -n $__hasin && -z ${__in[(r)$__n]} ]] && continue ;;
       __fx_*) continue ;;
-      __*|_fish_x|_fl*|_fish_v_*|.*) continue ;;
+      # this function's own locals and the shell's scratch variables
+      __sc|__nm|__ex|__lg|__n|__k|__line|__v|__t|__vals|__out|__in|__hasin|__virtual|__fn|__fv) continue ;;
+      __fx_*|__fc<->|__fa<->|__fi<->_<->|__fish_(cs|ps|rc|nrc|nq|av|nav|srcfile|argv|argv_opts|argflags)) continue ;;
+      # every other `__` name is a user's (fish's own scripts set many), bar what this file made
+      __fish_uvar_*|__fish_(bin|cache|config|data|help|man|sysconf|user_data)_dir) continue ;;
+      __*) (( ${+__fish_internal[$__n]} )) && continue; [[ $__sc == l ]] && continue ;;
+      _fish_x|_fl*|_fish_v_*|.*) continue ;;
       # zsh's own parameters, which fish does not have
       CPUTYPE|HOST|INFOPATH|KEYTIMEOUT|LISTMAX|LOGNAME|MACHTYPE|MAILCHECK|OSTYPE|TIMEFMT|TMPPREFIX|TTY|VENDOR|ZSH_*|signals) continue ;;
       chpwd_functions|precmd_functions|preexec_functions|zshexit_functions|periodic_functions|*_functions) continue ;;
@@ -207,8 +213,8 @@ for __n in path cdpath fpath manpath mailpath module_path signals options comman
 done
 unset __n
 # variables fish always has that no zsh parameter stands for: readable through `$$name`
-typeset -ga __fish_virt_status_generation=(0) __fish_virt_fish_killring=() __fish_virt_history=() __fish_virt_fish_bind_mode=(default) __fish_virt_fish_private_mode=(1)
-__fish_zmap+=(status '?' status_generation __fish_virt_status_generation fish_killring __fish_virt_fish_killring history __fish_virt_history fish_bind_mode __fish_virt_fish_bind_mode fish_private_mode __fish_virt_fish_private_mode)
+typeset -ga __fish_virt_status_generation=(0) __fish_virt_fish_killring=() __fish_virt_history=() __fish_virt_fish_bind_mode=(default) __fish_virt_fish_private_mode=(1) __fish_virt_fish_history=('') __fish_virt_IFS=($'\n \t')
+__fish_zmap+=(fish_history __fish_virt_fish_history IFS __fish_virt_IFS status '?' status_generation __fish_virt_status_generation fish_killring __fish_virt_fish_killring history __fish_virt_history fish_bind_mode __fish_virt_fish_bind_mode fish_private_mode __fish_virt_fish_private_mode)
 (( COLUMNS )) || COLUMNS=80
 (( LINES )) || LINES=24
 typeset -ga __fish_abbr_order
@@ -298,6 +304,13 @@ __fish_set_dynamic() {
   done
   n=$1; shift
   [[ -n $n ]] || return 1
+  # the variables fish always has, bar `_` and the terminal colour theme
+  if [[ -n $query ]]; then
+    case $n in
+      status|status_generation|fish_killring|fish_history|fish_bind_mode|fish_private_mode|history|pipestatus|hostname|fish_pid|COLUMNS|LINES|EUID|IFS) return 0 ;;
+      _|fish_terminal_color_theme) return 1 ;;
+    esac
+  fi
   case $n in
     PATH) n=path ;; CDPATH) n=cdpath ;; MANPATH) n=manpath ;; hostname) n=HOST ;;
     path|cdpath|fpath|manpath|mailpath|module_path|signals|options|commands|functions|aliases|parameters|history|widgets|keymaps|modules|nameddirs|userdirs|galiases|saliases|funcstack|jobtexts|builtins|reswords|status|prompt|psvar|watch) n=_fish_v_$n ;;
@@ -1110,7 +1123,6 @@ if [[ -o interactive ]]; then
 fi
 umask=(${(l:4::0:)$(builtin umask)})
 CMD_DURATION=(0)
-status_generation=(0)
 fish_pid=($$)
 fish_kill_signal=(0)
 FISH_VERSION=4.9.3
@@ -1139,3 +1151,7 @@ if [[ -o interactive ]]; then
   bindkey -M viins '^I' complete-word
   compdef _precommand and or not begin
 fi
+# the `__` names above are the shell's own; `set -n` lists none of them
+typeset -gA __fish_internal
+for __n in ${(k)parameters[(I)__*]}; do __fish_internal[$__n]=1; done
+unset __n

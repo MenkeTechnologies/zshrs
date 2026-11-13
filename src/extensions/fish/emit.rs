@@ -106,6 +106,9 @@ pub fn zname(name: &str) -> String {
         "CDPATH" => "cdpath".into(),
         "MANPATH" => "manpath".into(),
         "hostname" => "HOST".into(),
+        // variables fish always has that no zsh parameter stands for
+        "fish_bind_mode" | "fish_private_mode" | "fish_killring" | "fish_history" | "status_generation" | "IFS"
+        | "history" => format!("__fish_virt_{name}"),
         n if ZSH_SPECIAL_LOWER.contains(&n) && n != "pipestatus" => format!("_fish_v_{n}"),
         n => n.into(),
     }
