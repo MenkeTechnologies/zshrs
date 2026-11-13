@@ -519,7 +519,7 @@ impl Emitter {
         // fish `function --wraps`: the function completes like the wrapped command
         // (`complete_add_wrapper`)
         for w in &wraps {
-            out.push_str(&format!("\n__fish_complete -c {} --wraps {}", quote_lit(&name), quote_lit(w)));
+            out.push_str(&format!("\n__fish_complete_wrap {} {}", quote_lit(&name), quote_lit(w)));
         }
         out
     }

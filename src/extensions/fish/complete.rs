@@ -3009,6 +3009,15 @@ fn settle(rc: i32) -> i32 {
 pub fn register_all() {
     crate::native_cmds::register("__fish_complete", |argv| settle(builtin_complete(argv)));
     crate::native_cmds::register("__fish_complete_query", |argv| settle(query_cmd(argv)));
+    // `function NAME --wraps TARGET`: fish `complete_add_wrapper` alone, with no
+    // completion entry for NAME (unlike `complete -c NAME --wraps TARGET`)
+    crate::native_cmds::register("__fish_complete_wrap", |argv| match (argv.get(1), argv.get(2)) {
+        (Some(cmd), Some(target)) => {
+            complete_add_wrapper(cmd, target);
+            0
+        }
+        _ => 2,
+    });
     crate::native_cmds::register("__fish_autoload", |argv| {
         settle(i32::from(!argv.get(1).is_some_and(|n| autoload_function(n))))
     });

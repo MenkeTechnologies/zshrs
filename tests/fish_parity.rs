@@ -248,6 +248,9 @@ complete -C 'zq '
 complete -C 'zq first -'
 complete -C 'zq -v'
 complete -C 'zw f'
+function zqw --wraps zq; end
+complete -C 'zqw --c'
+complete -c zqw
 complete -C 'string re'
 complete -C 'set_color br'
 complete -c zsub -x -a '(__fish_complete_subcommand)'
