@@ -15,6 +15,9 @@ __fish_echo() {
   # fish reads `\0` and up to three octal digits; zsh reads `\0` with up to three digits differently
   if [[ -n $esc ]]; then
     setopt localoptions extendedglob
+    # `\c` ends the output, newline included; an escape fish does not know is kept as written
+    if [[ $out == *'\c'* ]]; then out=${out%%\\c*}; nl=; fi
+    out=${out//(#b)\\([^abefnrtvxXuUc0-7\\])/\\\\$match[1]}
     while [[ $out == (#b)(*)\\0([0-7](#c1,3))(*) ]]; do
       out=$match[1]\\x${(l:2::0:)${$(( [##16] 8#$match[2] ))#16#}}$match[3]
     done

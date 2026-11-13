@@ -260,7 +260,12 @@ impl Emitter {
                 .iter()
                 .filter_map(|w| self.set_target(w))
                 .map(|(n, i)| {
-                    let zn = self.zn(&n);
+                    let mut zn = self.zn(&n);
+                    // `-g` asks for the global, not a local of the same name
+                    let global_name = zname(&n);
+                    if f.global && !f.local && zn != global_name {
+                        zn = global_name;
+                    }
                     match (n.as_str(), i) {
                         ("argv", None) => "1".to_string(),
                         // fish's own variables, which no zsh parameter stands for (`_` is not set)

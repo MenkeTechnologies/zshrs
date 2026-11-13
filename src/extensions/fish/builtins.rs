@@ -994,11 +994,11 @@ fn printf_int(arg: &str, failed: &mut bool) -> i64 {
     let v = unsafe { libc::strtoll(c.as_ptr(), &mut end, 0) };
     let used = (end as usize).saturating_sub(c.as_ptr() as usize);
     if used == 0 {
-        eprintln!("printf: {arg}: expected a numeric value");
+        eprintln!("{arg}: expected a numeric value");
         *failed = true;
         NO_NUMBER.with(|n| n.set(true));
     } else if used < arg.len() {
-        eprintln!("printf: {arg}: value not completely converted (can't convert '{}')", &arg[used..]);
+        eprintln!("{arg}: value not completely converted (can't convert '{}')", &arg[used..]);
         *failed = true;
     }
     v
@@ -1020,11 +1020,11 @@ fn printf_float(arg: &str, failed: &mut bool) -> f64 {
     let v = unsafe { libc::strtod(c.as_ptr(), &mut end) };
     let used = (end as usize).saturating_sub(c.as_ptr() as usize);
     if used == 0 {
-        eprintln!("printf: {arg}: expected a numeric value");
+        eprintln!("{arg}: expected a numeric value");
         *failed = true;
         NO_NUMBER.with(|n| n.set(true));
     } else if used < arg.len() {
-        eprintln!("printf: {arg}: value not completely converted (can't convert '{}')", &arg[used..]);
+        eprintln!("{arg}: value not completely converted (can't convert '{}')", &arg[used..]);
         *failed = true;
     }
     v
@@ -1153,6 +1153,7 @@ fn printf(args: &[String]) -> i32 {
                 i += 1;
                 continue;
             }
+            let spec_start = i;
             i += 1;
             if f.get(i) == Some(&'%') {
                 out.push(b'%');
@@ -1202,7 +1203,7 @@ fn printf(args: &[String]) -> i32 {
                 i += 1;
             }
             let Some(&conv) = f.get(i) else {
-                eprintln!("printf: %: invalid conversion specification");
+                eprintln!("{}: invalid conversion specification", f[spec_start..].iter().collect::<String>());
                 failed = true;
                 break 'passes;
             };
@@ -1264,7 +1265,8 @@ fn printf(args: &[String]) -> i32 {
                     }
                 }
                 other => {
-                    eprintln!("printf: %{other}: invalid conversion specification");
+                    eprintln!("{}: invalid conversion specification", f[spec_start..i].iter().collect::<String>());
+                    let _ = other;
                     failed = true;
                     break 'passes;
                 }
