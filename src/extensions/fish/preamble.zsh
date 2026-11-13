@@ -300,6 +300,7 @@ type() {
       -*) ;;
       *) n=$a
          k=$(whence -w -- $n 2>/dev/null); k=${k##*: }
+         [[ $k == reserved || $n == "begin" ]] && k=builtin
          [[ -n $k && $k != none ]] || { r=1; [[ -n $q ]] || print -u2 -r -- "type: Could not find '$n'"; continue }
          [[ -n $q ]] && continue
          case $k in
@@ -1004,6 +1005,7 @@ if [[ -o interactive ]]; then
 fi
 umask=(${(l:4::0:)$(builtin umask)})
 CMD_DURATION=(0)
+status_generation=(0)
 fish_pid=($$)
 fish_kill_signal=(0)
 FISH_VERSION=4.9.3

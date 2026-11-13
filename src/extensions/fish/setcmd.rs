@@ -393,6 +393,19 @@ impl Emitter {
                 "-p" | "--prompt" | "-c" | "--command" | "-R" | "--right-prompt" | "-S" | "--shell" => {
                     let _ = arg(self);
                 }
+                // short flags that take no value may be written together: `-la`
+                s if s.len() > 2 && s.starts_with('-') && !s.starts_with("--") && s[1..].chars().all(|c| "lgxUsaLz".contains(c)) => {
+                    for c in s[1..].chars() {
+                        match c {
+                            'l' => local = true,
+                            's' => flags.push('s'),
+                            'a' => as_list = true,
+                            'L' => by_line = true,
+                            'z' => flags.push_str(" -d ''"),
+                            _ => {}
+                        }
+                    }
+                }
                 "--" => {}
                 s if s.starts_with('-') && s.len() > 1 => {}
                 _ if local => names.push(self.declare_local(&t)),

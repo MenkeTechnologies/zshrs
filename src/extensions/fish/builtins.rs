@@ -1475,7 +1475,11 @@ fn path(args: &[String]) -> i32 {
             let mut any = false;
             for p in &items {
                 let r = match sub.as_str() {
-                    "basename" => base_name(p),
+                    "basename" => {
+                        let b = base_name(p);
+                        let ext = extension(p);
+                        if o.has('E') { b[..b.len() - ext.len()].to_string() } else { b }
+                    }
                     "dirname" => dir_name(p),
                     "extension" => extension(p),
                     "normalize" => normalize(p),
@@ -1707,9 +1711,11 @@ fn format_math(v: f64, scale: usize, base: Option<&str>) -> Option<String> {
     if v.is_nan() || v.is_infinite() {
         return Some(v.to_string().to_lowercase());
     }
-    if v.abs() >= 9.2e18 {
+    if v.abs() >= 9_007_199_254_740_992.0 {
         return None;
     }
+    // beyond 2^52 a double has no fraction digits left
+    let v = if v.abs() >= 4_503_599_627_370_496.0 { v.round() } else { v };
     if let Some(b) = base {
         let n = v.trunc() as i64;
         return Some(match b {
@@ -1751,8 +1757,11 @@ fn eval_math(src: &str) -> Result<f64, (String, usize, usize)> {
     let end = src[..p.i].trim_end().len();
     p.ws();
     if p.i < p.s.len() {
-        return Err(if p.s[p.i] == b')' {
-            ("Too many arguments".into(), p.i + 2, 1)
+        // after a plain number the next operand lacks an operator, unless it opens a group
+        let tail = src[..end].rsplit(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.')).next().unwrap_or("");
+        let after_number = tail.starts_with(|c: char| c.is_ascii_digit() || c == '.');
+        return Err(if !after_number || p.s[p.i] == b'(' || p.s[p.i] == b')' {
+            ("Too many arguments".into(), p.i + next_token_len(&src[p.i..]) + 1, 1)
         } else {
             ("Missing operator".into(), end + 1, 1)
         });
@@ -1796,9 +1805,6 @@ impl MathParser<'_> {
         let mut v = self.power()?;
         loop {
             self.ws();
-            if self.s[self.i..].starts_with(b"**") {
-                return Ok(v);
-            }
             let star = self.eat("*");
             let ex = !star && self.eat("x");
             if ex && self.s[self.i..].iter().all(u8::is_ascii_whitespace) {
@@ -1828,7 +1834,7 @@ impl MathParser<'_> {
     }
     fn power(&mut self) -> Result<f64, String> {
         let base = self.unary()?;
-        if self.eat("**") || self.eat("^") {
+        if self.eat("^") {
             let e = self.power()?;
             return Ok(base.powf(e));
         }
@@ -2036,4 +2042,10 @@ mod tests {
         assert_eq!(escape("a b/", "url"), "a%20b/");
         assert_eq!(unescape("a%20b", "url"), "a b");
     }
+}
+
+/// Length of the token at the start of `s`: a run of word characters, else one character.
+fn next_token_len(s: &str) -> usize {
+    let word = s.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.')).unwrap_or(s.len());
+    if word > 0 { word } else { s.chars().next().map_or(0, char::len_utf8) }
 }
