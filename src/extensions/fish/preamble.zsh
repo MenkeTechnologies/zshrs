@@ -154,13 +154,14 @@ __fish_set_show() {
   if [[ $t == array* ]]; then vals=("${(@P)z}")
   elif [[ $exp == exported ]]; then
     # an exported list is one joined string in the environment
-    if [[ $n == *PATH ]]; then vals=("${(@s.:.)${(P)z}}"); else vals=(${=${(P)z}}); fi
+    if [[ $n == *PATH ]] || (( ${+__fish_pathvars[$n]} )); then vals=("${(@s.:.)${(P)z}}"); else vals=(${=${(P)z}}); fi
   else vals=("${(P)z}"); fi
   local what="with ${#vals} elements" orig
   case $n in
     PATH|CDPATH|MANPATH)
       [[ ${(Pt)n} == *export* || ${(t)PATH} == *export* ]] && exp=exported
       what="a path variable with ${#vals} elements" ;;
+    *) (( ${+__fish_pathvars[$n]} )) && what="a path variable with ${#vals} elements" ;;
   esac
   print -r -- "\$${n}: set in $kind scope, $exp, $what"
   local i
@@ -701,7 +702,7 @@ __fish_commandline() {
   done
   __fish_cmdline_read "${BUFFER-}" "${CURSOR-0}" "${(@)reads}"
 }
-typeset -gA __fish_events
+typeset -gA __fish_events __fish_pathvars
 __fish_on_event() {
   case $1 in
     fish_preexec) preexec_functions+=($2) ;;
@@ -720,6 +721,10 @@ emit() {
 __fish_on_variable() {
   __fish_events[var:$1]+="${__fish_events[var:$1]:+ }$2"
   [[ $1 == PWD ]] && (( ${chpwd_functions[(I)__fish_pwd_event]} )) || [[ $1 != PWD ]] || chpwd_functions+=(__fish_pwd_event)
+}
+__fish_var_event() {
+  local f
+  for f in ${=__fish_events[var:$1]}; do $f VARIABLE $2 $1; done
 }
 __fish_pwd_event() {
   local f

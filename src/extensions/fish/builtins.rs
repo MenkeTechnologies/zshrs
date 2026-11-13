@@ -252,6 +252,7 @@ fn string(args: &[String]) -> i32 {
         "split" => ("mf", vec![("max", 'm'), ("fields", 'f'), ("right", 'r'), ("no-empty", 'n'), ("quiet", 'q')]),
         "shorten" => ("mc", vec![("max", 'm'), ("char", 'c'), ("left", 'l'), ("no-newline", 'N'), ("quiet", 'q')]),
         "escape" | "unescape" => ("s", vec![("style", 's'), ("no-quote", 'n')]),
+        "join" | "join0" => ("", [STRING_LONG, &[("no-empty", 'n')][..]].concat()),
         "match" => ("", vec![("all", 'a'), ("entire", 'e'), ("regex", 'r'), ("invert", 'v'), ("ignore-case", 'i'), ("groups-only", 'g'), ("index", 'n'), ("quiet", 'q')]),
         "replace" => ("", vec![("all", 'a'), ("regex", 'r'), ("ignore-case", 'i'), ("filter", 'f'), ("quiet", 'q')]),
         _ => ("", STRING_LONG.to_vec()),
@@ -300,6 +301,7 @@ fn string(args: &[String]) -> i32 {
             } else {
                 ("\0".into(), inputs(&o.rest, false))
             };
+            let items: Vec<String> = if o.has('n') { items.into_iter().filter(|s| !s.is_empty()).collect() } else { items };
             let joined = items.join(&sep);
             if sub == "join0" {
                 if !quiet {

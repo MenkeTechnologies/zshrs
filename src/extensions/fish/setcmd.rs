@@ -138,7 +138,7 @@ impl Emitter {
     /// `set -U` also writes the variable to the universal store; `set -U -e` removes it.
     pub(super) fn set_cmd(&mut self, args: &[Word]) -> String {
         let (f, at) = self.set_flags(args);
-        let text = self.set_inner(args);
+        let text = self.set_watched(args, &f, at);
         // `set -e NAME` with no scope flag erases the universal variable too, when that is
         // what the name was (the file is left alone if it does not hold it)
         let plain_erase = f.erase && !f.universal && !f.local && !f.global;
@@ -164,6 +164,29 @@ impl Emitter {
         format!("{text}; {}", saves.join("; "))
     }
 
+    /// `set NAME …` plus what must follow it: `--path` records that the variable is a
+    /// path variable, and a variable some `--on-variable` handler watches (see
+    /// `watched_vars`) gets its handlers called with fish's `VARIABLE SET|ERASE NAME`.
+    fn set_watched(&mut self, args: &[Word], f: &SetFlags, at: usize) -> String {
+        let mut text = self.set_inner(args);
+        if f.query || f.list || f.show {
+            return text;
+        }
+        let Some((name, None)) = args.get(at).and_then(|w| self.set_target(w)) else {
+            return text;
+        };
+        if f.path {
+            text = format!("{text}; __fish_pathvars[{name}]=1");
+        }
+        if !self.watched_vars.contains(&name) {
+            return text;
+        }
+        let what = if f.erase { "ERASE" } else { "SET" };
+        format!(
+            "{{ {text}; __fish_rc=$?; (( ${{+__fish_events[var:{name}]}} )) && __fish_var_event {name} {what}; (exit $__fish_rc); }}"
+        )
+    }
+
     fn set_inner(&mut self, args: &[Word]) -> String {
         let (f, at) = self.set_flags(args);
         let operands = &args[at..];
@@ -176,9 +199,10 @@ impl Emitter {
             let all: Vec<String> = args.iter().map(|w| self.word_list(w)).collect();
             return format!("__fish_set_dynamic {}", all.join(" "));
         };
-        if f.path && idx.is_none() && operands.len() > 1 {
+        let presplit = |w: &Word| matches!(w.parts.as_slice(), [Part::Raw(r)] if r.starts_with("${(@s.:.)"));
+        if f.path && idx.is_none() && operands.len() > 1 && !operands[1..].iter().all(presplit) {
             // path variables hold the pieces of their colon-separated value
-            let mut split: Vec<Word> = args[..at].iter().filter(|w| w.bare() != Some("--path")).cloned().collect();
+            let mut split: Vec<Word> = args[..at].to_vec();
             split.push(operands[0].clone());
             for w in &operands[1..] {
                 let raw = match w.text() {
@@ -249,7 +273,7 @@ impl Emitter {
             return format!("typeset -g +x {z}");
         }
         if f.export {
-            return self.set_export(&name, &z, values, &list, (f.local, f.append, f.prepend));
+            return self.set_export(&name, &z, values, &list, (f.local, f.append, f.prepend), f.path);
         }
         if f.append {
             return format!("{z}+=({list})");
@@ -279,10 +303,10 @@ impl Emitter {
 
     /// `set -x NAME value…`: zsh exports scalars, so the list is joined the way fish
     /// writes it into the environment.
-    fn set_export(&mut self, name: &str, z: &str, values: &[Word], list: &str, scope: (bool, bool, bool)) -> String {
+    fn set_export(&mut self, name: &str, z: &str, values: &[Word], list: &str, scope: (bool, bool, bool), path: bool) -> String {
         let (local, append, prepend) = scope;
         let decl = if local && self.fn_depth > 0 { "local -x" } else { "typeset -gx" };
-        let sep = if name.ends_with("PATH") { ':' } else { ' ' };
+        let sep = if path || name.ends_with("PATH") { ':' } else { ' ' };
         // `path`, `cdpath`, `manpath` are tied to their exported scalars already
         if matches!(name, "PATH" | "CDPATH" | "MANPATH") {
             let old = format!("\"${{{z}[@]}}\"");

@@ -44,9 +44,33 @@ pub fn translate(src: &str) -> Result<String, String> {
     let script = parse::parse(src)?;
     let mut emitter = emit::Emitter::default();
     emitter.plain_top = emit::uses_dynamic_names(&script);
+    emitter.watched_vars = watched_variables(src);
     let mut text = emitter.script(&script);
     text.push('\n');
     Ok(text)
+}
+
+/// The names after `--on-variable` / `-v` / `--on-variable=` anywhere in the source.
+fn watched_variables(src: &str) -> std::collections::HashSet<String> {
+    let mut names = Vec::new();
+    let mut words = src.split_whitespace();
+    while let Some(w) = words.next() {
+        if let Some(n) = w.strip_prefix("--on-variable=") {
+            names.push(n.to_string());
+        } else if matches!(w, "--on-variable" | "-v") {
+            names.extend(words.next().map(|n| n.trim_matches(|c| matches!(c, ';' | '\'' | '"')).to_string()));
+        }
+    }
+    // kept across translations, so a prompt line sees a handler defined on an earlier one
+    WATCHED.with(|w| {
+        let mut w = w.borrow_mut();
+        w.extend(names);
+        w.clone()
+    })
+}
+
+thread_local! {
+    static WATCHED: std::cell::RefCell<std::collections::HashSet<String>> = Default::default();
 }
 
 /// True for the errors that mean "the input is not finished yet" (an open block
@@ -201,7 +225,7 @@ mod tests {
         assert_eq!(t("if test -f a\necho y\nelse if true\necho z\nelse\necho n\nend"),
                    "if test -f a\nthen\necho y\nelif true\nthen\necho z\nelse\necho n\nfi");
         assert_eq!(t("a; and b; or c"), "a && b || c");
-        assert_eq!(t("not a"), "! a");
+        assert_eq!(t("not a"), "{ a; __fish_nrc=$?; if (( __fish_nrc == 127 )); then (exit 127); else (( __fish_nrc != 0 )); fi; }");
         assert_eq!(t("while true\nbreak\nend"), "while true\ndo\nbreak\ndone");
     }
 

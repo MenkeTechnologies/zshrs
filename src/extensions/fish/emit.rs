@@ -56,6 +56,9 @@ pub struct Emitter {
     pub(super) cur_line: usize,
     /// The script names variables at run time or uses `eval`: top-level locals keep their names.
     pub(super) plain_top: bool,
+    /// Variables some `--on-variable` handler in this script watches; only their
+    /// `set`s are followed by the handler call.
+    pub(super) watched_vars: std::collections::HashSet<String>,
     /// Lines a guarded declaration needs ahead of the whole `and`/`or` chain.
     pub(super) pre_chain: Vec<String>,
 }
@@ -271,7 +274,9 @@ impl Emitter {
 
     fn job(&mut self, j: &Job) -> String {
         let mut out = String::new();
-        if j.negate {
+        // `not` inverts a status, but 127 (command not found) stays 127 in fish
+        let wrap_not = j.negate && !j.bg;
+        if j.negate && !wrap_not {
             out.push_str("! ");
         }
         for (n, (cmd, pipe)) in j.cmds.iter().enumerate() {
@@ -286,6 +291,9 @@ impl Emitter {
         }
         if j.bg {
             out.push_str(" &");
+        }
+        if wrap_not {
+            out = format!("{{ {out}; __fish_nrc=$?; if (( __fish_nrc == 127 )); then (exit 127); else (( __fish_nrc != 0 )); fi; }}");
         }
         if j.timed {
             // fish's `time` report, on stderr after the job
