@@ -17,8 +17,15 @@
 
 local -a __fish_cw __fish_cd __fish_cs spaced bare group replace
 local __fish_cf __fish_ck __fish_cu __fish_cq __fish_clist __fish_ct lead i w
+local line=$LBUFFER raw=$words[CURRENT] bare_word
 
-__fish_complete_query -- "$LBUFFER" || return 1
+# while completing, zsh takes a word's unclosed quote out of $LBUFFER
+# (`echo "sp a` reads `echo sp a`); $words keeps the word as typed, and fish
+# must see the quote to read `sp a` as one word
+bare_word=${raw/[\"\']/}
+[[ $raw != $bare_word && $line == *$bare_word ]] && line=${line%$bare_word}$raw
+
+__fish_complete_query -- "$line" || return 1
 
 # compsys has moved `$`, `foo$` or `~` into $IPREFIX for a variable or a user
 # name; the query answers whole words, so the whole word is matched and, when

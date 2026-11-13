@@ -308,8 +308,16 @@ type() {
   return $r
 }
 functions() {
-  local a n=() q= e= listnames= alln= details= miss=0
+  local a n=() q= e= listnames= alln= details= miss=0 args=() i
+  # fish's getopt takes short flags together (`functions -na`)
   for a; do
+    if [[ $a == -[^-]?* ]]; then
+      for (( i = 2; i <= $#a; i++ )); do args+=(-$a[i]); done
+    else
+      args+=($a)
+    fi
+  done
+  for a in $args; do
     case $a in
       -q|--query) q=1 ;;
       -e|--erase) e=1 ;;
