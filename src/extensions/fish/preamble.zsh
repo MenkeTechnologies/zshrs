@@ -131,14 +131,17 @@ __fish_set_list() {
       argv '' fish_bind_mode default fish_history '' fish_killring '' fish_pid $$
       fish_private_mode 1 fish_terminal_color_theme '' history '' hostname ${HOST%%.*}
       pipestatus 0 status 0 status_generation 0 COLUMNS ${COLUMNS:-80} LINES ${LINES:-24}
-      EUID $EUID IFS ' \t\n'
+      EUID $EUID IFS x
     )
     for __k in ${(k)__virtual}; do
       [[ -n $__ex ]] && continue
       (( ${+__out[(r)$__k]} )) && continue
       [[ -n ${(M)__out:#$__k( *|)} ]] && continue
       if [[ -n $__nm ]]; then __out+=($__k)
-      elif [[ -n ${__virtual[$__k]} ]]; then __out+=("$__k ${(q-)__virtual[$__k]}")
+      elif [[ $__k == IFS ]]; then __out+=('IFS \n\ \t')
+      elif [[ -n ${__virtual[$__k]} ]]; then __line="$__k ${(q-)__virtual[$__k]}"
+        if [[ -z $__lg ]] && (( ${#__line} - ${#__k} - 1 > 64 )); then __line="$__k ${__line[$(( ${#__k} + 2 )),$(( ${#__k} + 61 ))]}…"; fi
+        __out+=($__line)
       else __out+=($__k); fi
     done
     # fish lists SHLVL among the exported variables (no value) even when it
@@ -524,10 +527,11 @@ jobs() {
     want+=($f)
   done
   (( $# )) && rows=($want)
-  (( ${#rows} )) || { [[ -n $q || $# -gt 0 ]] || print -r -- "jobs: There are no jobs"; return 1 }
+  (( ${#rows} )) || { [[ -n $q || $# -gt 0 ]] || (( ZSH_SUBSHELL )) || print -r -- "jobs: There are no jobs"; return 1 }
   [[ -n $q ]] && return 0
   [[ -n $last ]] && rows=($rows[1])
-  [[ $mode == c ]] && print -r -- Command
+  [[ $mode == c ]] && ! (( ZSH_SUBSHELL )) && print -r -- Command
+  [[ -z $mode ]] && ! (( ZSH_SUBSHELL )) && print -r -- $'Job\tGroup\tState\tCommand'
   for e in $rows; do
     c=("${(@ps:\t:)e}")
     case $mode in
@@ -903,12 +907,15 @@ __fish_argparse() {
       rest+=($a)
     fi
   done
+  typeset -ga __fish_argflags
+  __fish_argflags=(argv_opts)
   for k in $ids; do
     [[ -n ${acc[$k]+x} ]] || continue
     vals=("${(@ps:\x1f:)acc[$k]}")
     for a in ${=alias[ids:$k]}; do
       a=${a//-/_}
       typeset -ga _flag_$a
+      __fish_argflags+=(_flag_$a)
       builtin eval "_flag_$a=(\"\${(@)vals}\")"
     done
   done

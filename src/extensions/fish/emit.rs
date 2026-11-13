@@ -204,6 +204,12 @@ impl Emitter {
         }
     }
 
+    /// Is a `local` declaration legal here? Inside a function, or in a sourced file,
+    /// which `source` wraps in an anonymous function so its locals die with it.
+    pub(super) fn in_local_scope(&self) -> bool {
+        self.fn_depth > 0 || super::source_mode()
+    }
+
     /// Blocks open since the enclosing function (or the script) began.
     pub(super) fn block_level(&self) -> usize {
         self.scopes.iter().rev().take_while(|f| !f.barrier).count()
@@ -362,12 +368,17 @@ impl Emitter {
             } => {
                 let v = var.text().map(|t| self.zn(&t)).unwrap_or_else(|| "_fish_v".into());
                 let items: Vec<String> = list.iter().map(|w| self.word_list(w)).collect();
+                // a loop variable is local to the function, even when a global of that name
+                // exists; a list that reads the variable itself must see the outer value first
+                let local_var = self.fn_depth > 0 && !v.starts_with("_fish") && !items.iter().any(|i| i.contains(&v));
+                let pre = if local_var { format!("local {v}=\n") } else { String::new() };
                 let text = format!(
                     "for {v} in {}\ndo\n{}\ndone{}",
                     items.join(" "),
                     self.body(body),
                     self.redirs(redirs)
                 );
+                let text = format!("{pre}{text}");
                 if has_glob(list) {
                     null_glob_loop(&text)
                 } else {
@@ -610,8 +621,9 @@ impl Emitter {
             Some("argparse") => {
                 let all: Vec<String> = rest[1..].iter().map(|w| self.word_list(w)).collect();
                 format!(
-                    "{{ __fish_argparse {}; __fish_cs=$?; set -- \"${{__fish_argv[@]}}\"; argv_opts=(\"${{__fish_argv_opts[@]}}\"); __fish_ret $__fish_cs; }}",
-                    all.join(" ")
+                    "{{ __fish_argparse {}; __fish_cs=$?; set -- \"${{__fish_argv[@]}}\"; argv_opts=(\"${{__fish_argv_opts[@]}}\"); {}__fish_ret $__fish_cs; }}",
+                    all.join(" "),
+                    if self.fn_depth > 0 { "for __fn in \"${__fish_argflags[@]}\"; do __fv=(\"${(@P)__fn}\"); unset $__fn; builtin eval \"local -a $__fn=(\\\"\\${__fv[@]}\\\")\"; done; " } else { "" }
                 )
             }
             Some(n) if ZSH_ONLY_RESERVED.contains(&n) => {

@@ -294,7 +294,7 @@ impl Emitter {
         if f.local {
             let outer = self.zn(&name);
             z = self.declare_local(&name);
-            let decl = if self.fn_depth > 0 { "local -a" } else { "typeset -ga" };
+            let decl = if self.in_local_scope() { "local -a" } else { "typeset -ga" };
             // `set -q x; or set -l x 1`: when the declaration is skipped the later reads of
             // `$x` must still find the variable that is visible, so the local starts as a
             // copy of it
@@ -313,7 +313,7 @@ impl Emitter {
     /// writes it into the environment.
     fn set_export(&mut self, name: &str, z: &str, values: &[Word], list: &str, scope: (bool, bool, bool), path: bool) -> String {
         let (local, append, prepend) = scope;
-        let decl = if local && self.fn_depth > 0 { "local -x" } else { "typeset -gx" };
+        let decl = if local && self.in_local_scope() { "local -x" } else { "typeset -gx" };
         let sep = if path || name.ends_with("PATH") { ':' } else { ' ' };
         // `path`, `cdpath`, `manpath` are tied to their exported scalars already
         if matches!(name, "PATH" | "CDPATH" | "MANPATH") {
@@ -325,7 +325,7 @@ impl Emitter {
             };
             // in a function `-l` hides the global until the function returns; the list is
             // evaluated before the declaration, so it can still read the old value
-            return if local && self.fn_depth > 0 {
+            return if local && self.in_local_scope() {
                 format!("local -a {z}=({items})")
             } else {
                 format!("{z}=({items})")
@@ -341,7 +341,7 @@ impl Emitter {
             _ if values.is_empty() => old,
             _ => list.to_string(),
         };
-        if local && self.fn_depth > 0 {
+        if local && self.in_local_scope() {
             let already = self.is_mapped(name, &tied);
             let decl = if already {
                 String::new()
@@ -403,7 +403,7 @@ impl Emitter {
             return format!("builtin read {flags} REPLY");
         }
         let mut pre = String::new();
-        if local && self.fn_depth > 0 {
+        if local && self.in_local_scope() {
             for n in &names {
                 pre.push_str(&if as_list {
                     format!("local -a {n}=(); ")
