@@ -369,6 +369,12 @@ type() {
 }
 # fish remembers an erased function: it is not autoloaded again
 typeset -gA __fish_erased
+# does `(NAME …)` have to run in this shell? only if NAME sets a global; a name nothing
+# defines yet is autoloaded first, as fish would
+__fish_inproc() {
+  if (( ! ${+functions[$1]} && ! ${+commands[$1]} && ! ${+builtins[$1]} )); then __fish_autoload_ok $1 2>/dev/null; fi
+  (( ${+__fish_gset[$1]} ))
+}
 __fish_autoload_ok() { [[ -z ${__fish_erased[$1]+x} ]] && __fish_autoload "$1" }
 # fish's `which` finds files only; `umask` prints four octal digits
 which() {

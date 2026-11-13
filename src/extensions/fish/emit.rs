@@ -977,7 +977,7 @@ impl Emitter {
         };
         match global_setter {
             Some(name) => self.hoists.push(format!(
-                "if (( ${{+__fish_gset[{q}]}} )); then __fish_ct=$(mktemp \"${{TMPDIR:-/tmp}}/.zrcs.XXXXXX\"); {{ {inner}\n}} >$__fish_ct; __fish_cs=$?; IFS= read -rd '' {v} <$__fish_ct; {v}+=x; command rm -f $__fish_ct; (exit $__fish_cs); else {captured}; fi",
+                "if __fish_inproc {q}; then __fish_ct=$(mktemp \"${{TMPDIR:-/tmp}}/.zrcs.XXXXXX\"); {{ {inner}\n}} >$__fish_ct; __fish_cs=$?; IFS= read -rd '' {v} <$__fish_ct; {v}+=x; command rm -f $__fish_ct; (exit $__fish_cs); else {captured}; fi",
                 q = quote_lit(name)
             )),
             None => self.hoists.push(captured),

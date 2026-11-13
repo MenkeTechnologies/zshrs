@@ -6,3 +6,6 @@ echo [(h)]; echo $zzh
 function cache; if not set -q __cc; set -g __cc (echo computed); end; echo $__cc; end
 echo (cache) (cache); echo $__cc
 function plain; echo p; end; echo (plain) [(plain)]
+echo (__fish_uname); set -q __fish_uname; echo $status
+if test (__fish_uname) = Darwin; echo darwin; end
+echo (ls /nonexistent_zz 2>/dev/null) | count

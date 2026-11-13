@@ -234,7 +234,7 @@ mod tests {
 
     #[test]
     fn command_substitution_splits_on_newlines() {
-        assert_eq!(t("echo (ls)"), "{ if (( ${+__fish_gset[ls]} )); then __fish_ct=$(mktemp \"${TMPDIR:-/tmp}/.zrcs.XXXXXX\"); { ls\n} >$__fish_ct; __fish_cs=$?; IFS= read -rd '' __fc1 <$__fish_ct; __fc1+=x; command rm -f $__fish_ct; (exit $__fish_cs); else __fc1=\"$( ls\n__fish_cs=$?; print -rn x; exit $__fish_cs )\"; fi; echo ${${__fc1%x}:+\"${(@f)${${__fc1%x}%$'\\n'}}\"}; }");
+        assert_eq!(t("echo (ls)"), "{ if __fish_inproc ls; then __fish_ct=$(mktemp \"${TMPDIR:-/tmp}/.zrcs.XXXXXX\"); { ls\n} >$__fish_ct; __fish_cs=$?; IFS= read -rd '' __fc1 <$__fish_ct; __fc1+=x; command rm -f $__fish_ct; (exit $__fish_cs); else __fc1=\"$( ls\n__fish_cs=$?; print -rn x; exit $__fish_cs )\"; fi; echo ${${__fc1%x}:+\"${(@f)${${__fc1%x}%$'\\n'}}\"}; }");
         assert_eq!(t("echo \"$(ls)\""), "echo \"$( ls )\"");
     }
 
