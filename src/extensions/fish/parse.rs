@@ -159,6 +159,8 @@ pub struct Job {
     /// Source line the job starts on (1-based, within the file or `eval` string).
     pub line: usize,
     pub negate: bool,
+    /// Prefixed with `time`.
+    pub timed: bool,
     /// Each command and the pipe that follows it (the last one's is unused).
     pub cmds: Vec<(Cmd, Pipe)>,
     pub bg: bool,
@@ -423,12 +425,17 @@ impl Parser {
         self.skip_blank();
         let line = self.line_at(self.i);
         let mut negate = false;
+        let mut timed = false;
         loop {
             self.skip_blank();
             match self.peek_word_text().as_deref() {
                 Some("not" | "!") => {
                     negate = !negate;
                     self.i += if self.peek() == Some('!') { 1 } else { 3 };
+                }
+                Some("time") if !timed => {
+                    timed = true;
+                    self.i += 4;
                 }
                 _ => break,
             }
@@ -473,7 +480,7 @@ impl Parser {
                 }
             }
         }
-        Ok(Job { line, negate, cmds, bg })
+        Ok(Job { line, negate, timed, cmds, bg })
     }
 
     /// `|`, `&|` (both streams) or `2>|` (stderr only), consumed.

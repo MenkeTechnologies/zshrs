@@ -287,6 +287,10 @@ impl Emitter {
         if j.bg {
             out.push_str(" &");
         }
+        if j.timed {
+            // fish's `time` report, on stderr after the job
+            return format!("{{ __fish_time_begin; {out}; __fish_time_end $?; }}");
+        }
         out
     }
 

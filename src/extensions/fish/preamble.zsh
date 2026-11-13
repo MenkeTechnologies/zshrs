@@ -444,6 +444,35 @@ __fish_alias_list() {
   local k
   for k in ${(ko)__fish_aliases}; do print -r -- "alias $k ${(q-)__fish_aliases[$k]}"; done
 }
+__fish_time_begin() {
+  zmodload -F zsh/datetime p:EPOCHREALTIME 2>/dev/null
+  __fish_t0=$EPOCHREALTIME
+  __fish_ru0=($(__fish_rusage))
+}
+__fish_time_end() {
+  local st=$1 t1=$EPOCHREALTIME
+  local -a ru=($(__fish_rusage))
+  local -F wall=$(( (t1 - __fish_t0) * 1000000 ))
+  local -a row
+  __fish_dur() {
+    local -F v=$1
+    if (( v >= 1000000 )); then printf '%8.2f %-6s' $(( v / 1000000 )) secs
+    elif (( v >= 1000 )); then printf '%8.2f %-6s' $(( v / 1000 )) millis
+    else printf '%8.2f %-6s' $v micros; fi
+  }
+  local -F fu=$(( ru[1] - __fish_ru0[1] )) fs=$(( ru[2] - __fish_ru0[2] ))
+  local -F eu=$(( ru[3] - __fish_ru0[3] )) es=$(( ru[4] - __fish_ru0[4] ))
+  {
+    print
+    print -r -- ${(l:56::_:)}
+    print -r -- "Executed in$(__fish_dur $wall)    fish           external"
+    print -r -- "   usr time$(__fish_dur $(( fu + eu )))$(__fish_dur $fu)$(__fish_dur $eu)"
+    print -r -- "   sys time$(__fish_dur $(( fs + es )))$(__fish_dur $fs)$(__fish_dur $es)"
+    print
+  } >&2
+  unfunction __fish_dur
+  return $st
+}
 set_color() {
   local a c= bg= r=() esc=$'\e'
   local -A fg=(black 30 red 31 green 32 yellow 33 blue 34 magenta 35 cyan 36 white 37 brblack 90 brred 91 brgreen 92 bryellow 93 brblue 94 brmagenta 95 brcyan 96 brwhite 97 brgrey 90 grey 90)
