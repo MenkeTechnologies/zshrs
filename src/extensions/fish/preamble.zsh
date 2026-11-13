@@ -818,12 +818,12 @@ source() {
   # no file: fish reads the script from stdin (`cmd completion fish | source`)
   local __f=${1:--} __t
   (( $# )) && shift
+  local __fish_srcfile=$__f
   __t=$('@ZSHRS@' --fish-translate --source -- "$__f") || return
   () { builtin eval "$__t" } "$@"
 }
 __fish_eval() {
   local __t
-  local __fish_srcfile=$__f
   __t=$(print -r -- "$*" | '@ZSHRS@' --fish-translate -) || return
   builtin eval "$__t"
 }
