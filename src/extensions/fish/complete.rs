@@ -594,29 +594,60 @@ struct Tok {
     kind: TokKind,
 }
 
-fn is_redirect_at(s: &[char], i: usize) -> Option<usize> {
+/// fish tokenizer.rs `PipeOrRedir::try_from` for an operator starting at `i`
+/// (`|`, `&|`, `&&`, `||` are taken as separators before this is asked): its
+/// end and whether it is a redirection or a pipe. `>|` / `2>|` are pipes in
+/// fish (stdout / that fd into the next command), not bash's clobbering
+/// redirection; `>&`'s fd target (`2>&1`) is a token of its own.
+fn is_redirect_at(s: &[char], i: usize) -> Option<(usize, TokKind)> {
     let mut j = i;
     while j < s.len() && s[j].is_ascii_digit() {
         j += 1;
     }
-    let rest: String = s[j..s.len().min(j + 3)].iter().collect();
-    let op = ["&>>", "&>", ">>", ">&", ">?", ">|", "<&", ">", "<"]
-        .into_iter()
-        .find(|op| rest.starts_with(op))?;
-    if j > i && op.starts_with('&') {
-        return None;
+    let has_fd = j > i;
+    let at = |k: usize, c: char| s.get(k) == Some(&c);
+    match s.get(j)? {
+        '>' => {
+            j += 1;
+            if at(j, '>') {
+                j += 1;
+            }
+            if at(j, '|') {
+                return Some((j + 1, TokKind::Sep));
+            }
+            if at(j, '&') || at(j, '?') {
+                j += 1;
+            }
+        }
+        '<' => {
+            j += 1;
+            if at(j, '&') || at(j, '?') {
+                j += 1;
+            }
+        }
+        '&' if !has_fd && at(j + 1, '>') => {
+            j += 2;
+            if at(j, '>') {
+                j += 1;
+            }
+            if at(j, '?') {
+                j += 1;
+            }
+        }
+        _ => return None,
     }
-    let mut end = j + op.chars().count();
-    // `2>&1`, `>&-`: the fd target belongs to the operator
-    if op.ends_with('&') && end < s.len() && (s[end].is_ascii_digit() || s[end] == '-') {
-        end += 1;
-    }
-    Some(end)
+    Some((j, TokKind::Redirect))
 }
 
 /// Tokenize `s`, accepting an unfinished last token (open quote or bracket).
 fn tokenize(s: &[char]) -> Vec<Tok> {
+    tokenize_ending(s).0
+}
+
+/// [`tokenize`], and whether `s` ends inside a comment.
+fn tokenize_ending(s: &[char]) -> (Vec<Tok>, bool) {
     let mut out = Vec::new();
+    let mut in_comment = false;
     let mut i = 0;
     while i < s.len() {
         let c = s[i];
@@ -632,6 +663,7 @@ fn tokenize(s: &[char]) -> Vec<Tok> {
             while i < s.len() && s[i] != '\n' {
                 i += 1;
             }
+            in_comment = i == s.len();
             continue;
         }
         if c == '\n' || c == ';' {
@@ -645,8 +677,8 @@ fn tokenize(s: &[char]) -> Vec<Tok> {
             i += len;
             continue;
         }
-        if let Some(end) = is_redirect_at(s, i) {
-            out.push(Tok { start: i, end, kind: TokKind::Redirect });
+        if let Some((end, kind)) = is_redirect_at(s, i) {
+            out.push(Tok { start: i, end, kind });
             i = end;
             continue;
         }
@@ -704,7 +736,7 @@ fn tokenize(s: &[char]) -> Vec<Tok> {
             i += 1;
         }
     }
-    out
+    (out, in_comment)
 }
 
 /// Index of the `)` closing the `(` at `open`, or `s.len()` when unclosed.
@@ -782,25 +814,53 @@ fn innermost_cmdsubst_start(s: &[char]) -> usize {
     stack.last().copied().unwrap_or(0)
 }
 
-/// fish's script unescape, incomplete-tolerant: quotes removed, backslash
-/// escapes decoded. Variables, `~` and substitutions stay as written.
 /// fish `ANY_STRING`: an unquoted `*` in a word being completed, told apart from
 /// a quoted or escaped one (see [`unescape_wild`]).
 const ANY_STRING: char = '\u{F701}';
+/// fish `BRACE_BEGIN` / `BRACE_END` / `BRACE_SEP` / `BRACE_SPACE`: an unquoted
+/// `{`, `}`, `,` and space of a brace expansion in a word being completed.
+const BRACE_BEGIN: char = '\u{F702}';
+const BRACE_END: char = '\u{F703}';
+const BRACE_SEP: char = '\u{F704}';
+const BRACE_SPACE: char = '\u{F705}';
+/// fish `VARIABLE_EXPAND`: a `$` that expands (unquoted or in double quotes).
+const VARIABLE_EXPAND: char = '\u{F706}';
 
+/// A word from [`unescape_wild`] as typed, its markers back to the characters.
+fn wild_text(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            ANY_STRING => '*',
+            BRACE_BEGIN => '{',
+            BRACE_END => '}',
+            BRACE_SEP => ',',
+            BRACE_SPACE => ' ',
+            VARIABLE_EXPAND => '$',
+            c => c,
+        })
+        .collect()
+}
+
+/// fish's script unescape, incomplete-tolerant: quotes removed, backslash
+/// escapes decoded. Variables, `~` and substitutions stay as written.
 fn unescape(tok: &str) -> String {
     unescape_impl(tok, false)
 }
 
-/// [`unescape`], with each unquoted `*` as [`ANY_STRING`] (fish's `unescape_string`
-/// with `UNESCAPE_SPECIAL`). `?` is literal: fish 4 has `qmark-noglob` on.
+/// [`unescape`], with each unquoted `*` as [`ANY_STRING`] and the braces of
+/// a brace expansion as [`BRACE_BEGIN`] … (fish's `unescape_string` with
+/// `UNESCAPE_SPECIAL`). `?` is literal: fish 4 has `qmark-noglob` on.
 fn unescape_wild(tok: &str) -> String {
     unescape_impl(tok, true)
 }
 
 fn unescape_impl(tok: &str, wild: bool) -> String {
     let s: Vec<char> = tok.chars().collect();
-    let mut out = String::new();
+    let mut out: Vec<char> = Vec::new();
+    // fish common `unescape_string_internal`: the open braces (where each ended
+    // up in `out`), and where in the input each `,` or `$` inside them was
+    let (mut braces, mut vars_or_seps): (Vec<usize>, Vec<usize>) = (Vec::new(), Vec::new());
+    let mut brace_count = 0usize;
     let mut i = 0;
     while i < s.len() {
         let c = s[i];
@@ -843,15 +903,123 @@ fn unescape_impl(tok: &str, wild: bool) -> String {
                             i += 1;
                             continue;
                         }
+                    } else if wild && s[i] == '$' && s.get(i + 1) != Some(&'(') {
+                        out.push(VARIABLE_EXPAND);
+                        i += 1;
+                        continue;
                     }
                     out.push(s[i]);
                     i += 1;
                 }
             }
             '*' if wild => out.push(ANY_STRING),
+            '$' if wild && s.get(i + 1) != Some(&'(') => {
+                vars_or_seps.push(i);
+                out.push(VARIABLE_EXPAND);
+            }
+            '{' if wild => {
+                brace_count += 1;
+                braces.push(out.len());
+                out.push(BRACE_BEGIN);
+            }
+            '}' if wild => {
+                brace_count = brace_count.saturating_sub(1);
+                let mut end = BRACE_END;
+                if let Some(brace) = braces.pop() {
+                    // fish #4632: a brace with zero or one items is literal.
+                    // (fish compares the input position of the last `,`/`$`
+                    // with the output position of the brace; so does this.)
+                    if vars_or_seps.last().is_none_or(|&p| p < brace) {
+                        out[brace] = '{';
+                        for c in &mut out[brace + 1..] {
+                            if *c == BRACE_SPACE {
+                                *c = ' ';
+                            }
+                        }
+                        end = '}';
+                    }
+                    while vars_or_seps.last().is_some_and(|&p| p > brace) {
+                        vars_or_seps.pop();
+                    }
+                }
+                out.push(end);
+            }
+            ',' if wild && brace_count > 0 => {
+                vars_or_seps.push(i);
+                out.push(BRACE_SEP);
+            }
+            ' ' if wild && brace_count > 0 => out.push(BRACE_SPACE),
             _ => out.push(c),
         }
         i += 1;
+    }
+    out.into_iter().collect()
+}
+
+/// fish expand.rs `expand_braces` for a word being completed: every word the
+/// brace expansions in `input` (from [`unescape_wild`]) make. A brace left
+/// open gets its closing brace made up, keeping only the last item.
+fn expand_braces(input: &[char], for_completions: bool) -> Vec<String> {
+    let (mut count, mut begin, mut end, mut last_sep) = (0i32, None, None, None);
+    for (pos, &c) in input.iter().enumerate() {
+        match c {
+            BRACE_BEGIN => {
+                if count == 0 {
+                    begin = Some(pos);
+                }
+                count += 1;
+            }
+            BRACE_END => {
+                count -= 1;
+                if count < 0 {
+                    return Vec::new();
+                }
+                if count == 0 {
+                    end = Some(pos);
+                }
+            }
+            BRACE_SEP if count == 1 => last_sep = Some(pos),
+            _ => {}
+        }
+    }
+    if count > 0 {
+        if !for_completions {
+            return Vec::new();
+        }
+        let b = begin.expect("an open brace");
+        let mut synth: Vec<char> = match last_sep {
+            Some(sep) => input[..=b].iter().chain(&input[sep + 1..]).copied().collect(),
+            None => input.to_vec(),
+        };
+        synth.push(BRACE_END);
+        return expand_braces(&synth, false);
+    }
+    let (Some(begin), Some(end)) = (begin, end) else {
+        return vec![input.iter().map(|&c| if c == BRACE_SPACE { ' ' } else { c }).collect()];
+    };
+    let mut out = Vec::new();
+    let (mut depth, mut item_begin) = (0, begin + 1);
+    for pos in begin + 1..=end {
+        let c = input[pos];
+        if depth == 0 && (c == BRACE_SEP || pos == end) {
+            let trim = |c: &char| *c == BRACE_SPACE || *c == '\0';
+            let item = &input[item_begin..pos];
+            let lead = item.iter().take_while(|c| trim(c)).count();
+            let tail = item[lead..].iter().rev().take_while(|c| trim(c)).count();
+            let whole: Vec<char> = input[..begin]
+                .iter()
+                .chain(&item[lead..item.len() - tail])
+                .chain(&input[end + 1..])
+                .copied()
+                .collect();
+            out.extend(expand_braces(&whole, for_completions));
+            item_begin = pos + 1;
+        }
+        match c {
+            BRACE_BEGIN => depth += 1,
+            BRACE_END => depth -= 1,
+            _ => {}
+        }
     }
     out
 }
@@ -1294,7 +1462,7 @@ enum Position {
     Variable { before: String, name: String },
     /// `~us`: the part after the `~`
     User(String),
-    /// nothing fish completes (a redirection where the command goes)
+    /// nothing fish completes (a comment, a redirection where the command goes)
     Nothing,
     Argument(Line),
 }
@@ -1351,7 +1519,11 @@ fn locate(text: &str) -> Position {
     let all: Vec<char> = text.chars().collect();
     let sub = innermost_cmdsubst_start(&all);
     let s = &all[sub..];
-    let toks = tokenize(s);
+    let (toks, in_comment) = tokenize_ending(s);
+    // fish: nothing completes inside a comment
+    if in_comment {
+        return Position::Nothing;
+    }
     // the last process: tokens after the last separator
     let first = toks.iter().rposition(|t| t.kind == TokKind::Sep).map_or(0, |p| p + 1);
     let mut toks: Vec<Tok> = toks[first..].to_vec();
@@ -1386,7 +1558,9 @@ fn locate(text: &str) -> Position {
     if !cursor_in_ws && toks.len() == 1 {
         return Position::Command(tok_text(&cmd_tok));
     }
-    let (cur_raw, prev_tok) = if cursor_in_ws {
+    // the cursor right after a redirection operator (`echo >`): fish's current
+    // argument is empty and a file goes there
+    let (cur_raw, prev_tok) = if cursor_in_ws || last.kind == TokKind::Redirect {
         (String::new(), Some(last))
     } else {
         (tok_text(&last), (toks.len() >= 2).then(|| toks[toks.len() - 2]))
@@ -1668,7 +1842,8 @@ pub fn autoload_function(name: &str) -> bool {
 pub(crate) struct FishData {
     exe: PathBuf,
     cache: PathBuf,
-    sysconf: String,
+    /// the installed fish's `$__fish_sysconf_dir`
+    pub sysconf: String,
     /// the installed fish's `$__fish_data_dir`, `$__fish_help_dir`, `$__fish_man_dir`, `$__fish_bin_dir`
     pub dirs: [String; 4],
     extra_completions: String,
@@ -1918,7 +2093,7 @@ fn complete_dash_c(text: &str) -> Vec<Comp> {
             let ans_cd = ans.as_ref().is_some_and(|a| a.cd);
             let mut comps = ans.map(|a| a.comps).unwrap_or_default();
             if do_file {
-                comps.extend(param_files(&line.cur_wild, ans_cd));
+                comps.extend(param_files(&line.cur_wild, ans_cd, false));
             }
             (line.cur, comps)
         }
@@ -2312,10 +2487,30 @@ fn variable_comps(before: &str, typed: &str) -> Vec<Comp> {
         values.push((0..n).filter_map(|_| lines.next().map(unescape)).collect());
     }
     let lit = before.trim_end_matches('$');
+    // fish #6288: $history is described by its newest 63 items, each through
+    // expand_escape_string (quoted when it holds a space), not by its value
+    let history_desc = || {
+        fish_output("history --max 63")
+            .lines()
+            .map(|h| describe_value(std::slice::from_ref(&h.to_string())))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
     names
         .iter()
         .zip(values)
         .map(|(n, elems)| {
+            if n == "history" {
+                return Comp {
+                    word: format!("{before}{n}"),
+                    desc: history_desc(),
+                    no_space: false,
+                    keep: false,
+                    matched_as: Some(n.clone()),
+                    rank_floor: 0,
+                    from_separator: false,
+                };
+            }
             // fish `maybe_add_slash`: the token up to here, quotes and all, expanded
             let is_dir = elems.len() == 1
                 && !lit.contains(['$', '(', '\''])
@@ -2415,7 +2610,12 @@ fn expand_vars(p: &str) -> String {
             out.push('$');
             continue;
         }
-        let value = fish_output(&format!("string join ' ' -- ${name}"));
+        let rest: String = it.clone().collect();
+        let index = var_index(&rest);
+        if !index.is_empty() {
+            it.nth(index.chars().count() - 1);
+        }
+        let value = fish_output(&format!("string join ' ' -- ${name}{index}"));
         out.push_str(value.trim_end_matches('\n'));
     }
     out
@@ -2462,7 +2662,95 @@ fn preamble_functions() -> &'static HashSet<String> {
 /// after it. `cd`'s argument completes directories, a relative one in each
 /// `$CDPATH` directory and then `.` (fish `PathFilter::Directory` with
 /// `for_cd_argument`).
-fn param_files(s: &str, cd: bool) -> Vec<Comp> {
+fn param_files(s: &str, cd: bool, reader: bool) -> Vec<Comp> {
+    let last_segment = &s[s.rfind('/').map_or(0, |i| i + 1)..];
+    if !s.contains(BRACE_BEGIN) && !last_segment.contains(VARIABLE_EXPAND) {
+        // a variable in a directory part is expanded where the directory is
+        // read and stays as typed in the words
+        return param_files_expanded(&s.replace(VARIABLE_EXPAND, "$"), cd);
+    }
+    // fish expands braces and variables first (expand_string's stages) and
+    // completes each word they make. A match that extends its word adds the
+    // rest to the word as typed. The reader drops one that replaces its word
+    // (reader_can_replace: no `$` `{` `}`);
+    // `complete -C` applies it to the word alone, where a leading `{` opens a
+    // brace block for fish's tokenizer, so the token it replaces starts after
+    // the `}` closing that block (or after the `{` when none does) and what
+    // comes before stays.
+    let typed = wild_text(s);
+    let kept = if typed.starts_with('{') {
+        let mut depth = 0;
+        let close = typed.char_indices().find(|&(_, c)| {
+            depth += match c {
+                '{' => 1,
+                '}' => -1,
+                _ => 0,
+            };
+            depth == 0
+        });
+        &typed[..close.map_or(1, |(i, _)| i + 1)]
+    } else {
+        ""
+    };
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = Vec::new();
+    for word in expand_braces(&chars, true).iter().flat_map(|w| expand_variables(w)) {
+        let shown = word.replace(ANY_STRING, "*");
+        for mut c in param_files_expanded(&word, cd) {
+            let rank = rank_of(&shown, &c);
+            let extends = c.word.starts_with(&shown) && rank.is_some_and(|r| r % FROM_SEPARATOR == PREFIX);
+            if !extends && reader {
+                continue;
+            }
+            c.word = if extends { format!("{typed}{}", &c.word[shown.len()..]) } else { format!("{kept}{}", c.word) };
+            // ranked as fish ranked it against the word it was found for
+            c.matched_as = Some(typed.clone());
+            c.rank_floor = rank.unwrap_or(SUBSEQ) % FROM_SEPARATOR;
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// fish expand.rs `expand_variables` for a word being completed: each
+/// [`VARIABLE_EXPAND`] and the name after it become the variable's elements,
+/// one word per element (a word with an empty or unset variable is gone).
+fn expand_variables(word: &str) -> Vec<String> {
+    let Some(at) = word.find(VARIABLE_EXPAND) else {
+        return vec![word.to_string()];
+    };
+    let rest = &word[at + VARIABLE_EXPAND.len_utf8()..];
+    let name_len = rest.find(|c: char| !(c.is_alphanumeric() || c == '_')).unwrap_or(rest.len());
+    let (name, after) = rest.split_at(name_len);
+    if name.is_empty() {
+        // a lone `$` is itself
+        return expand_variables(after).into_iter().map(|w| format!("{}${w}", &word[..at])).collect();
+    }
+    let index = var_index(after);
+    let after = &after[index.len()..];
+    let values = fish_output(&format!("string join0 -- ${name}{index}"));
+    let tails = expand_variables(after);
+    values
+        .split_terminator('\0')
+        .flat_map(|v| tails.iter().map(move |t| format!("{}{v}{t}", &word[..at])))
+        .collect()
+}
+
+/// The `[…]` index right after a variable name (`$PATH[1]`, `$argv[2..-1]`),
+/// handed to fish as written; empty when there is none, it is unclosed, or it
+/// holds a command substitution (which completion does not run).
+fn var_index(after: &str) -> &str {
+    if !after.starts_with('[') {
+        return "";
+    }
+    match after.find(']') {
+        Some(close) if !after[..close].contains('(') => &after[..=close],
+        _ => "",
+    }
+}
+
+/// [`param_files`] for a word with no brace or variable expansion left in it.
+fn param_files_expanded(s: &str, cd: bool) -> Vec<Comp> {
     let files = |p: &str| -> Vec<Comp> {
         if !cd {
             return file_names(p, false);
@@ -2749,17 +3037,22 @@ fn real_path(dir: &str, wd: &str) -> String {
 /// with `dir` kept as shown in the words: fish completes `$HOME/Doc` to
 /// `$HOME/Documents/`.
 fn dir_entries(dir: &Walked, base: &str, wd: &str, fuzzy_ok: bool, describe: bool, dirs_only: bool) -> Vec<Comp> {
-    let Ok(rd) = std::fs::read_dir(real_path(&dir.real, wd)) else {
+    let real = real_path(&dir.real, wd);
+    let Ok(rd) = std::fs::read_dir(&real) else {
         return Vec::new();
     };
+    // fish `open_dir(base_dir, for_completions)`: completing lists `.` and
+    // `..` too (DirIter::new_with_dots), which only a typed dot reaches
+    let dots = [".", ".."].map(String::from);
     rd.flatten()
-        .filter_map(|e| {
-            let name = e.file_name().to_string_lossy().into_owned();
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .chain(dots)
+        .filter_map(|name| {
             let matched = fuzzy_rank(base, &name).is_some_and(|r| fuzzy_ok || r <= PREFIX_ICASE);
             if (name.starts_with('.') && !base.starts_with('.')) || !matched {
                 return None;
             }
-            let path = e.path();
+            let path = Path::new(&real).join(&name);
             let is_dir = path.is_dir();
             if dirs_only && !is_dir {
                 return None;
@@ -2926,8 +3219,8 @@ pub fn commandline_read(args: &[String], buffer: &str, cursor: usize) -> i32 {
 /// `__fish_complete_query TEXT`: complete the argument at the end of TEXT
 /// (the line before the cursor). Sets `__fish_cw` (words), `__fish_cd`
 /// (descriptions), `__fish_cs` (`1` = no space after), `__fish_cf` (`1` =
-/// files too), `__fish_ck` (`1` = keep the order). Status 1 when no fish
-/// definition covers the command.
+/// files too), `__fish_ck` (`1` = keep the order), `__fish_ct` (the word as
+/// typed). Status 1 when no fish definition covers the command.
 fn query_cmd(argv: &[String]) -> i32 {
     let text = argv.iter().skip(1).find(|a| *a != "--").cloned().unwrap_or_default();
     // (what is ranked, the whole word as typed, the completions)
@@ -2951,18 +3244,20 @@ fn query_cmd(argv: &[String]) -> i32 {
             let comps = user_comps(&name);
             (name.clone(), format!("~{name}"), Answer { comps, ..Answer::default() })
         }
-        Position::Nothing => return 1,
+        // fish completes nothing here (a comment, a redirection in the
+        // command's place); zsh's completers must not either
+        Position::Nothing => (String::new(), String::new(), Answer::default()),
     };
-    // an argument's word keeps its unquoted `*`s marked, for file completion
-    let wild = whole.contains(ANY_STRING);
+    // an argument's word keeps its unquoted `*`s and braces marked, for file completion
+    let wild = whole.contains([ANY_STRING, BRACE_BEGIN]);
     let whole_wild = whole;
-    let whole = whole_wild.replace(ANY_STRING, "*");
+    let whole = wild_text(&whole_wild);
     // the files come from here too, ranked with the rest as fish does: zsh's
     // _files knows nothing of fuzzy directories (`s/e/f`), `--opt=` and
     // `foo:` separators, `cd`'s directories through $CDPATH, or keeping a
     // `$HOME` in the word
     if ans.do_file {
-        ans.comps.extend(param_files(&whole_wild, ans.cd));
+        ans.comps.extend(param_files(&whole_wild, ans.cd, true));
         ans.do_file = false;
     }
     let ranks: Vec<Option<u32>> = ans.comps.iter().map(|c| rank_of(&typed, c)).collect();
@@ -3009,6 +3304,8 @@ fn query_cmd(argv: &[String]) -> i32 {
     // `$`, `~` and `*` and all
     let as_written = wild || whole.contains('$') || whole.starts_with('~');
     setsparam("__fish_cq", if as_written { "1" } else { "0" });
+    // the word the matches are for, as typed (compsys may hold less of it)
+    setsparam("__fish_ct", &whole);
     setaparam("__fish_cw", ans.comps.iter().map(|c| c.word.clone()).collect());
     setaparam("__fish_cd", ans.comps.iter().map(|c| c.desc.clone()).collect());
     setaparam("__fish_cs", ans.comps.iter().map(|c| if c.no_space { "1" } else { "0" }.to_string()).collect());

@@ -216,8 +216,8 @@ fn fish_own_scripts_translate() {
 /// descriptions, an option that takes the next word, `--opt=` arguments,
 /// conditions that read `commandline`, `--wraps`, a definition autoloaded from
 /// `~/.config/fish/completions/<cmd>.fish`, and fish's own scripts (string, set_color)
-/// read out of the installed fish. The scratch directory is empty, so file
-/// completions contribute nothing on either side.
+/// read out of the installed fish. Files: fuzzy paths, separators, wildcards,
+/// a redirection's target, `.`/`..`, brace expansions and variables in a word.
 #[test]
 fn completions_match_fish() {
     let Some(reference) = fish() else { return };
@@ -278,6 +278,17 @@ complete -C 'ls a:zq'
 complete -C 'ls zq*/'
 complete -C 'ls ZQ*'
 complete -C 'ls *ile'
+complete -C 'echo >'
+complete -C 'echo 2>&1 zqf'
+complete -C 'ls .'
+complete -C 'ls zqsrc/..'
+complete -C 'ls {zqs,zqf}'
+complete -C 'ls {zqs'
+complete -C 'ls zqsrc/{zqe'
+complete -C 'ls {x,zqs}/{zqe,y}'
+complete -C 'ls "$HOME"/zqd'
+complete -C 'ls "$HOME/zq"'
+complete -C 'echo $__fish_sysconf'
 function zqp; end
 complete -c zqp -f -xa plain
 complete -p '*zqp*' -f -xa wild
