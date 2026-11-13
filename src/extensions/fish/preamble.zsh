@@ -69,13 +69,16 @@ status() {
 __fish_set_list() {
   # locals are `__`-prefixed: they show up in $parameters while this runs and are skipped
   local __sc= __nm= __ex= __lg= __n __k __line __v __t
-  local -a __vals __out
+  local -a __vals __out __in
+  local __hasin=
+  for __k; do [[ $__k == --in=* ]] && __hasin=1; done
   for __k; do
     case $__k in
       --global|--universal) __sc=g ;;
       --local) __sc=l ;;
       --names) __nm=1 ;;
       --long) __lg=1 ;;
+      --in=*) __in=(${=__k#--in=}) ;;
       --export) __ex=1 ;;
       --*) ;;
       -*) for __v in ${(s::)__k#-}; do
@@ -86,8 +89,8 @@ __fish_set_list() {
   for __n in ${(ok)parameters}; do
     __k=$__n
     case $__n in
-      _fl_top_*) __k=${__n#_fl_top_}; [[ $__sc == g ]] && continue ;;
-      _fl<->_*) __k=${__n#_fl<->_}; [[ $__sc == g ]] && continue ;;
+      _fl_top_*) __k=${__n#_fl_top_}; [[ $__sc == g ]] && continue; [[ -n $__hasin ]] && continue ;;
+      _fl<->_*) __k=${__n#_fl<->_}; [[ $__sc == g ]] && continue; [[ -n $__hasin && -z ${__in[(r)$__n]} ]] && continue ;;
       __fx_*) continue ;;
       __*|_fish_x|_fl*|_fish_v_*|.*) continue ;;
       # zsh's own parameters, which fish does not have
@@ -121,6 +124,14 @@ __fish_set_list() {
     fi
     __out+=($__line)
   done
+  # a function's own `argv` is always local to it
+  if [[ -n $__hasin ]]; then
+    if (( ${#__fish_av} == 1 )); then __out+=("argv ${(q-)__fish_av[1]}")
+    elif (( ${#__fish_av} )); then
+      __line=argv; for __v in "${__fish_av[@]}"; do __line+=" '${__v//\'/\\\'}'"; done; __out+=($__line)
+    else __out+=(argv); fi
+    __out=("${(@o)__out}")
+  fi
   if [[ $__sc != l ]]; then
     # variables fish has that no zsh parameter stands for
     local -A __virtual=(

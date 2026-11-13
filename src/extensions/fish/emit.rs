@@ -210,6 +210,11 @@ impl Emitter {
         self.fn_depth > 0 || super::source_mode()
     }
 
+    /// The zsh names of the locals declared since the enclosing function began.
+    pub(super) fn scope_locals(&self) -> Vec<String> {
+        self.scopes.iter().rev().take_while(|f| !f.barrier).flat_map(|f| f.vars.values().cloned()).chain(self.scopes.iter().rev().find(|f| f.barrier).into_iter().flat_map(|f| f.vars.values().cloned())).collect()
+    }
+
     /// Blocks open since the enclosing function (or the script) began.
     pub(super) fn block_level(&self) -> usize {
         self.scopes.iter().rev().take_while(|f| !f.barrier).count()

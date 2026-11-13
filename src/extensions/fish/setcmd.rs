@@ -194,7 +194,7 @@ impl Emitter {
         let Some((name, idx)) = operands.first().and_then(|w| self.set_target(w)) else {
             if operands.is_empty() {
                 let flags: Vec<String> = args[..at].iter().map(|w| self.word_scalar(w)).collect();
-                return format!("__fish_set_list {}", flags.join(" "));
+                return self.set_list_call(flags);
             }
             // `set $name …`: the variable is named at run time; hand it to the shim
             let all: Vec<String> = args.iter().map(|w| self.word_list(w)).collect();
@@ -228,7 +228,7 @@ impl Emitter {
                 return calls.join("; ");
             }
             let flags: Vec<String> = args[..at].iter().map(|w| self.word_scalar(w)).collect();
-            return format!("__fish_set_list {}", flags.join(" "));
+            return self.set_list_call(flags);
         }
         if f.erase {
             return operands
@@ -471,5 +471,18 @@ impl Emitter {
             squote(&shown),
             q = quote_lit(&name)
         )
+    }
+}
+
+impl Emitter {
+    /// `set` with no names. In a function, `set -l` lists that function's locals only,
+    /// which zsh's dynamic scope cannot tell apart, so the call names them.
+    fn set_list_call(&self, flags: Vec<String>) -> String {
+        let local = flags.iter().any(|f| f == "--local" || (f.starts_with('-') && !f.starts_with("--") && f.contains('l')));
+        if !local || self.fn_depth == 0 {
+            return format!("__fish_set_list {}", flags.join(" "));
+        }
+        let mine = self.scope_locals().join(" ");
+        format!("{{ __fish_av=(\"${{argv[@]}}\"); __fish_set_list --in='{mine}' {}; }}", flags.join(" "))
     }
 }
