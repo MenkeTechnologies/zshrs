@@ -303,6 +303,33 @@ impl Emitter {
                 });
             }
         }
+        // fish runs a pipeline's functions in-process: when the first command is one that
+        // sets a global, its output goes through a file so the global is not lost to a subshell
+        if let (Some((Cmd::Simple { words, redirs }, Pipe::Out)), true) = (j.cmds.first(), j.cmds.len() > 1 && !j.bg) {
+            if let (Some(name), true) = (
+                // (a builtin or a plain utility is no function of the kind, and the extra
+                // `if` would cost `$pipestatus` its list)
+                words.first().and_then(Word::bare).filter(|n| !PLAIN_PIPE_HEADS.contains(n)),
+                redirs.is_empty(),
+            ) {
+                let head = self.cmd(&j.cmds[0].0);
+                let mut rest = String::new();
+                for (n, (cmd, pipe)) in j.cmds.iter().enumerate().skip(1) {
+                    rest.push_str(&self.cmd(cmd));
+                    if n + 1 < j.cmds.len() {
+                        rest.push_str(match pipe {
+                            Pipe::Out => " | ",
+                            Pipe::Both => " |& ",
+                            Pipe::Err => " 2>&1 >/dev/null | ",
+                        });
+                    }
+                }
+                out = format!(
+                    "if __fish_inproc {q}; then __fish_pt=$(mktemp \"${{TMPDIR:-/tmp}}/.zrp.XXXXXX\"); {{ {head}\n}} >$__fish_pt; {{ {rest}\n}} <$__fish_pt; __fish_cs=$?; command rm -f $__fish_pt; (exit $__fish_cs); else {out}; fi",
+                    q = quote_lit(name)
+                );
+            }
+        }
         if j.bg {
             // (the registry is what `jobs` lists: zsh's own table is not visible in a pipeline)
             let text = squote(out.trim_start_matches("! "));
@@ -1447,3 +1474,10 @@ fn sets_global(src: &str) -> bool {
                 .any(|t| matches!(*t, "--global" | "--universal") || (!t.starts_with("--") && t[1..].contains(['g', 'U'])))
     })
 }
+
+/// Commands that start pipelines and never are functions that set a global.
+const PLAIN_PIPE_HEADS: &[&str] = &[
+    "true", "false", "echo", "printf", "set", "string", "math", "count", "test", "read", "cat", "ls",
+    "grep", "sed", "awk", "seq", "sort", "uniq", "head", "tail", "wc", "tr", "cut", "find", "xargs",
+    "yes", "env", "command", "builtin", "git", "curl", "sleep", "random", "path", "contains",
+];
