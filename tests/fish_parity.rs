@@ -267,6 +267,9 @@ complete -C 'ls ZQS/E/'
 complete -C 'cd zq'
 complete -C 'ls --zqopt=zq'
 complete -C 'ls a:zq'
+complete -C 'ls zq*/'
+complete -C 'ls ZQ*'
+complete -C 'ls *ile'
 function zqp; end
 complete -c zqp -f -xa plain
 complete -p '*zqp*' -f -xa wild

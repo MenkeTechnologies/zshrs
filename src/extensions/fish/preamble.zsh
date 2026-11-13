@@ -631,7 +631,7 @@ typeset -gA __fish_widgets=(
   backward-kill-word backward-kill-word delete-char delete-char
   backward-delete-char backward-delete-char accept-autosuggestion forward-char
   history-search-backward history-search-backward history-search-forward history-search-forward
-  up-or-search up-line-or-search down-or-search down-line-or-search complete expand-or-complete
+  up-or-search up-line-or-search down-or-search down-line-or-search complete complete-word
   execute accept-line clear-screen clear-screen yank yank kill-whole-line kill-whole-line
   transpose-chars transpose-chars upcase-word up-case-word downcase-word down-case-word
   undo undo redo redo repaint redisplay cancel send-break beginning-of-history beginning-of-history
@@ -920,8 +920,14 @@ if [[ -o interactive ]]; then
   PROMPT='$(__fish_prompt_render fish_prompt)'
   __fish_rprompt() { (( $+functions[fish_right_prompt] )) && __fish_prompt_render fish_right_prompt }
   RPROMPT='$(__fish_rprompt)'
-  # fish completes out of the box: compsys, with fish's own definitions first
-  autoload -Uz compinit && compinit -d ${ZSHRS_HOME:-$HOME/.zshrs}/fish.zcompdump
+  # fish completes out of the box: compsys, with fish's own definitions first.
+  # -u: fish loads completions from every directory on its paths without an
+  # ownership audit, so compaudit must not stop the shell at a [y/n] prompt
+  # (Homebrew leaves /opt/homebrew/share/zsh group-writable)
+  autoload -Uz compinit && compinit -u -d ${ZSHRS_HOME:-$HOME/.zshrs}/fish.zcompdump
   zstyle ':completion:*' completer _fish_complete _complete _ignored
+  # fish's TAB completes; it never expands a variable or a wildcard in place
+  bindkey -M emacs '^I' complete-word
+  bindkey -M viins '^I' complete-word
   compdef _precommand and or not begin
 fi

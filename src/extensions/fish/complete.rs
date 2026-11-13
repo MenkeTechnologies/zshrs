@@ -784,7 +784,21 @@ fn innermost_cmdsubst_start(s: &[char]) -> usize {
 
 /// fish's script unescape, incomplete-tolerant: quotes removed, backslash
 /// escapes decoded. Variables, `~` and substitutions stay as written.
+/// fish `ANY_STRING`: an unquoted `*` in a word being completed, told apart from
+/// a quoted or escaped one (see [`unescape_wild`]).
+const ANY_STRING: char = '\u{F701}';
+
 fn unescape(tok: &str) -> String {
+    unescape_impl(tok, false)
+}
+
+/// [`unescape`], with each unquoted `*` as [`ANY_STRING`] (fish's `unescape_string`
+/// with `UNESCAPE_SPECIAL`). `?` is literal: fish 4 has `qmark-noglob` on.
+fn unescape_wild(tok: &str) -> String {
+    unescape_impl(tok, true)
+}
+
+fn unescape_impl(tok: &str, wild: bool) -> String {
     let s: Vec<char> = tok.chars().collect();
     let mut out = String::new();
     let mut i = 0;
@@ -834,6 +848,7 @@ fn unescape(tok: &str) -> String {
                     i += 1;
                 }
             }
+            '*' if wild => out.push(ANY_STRING),
             _ => out.push(c),
         }
         i += 1;
@@ -1264,6 +1279,8 @@ struct Line {
     cmd_range: (usize, usize),
     prev: String,
     cur: String,
+    /// `cur` with its unquoted `*`s as [`ANY_STRING`], for file completion
+    cur_wild: String,
     had_ddash: bool,
     in_redirection: bool,
 }
@@ -1394,6 +1411,7 @@ fn locate(text: &str) -> Position {
         cmd_range: (cmd_tok.start - base, cmd_tok.end - base),
         prev,
         cur: unescape(&cur_raw),
+        cur_wild: unescape_wild(&cur_raw),
         had_ddash,
         in_redirection,
     })
@@ -1877,7 +1895,7 @@ fn complete_dash_c(text: &str) -> Vec<Comp> {
             let ans_cd = ans.as_ref().is_some_and(|a| a.cd);
             let mut comps = ans.map(|a| a.comps).unwrap_or_default();
             if do_file {
-                comps.extend(param_files(&line.cur, ans_cd));
+                comps.extend(param_files(&line.cur_wild, ans_cd));
             }
             (line.cur, comps)
         }
@@ -2275,9 +2293,10 @@ fn variable_comps(before: &str, typed: &str) -> Vec<Comp> {
         .iter()
         .zip(values)
         .map(|(n, elems)| {
+            // fish `maybe_add_slash`: the token up to here, quotes and all, expanded
             let is_dir = elems.len() == 1
-                && !lit.contains(['$', '(', '\'', '"'])
-                && Path::new(&format!("{}{}", expand_tilde(lit), elems[0])).is_dir();
+                && !lit.contains(['$', '(', '\''])
+                && Path::new(&format!("{}{}", expand_tilde(&unescape(lit)), elems[0])).is_dir();
             Comp {
                 word: format!("{before}{n}{}", if is_dir { "/" } else { "" }),
                 desc: format!("Variable: {}", describe_value(&elems)),
@@ -2466,6 +2485,7 @@ fn file_names(prefix: &str, describe: bool) -> Vec<Comp> {
 
 /// [`file_names`] with relative paths read from the working directory `wd`,
 /// and only directories when `dirs_only` (fish `PathFilter::Directory`).
+/// `prefix` may carry [`ANY_STRING`] for its unquoted `*`s.
 fn file_names_in(prefix: &str, describe: bool, wd: &str, dirs_only: bool) -> Vec<Comp> {
     let (dir, base) = match prefix.rfind('/') {
         Some(i) => (&prefix[..=i], &prefix[i + 1..]),
@@ -2473,18 +2493,27 @@ fn file_names_in(prefix: &str, describe: bool, wd: &str, dirs_only: bool) -> Vec
     };
     // no fuzzy file matching for a word that starts with a dash (fish #568)
     let fuzzy_ok = !prefix.starts_with('-');
+    let typed_dir = dir.replace(ANY_STRING, "*");
+    let typed = prefix.replace(ANY_STRING, "*");
     let segs: Vec<&str> = if dir.is_empty() { Vec::new() } else { dir[..dir.len() - 1].split('/').collect() };
     let mut out = Vec::new();
-    expand_dir_segments(String::new(), &segs, wd, None, &mut |found, fuzz| {
-        let entries = dir_entries(&found, base, wd, fuzzy_ok, describe, dirs_only);
+    expand_dir_segments(Walked::default(), &segs, wd, None, &mut |found, fuzz| {
+        let entries = if base.contains(ANY_STRING) {
+            wild_entries(&found, base, wd, fuzzy_ok, dirs_only)
+        } else {
+            dir_entries(&found, base, wd, fuzzy_ok, describe, dirs_only)
+        };
         let n = entries.len();
         for mut c in entries {
             if let Some(rank) = fuzz {
                 // the word replaces the token; its last component still ranks
                 // against what was typed for it, and no better than the
                 // directories it went through
-                c.matched_as = Some(format!("{dir}{}", &c.word[found.len()..]));
-                c.rank_floor = rank;
+                c.matched_as = Some(format!("{typed_dir}{}", &c.word[found.shown.len()..]));
+                c.rank_floor = c.rank_floor.max(rank);
+            } else if c.matched_as.is_none() && base.contains(ANY_STRING) {
+                // a wildcard match ranks by its last literal part (rank_floor)
+                c.matched_as = Some(typed.clone());
             }
             out.push(c);
         }
@@ -2494,42 +2523,191 @@ fn file_names_in(prefix: &str, describe: bool, wd: &str, dirs_only: bool) -> Vec
     out
 }
 
+/// A directory part being walked: as it goes in the words (`shown`, a
+/// wildcard segment kept as typed: `s*/`) and as it is read (`real`, the
+/// directory the wildcard matched: `src/`).
+#[derive(Clone, Default)]
+struct Walked {
+    shown: String,
+    real: String,
+}
+
+impl Walked {
+    fn join(&self, shown: &str, real: &str) -> Walked {
+        Walked {
+            shown: format!("{}{shown}/", self.shown),
+            real: format!("{}{real}/", self.real),
+        }
+    }
+}
+
 /// fish `WildCardExpander::expand` over the directory segments of a path being
-/// completed. A segment is first taken literally; when that finds nothing and
-/// no such directory exists (fish #3211), every directory whose name fuzzily
-/// matches it stands in for it (`expand_literal_intermediate_segment_with_fuzz`,
-/// fish #94). `found` is the directory part so far, as it goes in the words;
-/// `emit` gets each whole directory part and, when a segment was matched
-/// fuzzily, the fuzziest rank on the way, and says how many completions it
-/// found there; the total is returned.
-fn expand_dir_segments(found: String, segs: &[&str], wd: &str, fuzz: Option<u32>, emit: &mut dyn FnMut(String, Option<u32>) -> usize) -> usize {
+/// completed. A segment with a wildcard stands for every directory it matches
+/// (`expand_intermediate_segment`; `**` is not expanded here). Another is
+/// first taken literally; when that finds nothing and no such directory exists
+/// (fish #3211), every directory whose name fuzzily matches it stands in for
+/// it (`expand_literal_intermediate_segment_with_fuzz`, fish #94). `emit` gets
+/// each whole directory part and, when a segment was matched fuzzily, the
+/// fuzziest rank on the way, and says how many completions it found there;
+/// the total is returned.
+fn expand_dir_segments(found: Walked, segs: &[&str], wd: &str, fuzz: Option<u32>, emit: &mut dyn FnMut(Walked, Option<u32>) -> usize) -> usize {
     let Some((seg, rest)) = segs.split_first() else {
         return emit(found, fuzz);
     };
-    let literal = format!("{found}{seg}/");
+    let list_dirs = |dir: &str| -> Vec<String> {
+        let Ok(rd) = std::fs::read_dir(real_path(dir, wd)) else {
+            return Vec::new();
+        };
+        let mut v: Vec<String> = rd.flatten().filter(|e| e.path().is_dir()).map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        v.sort();
+        v
+    };
+    if seg.contains(ANY_STRING) {
+        if seg.contains(&format!("{ANY_STRING}{ANY_STRING}")) {
+            return 0;
+        }
+        let shown = seg.replace(ANY_STRING, "*");
+        return list_dirs(&found.real)
+            .into_iter()
+            .filter(|name| wildcard_match(name, seg))
+            .map(|name| expand_dir_segments(found.join(&shown, &name), rest, wd, fuzz, emit))
+            .sum();
+    }
+    let literal = found.join(seg, seg);
     let found_literally = expand_dir_segments(literal.clone(), rest, wd, fuzz, emit);
     // `$VAR` / `~` segments are expanded, never fuzzily replaced
-    if found_literally > 0 || seg.is_empty() || seg.contains(['$', '~']) || std::path::Path::new(&real_path(&literal, wd)).exists() {
+    if found_literally > 0 || seg.is_empty() || seg.contains(['$', '~']) || std::path::Path::new(&real_path(&literal.real, wd)).exists() {
         return found_literally;
     }
-    let Ok(rd) = std::fs::read_dir(real_path(&found, wd)) else {
-        return 0;
-    };
-    let mut dirs: Vec<(String, u32)> = rd
-        .flatten()
-        .filter_map(|e| {
-            let name = e.file_name().to_string_lossy().into_owned();
-            let rank = fuzzy_rank(seg, &name)?;
-            e.path().is_dir().then_some((name, rank))
-        })
-        .collect();
-    dirs.sort();
-    dirs.into_iter()
+    list_dirs(&found.real)
+        .into_iter()
+        .filter_map(|name| fuzzy_rank(seg, &name).map(|rank| (name, rank)))
         .map(|(name, rank)| {
             let fuzz = Some(fuzz.map_or(rank, |f| f.max(rank)));
-            expand_dir_segments(format!("{found}{name}/"), rest, wd, fuzz, emit)
+            expand_dir_segments(found.join(&name, &name), rest, wd, fuzz, emit)
         })
         .sum()
+}
+
+/// fish `wildcard_match` with `leading_dots_fail_to_match`: does the whole
+/// `name` match `wc`, whose only wildcard is [`ANY_STRING`]? A name starting
+/// with a dot needs a literal dot.
+fn wildcard_match(name: &str, wc: &str) -> bool {
+    if name.starts_with('.') && !wc.starts_with('.') {
+        return false;
+    }
+    fn go(s: &[char], w: &[char]) -> bool {
+        match w.split_first() {
+            None => s.is_empty(),
+            Some((&ANY_STRING, rest)) => (0..=s.len()).any(|i| go(&s[i..], rest)),
+            Some((c, rest)) => s.first() == Some(c) && go(&s[1..], rest),
+        }
+    }
+    let s: Vec<char> = name.chars().collect();
+    let w: Vec<char> = wc.chars().collect();
+    go(&s, &w)
+}
+
+/// One way a name completes a wildcard (fish `wildcard_complete_internal`):
+/// the text after what was typed, or the whole name when the match is not a
+/// same-case prefix (`requires_full_replacement`), and its rank.
+struct WildMatch {
+    text: String,
+    replaces: bool,
+    rank: u32,
+}
+
+/// fish `wildcard_complete_internal`. `s` is a name (a directory's with its
+/// `/`), `wc` what was typed for it; each way it completes goes to `out`.
+fn wildcard_complete(s: &[char], wc: &[char], orig: &str, replaces: bool, fuzzy: bool, first: bool, out: &mut Vec<WildMatch>) -> bool {
+    // a hidden name needs a literal leading dot
+    if first && s.first() == Some(&'.') && wc.first() != Some(&'.') {
+        return false;
+    }
+    match wc.iter().position(|&c| c == ANY_STRING) {
+        // no more wildcards: what is left is matched fuzzily
+        None => {
+            let (ss, ws): (String, String) = (s.iter().collect(), wc.iter().collect());
+            let Some(rank) = fuzzy_rank(&ws, &ss) else {
+                return false;
+            };
+            if !fuzzy && rank > PREFIX_ICASE {
+                return false;
+            }
+            let samecase_prefix = ss.starts_with(&ws);
+            let full = replaces || !samecase_prefix;
+            let text = if full { orig.to_string() } else { ss[ws.len()..].to_string() };
+            out.push(WildMatch { text, replaces: full, rank });
+            true
+        }
+        // a literal part before the next wildcard: same case, else
+        // case-insensitively and then the token is replaced
+        Some(p @ 1..) => {
+            if p >= s.len() {
+                return false;
+            }
+            if s[..p] == wc[..p] {
+                return wildcard_complete(&s[p..], &wc[p..], orig, replaces, fuzzy, false, out);
+            }
+            let fold = |v: &[char]| v.iter().flat_map(|c| c.to_lowercase()).collect::<String>();
+            if fold(&s[..p]) == fold(&wc[..p]) {
+                return wildcard_complete(&s[p..], &wc[p..], orig, true, fuzzy, false, out);
+            }
+            false
+        }
+        // `*`: as the last character it completes with nothing (`f*` → `f*`);
+        // otherwise every place it can end, stopping at a same-case prefix
+        // match (fish #929)
+        Some(_) => {
+            if wc.len() == 1 {
+                return wildcard_complete(&[], &[], orig, replaces, fuzzy, false, out);
+            }
+            if wc[1] == ANY_STRING {
+                return false;
+            }
+            let mut any = false;
+            for i in 0..s.len() {
+                let before = out.len();
+                if wildcard_complete(&s[i..], &wc[1..], orig, replaces, fuzzy, false, out) {
+                    any = true;
+                    if out[before..].iter().any(|m| !m.replaces && m.rank == PREFIX) {
+                        return true;
+                    }
+                }
+            }
+            any
+        }
+    }
+}
+
+/// The completions of a last component `base` holding a wildcard, in the
+/// directory `dir` (fish `wildcard_expand` with `for_completions`): the typed
+/// word extended (`*.m` → `*.md`), or the whole name when the match is not a
+/// same-case prefix (`S*` → `src/`).
+fn wild_entries(dir: &Walked, base: &str, wd: &str, fuzzy_ok: bool, dirs_only: bool) -> Vec<Comp> {
+    let Ok(rd) = std::fs::read_dir(real_path(&dir.real, wd)) else {
+        return Vec::new();
+    };
+    let wc: Vec<char> = base.chars().collect();
+    let typed = format!("{}{}", dir.shown, base.replace(ANY_STRING, "*"));
+    let mut out = Vec::new();
+    for e in rd.flatten() {
+        let is_dir = e.path().is_dir();
+        if dirs_only && !is_dir {
+            continue;
+        }
+        let name = format!("{}{}", e.file_name().to_string_lossy(), if is_dir { "/" } else { "" });
+        let s: Vec<char> = name.chars().collect();
+        let mut found = Vec::new();
+        wildcard_complete(&s, &wc, &name, false, fuzzy_ok, true, &mut found);
+        for m in found {
+            let word = if m.replaces { format!("{}{}", dir.shown, m.text) } else { format!("{typed}{}", m.text) };
+            let mut c = comp(word, "", is_dir && (m.replaces || m.text.ends_with('/')));
+            c.rank_floor = m.rank;
+            out.push(c);
+        }
+    }
+    out
 }
 
 /// A directory part as typed (`$VAR`, `~/`) expanded to be read, a relative
@@ -2544,11 +2722,11 @@ fn real_path(dir: &str, wd: &str) -> String {
     }
 }
 
-/// The entries of the directory `dir` (as typed) that the last component
-/// `base` matches, with `dir` kept as typed in the words: fish completes
-/// `$HOME/Doc` to `$HOME/Documents/`.
-fn dir_entries(dir: &str, base: &str, wd: &str, fuzzy_ok: bool, describe: bool, dirs_only: bool) -> Vec<Comp> {
-    let Ok(rd) = std::fs::read_dir(real_path(dir, wd)) else {
+/// The entries of the directory `dir` that the last component `base` matches,
+/// with `dir` kept as shown in the words: fish completes `$HOME/Doc` to
+/// `$HOME/Documents/`.
+fn dir_entries(dir: &Walked, base: &str, wd: &str, fuzzy_ok: bool, describe: bool, dirs_only: bool) -> Vec<Comp> {
+    let Ok(rd) = std::fs::read_dir(real_path(&dir.real, wd)) else {
         return Vec::new();
     };
     rd.flatten()
@@ -2569,7 +2747,7 @@ fn dir_entries(dir: &str, base: &str, wd: &str, fuzzy_ok: bool, describe: bool, 
                 _ if std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) => "command link",
                 _ => "command",
             };
-            Some(comp(format!("{dir}{name}{}", if is_dir { "/" } else { "" }), desc, is_dir))
+            Some(comp(format!("{}{name}{}", dir.shown, if is_dir { "/" } else { "" }), desc, is_dir))
         })
         .collect()
 }
@@ -2729,35 +2907,39 @@ pub fn commandline_read(args: &[String], buffer: &str, cursor: usize) -> i32 {
 /// definition covers the command.
 fn query_cmd(argv: &[String]) -> i32 {
     let text = argv.iter().skip(1).find(|a| *a != "--").cloned().unwrap_or_default();
-    // (what was typed for ranking, the completions; files are compsys's)
-    let (typed, mut ans) = match locate(&text) {
+    // (what is ranked, the whole word as typed, the completions)
+    let (typed, whole, mut ans) = match locate(&text) {
         Position::Argument(line) => {
             let Some(ans) = complete_argument(&line, &mut ShellEval) else {
                 return 1;
             };
-            (line.cur, ans)
+            (line.cur.clone(), line.cur_wild, ans)
         }
         Position::Command(prefix) => {
             let typed = unescape(&prefix);
             let comps = command_names(&typed);
-            (typed, Answer { comps, ..Answer::default() })
+            (typed.clone(), typed, Answer { comps, ..Answer::default() })
         }
         Position::Variable { before, name } => {
             let comps = variable_comps(&before, &name);
-            (name, Answer { comps, ..Answer::default() })
+            (name.clone(), format!("{before}{name}"), Answer { comps, ..Answer::default() })
         }
         Position::User(name) => {
             let comps = user_comps(&name);
-            (name, Answer { comps, ..Answer::default() })
+            (name.clone(), format!("~{name}"), Answer { comps, ..Answer::default() })
         }
         Position::Nothing => return 1,
     };
+    // an argument's word keeps its unquoted `*`s marked, for file completion
+    let wild = whole.contains(ANY_STRING);
+    let whole_wild = whole;
+    let whole = whole_wild.replace(ANY_STRING, "*");
     // the files come from here too, ranked with the rest as fish does: zsh's
     // _files knows nothing of fuzzy directories (`s/e/f`), `--opt=` and
     // `foo:` separators, `cd`'s directories through $CDPATH, or keeping a
     // `$HOME` in the word
     if ans.do_file {
-        ans.comps.extend(param_files(&typed, ans.cd));
+        ans.comps.extend(param_files(&whole_wild, ans.cd));
         ans.do_file = false;
     }
     let ranks: Vec<Option<u32>> = ans.comps.iter().map(|c| rank_of(&typed, c)).collect();
@@ -2766,16 +2948,50 @@ fn query_cmd(argv: &[String]) -> i32 {
     ans.comps.retain(|_| keep.next().unwrap_or(false));
     // fish replaces the word when the best match is weaker than a prefix
     // (`-v` finding `--verbose`) or a word does not extend it (`s/e/f`)
-    let replace = best.is_some_and(|b| b > PREFIX) || ans.comps.iter().any(|c| !c.word.starts_with(typed.as_str()));
+    // fish `handle_completions` for several matches: none is inserted unless every
+    // one is a prefix match. When all of them replace the word, their common
+    // prefix goes in only if it is longer than the word; otherwise the common
+    // prefix of those that extend the word goes in, and when there is none the
+    // matches are only listed. (zsh inserts what all its matches share, so the
+    // replacing ones are left out when the extending ones have more in common.)
+    let extends = |c: &Comp| c.word.starts_with(whole.as_str());
+    let common_len = |words: &mut dyn Iterator<Item = &Comp>| {
+        words
+            .map(|c| c.word.as_str())
+            .reduce(|a, b| {
+                let n = a.chars().zip(b.chars()).take_while(|(x, y)| x == y).map(|(x, _)| x.len_utf8()).sum();
+                &a[..n]
+            })
+            .map_or(0, |c| c.chars().count())
+    };
+    let all_prefix = best.is_some_and(|b| b % FROM_SEPARATOR <= PREFIX_ICASE);
+    let all_replace = !ans.comps.iter().any(extends);
+    let typed_len = whole.chars().count();
+    let mut list_only = false;
+    if ans.comps.len() > 1 {
+        if !all_prefix {
+            list_only = true;
+        } else if all_replace {
+            list_only = common_len(&mut ans.comps.iter()) <= typed_len;
+        } else if common_len(&mut ans.comps.iter().filter(|c| extends(c))) > typed_len {
+            ans.comps.retain(extends);
+        } else {
+            list_only = true;
+        }
+    }
+    let replace = best.is_some_and(|b| b > PREFIX) || !ans.comps.iter().all(extends);
     use crate::ported::params::{setaparam, setsparam};
     setsparam("__fish_cu", if replace { "1" } else { "0" });
-    // a word through a variable goes in as written, `$` and all
-    setsparam("__fish_cq", if typed.contains('$') { "1" } else { "0" });
+    // a word through a variable, a `~user` or a wildcard goes in as written,
+    // `$`, `~` and `*` and all
+    let as_written = wild || whole.contains('$') || whole.starts_with('~');
+    setsparam("__fish_cq", if as_written { "1" } else { "0" });
     setaparam("__fish_cw", ans.comps.iter().map(|c| c.word.clone()).collect());
     setaparam("__fish_cd", ans.comps.iter().map(|c| c.desc.clone()).collect());
     setaparam("__fish_cs", ans.comps.iter().map(|c| if c.no_space { "1" } else { "0" }.to_string()).collect());
     setsparam("__fish_cf", if ans.do_file { "1" } else { "0" });
     setsparam("__fish_ck", if ans.keep_order { "1" } else { "0" });
+    setsparam("__fish_clist", if list_only { "1" } else { "0" });
     0
 }
 

@@ -16,14 +16,20 @@
 [[ $compstate[context] == (command|parameter|tilde) ]] || return 1
 
 local -a __fish_cw __fish_cd __fish_cs spaced bare group replace
-local __fish_cf __fish_ck __fish_cu __fish_cq i w
+local __fish_cf __fish_ck __fish_cu __fish_cq __fish_clist i w
 
 __fish_complete_query -- "$LBUFFER" || return 1
 
+# compsys has moved `$`, `foo$` or `~` into $IPREFIX for a variable or a user
+# name; the query answers whole words, so the whole word is matched and, when
+# fish replaces it, replaced
+PREFIX=$IPREFIX$PREFIX
+IPREFIX=
+
 for (( i = 1; i <= $#__fish_cw; i++ )); do
-  # the query answers whole words; compsys has already taken `$` / `foo$` /
-  # `~` off into $IPREFIX for a variable or a user name
-  w=${__fish_cw[i]#"$IPREFIX"}
+  w=$__fish_cw[i]
+  # inside quotes compsys has taken the opening quote off the word already
+  [[ -n $compstate[quote] ]] && w=${w#$compstate[quote]}
   w=${w//:/\\:}
   [[ -n $__fish_cd[i] ]] && w+=":${__fish_cd[i]}"
   if [[ $__fish_cs[i] == 1 ]]; then
@@ -36,10 +42,13 @@ done
 [[ $__fish_ck == 1 ]] && group=(-V) || group=(-J)
 # fish replaces the word when the best match is not a prefix of it
 [[ $__fish_cu == 1 ]] && replace=(-U)
-# a path through a variable (`$HOME/Doc`) keeps the variable unexpanded and
-# unquoted, as fish does
+# a word through a variable (`$HOME/Doc`, `$HOM`) or a `~user` goes in as
+# written, unquoted, as fish does
 [[ $__fish_cq == 1 ]] && replace=(-Q -U)
 (( $#spaced )) && _describe $group -t fish-completions completion spaced $replace
 (( $#bare )) && _describe $group -t fish-completions completion bare -S '' $replace
+# fish only lists several matches that replace the word unless their common
+# prefix is longer than it
+[[ $__fish_clist == 1 ]] && compstate[insert]=''
 [[ $__fish_cf == 1 ]] && _files
 return 0
