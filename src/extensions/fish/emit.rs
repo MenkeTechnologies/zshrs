@@ -539,6 +539,9 @@ impl Emitter {
                 None => src.to_string(),
             },
         };
+        if sets_global(src) {
+            out.push_str(&format!("\n__fish_gset[{}]=1", quote_lit(&name)));
+        }
         out.push_str(&format!(
             "\n__fish_fnsrc[{q}]={}; __fish_fnline[{q}]={line}; __fish_fnfile[{q}]=\"${{__fish_srcfile:-${{(%):-%x}}}}\"",
             squote(&shown),
@@ -962,9 +965,23 @@ impl Emitter {
         // The output is captured with a trailing `x` so `$(…)` cannot strip its final
         // newlines: fish drops only ONE trailing newline and keeps empty lines, so
         // `(echo)` is one empty element and `(printf '')` is none.
-        self.hoists.push(format!(
-            "{v}=\"$( {inner}\n__fish_cs=$?; print -rn x; exit $__fish_cs )\""
-        ));
+        let captured = format!("{v}=\"$( {inner}\n__fish_cs=$?; print -rn x; exit $__fish_cs )\"");
+        // fish runs a substitution in-process, so a function that sets a global keeps it:
+        // such a function (known by name) runs here with its output sent through a file
+        let global_setter = match s.as_slice() {
+            [Stmt { job: Job { cmds, negate: false, bg: false, timed: false, .. }, .. }] => match cmds.as_slice() {
+                [(Cmd::Simple { words, redirs }, _)] if redirs.is_empty() => words.first().and_then(Word::bare),
+                _ => None,
+            },
+            _ => None,
+        };
+        match global_setter {
+            Some(name) => self.hoists.push(format!(
+                "if (( ${{+__fish_gset[{q}]}} )); then __fish_ct=$(mktemp \"${{TMPDIR:-/tmp}}/.zrcs.XXXXXX\"); {{ {inner}\n}} >$__fish_ct; __fish_cs=$?; IFS= read -rd '' {v} <$__fish_ct; {v}+=x; command rm -f $__fish_ct; (exit $__fish_cs); else {captured}; fi",
+                q = quote_lit(name)
+            )),
+            None => self.hoists.push(captured),
+        }
         let out = format!("${{{v}%x}}");
         let list = format!("${{{out}:+\"${{(@f)${{{out}%$'\\n'}}}}\"}}");
         let Some(toks) = idx else { return list };
@@ -1416,5 +1433,17 @@ fn reads_var(s: &str, v: &str) -> bool {
     [format!("${v}"), format!("${{{v}")].iter().any(|pat| {
         s.match_indices(pat.as_str())
             .any(|(i, _)| !s[i + pat.len()..].starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_'))
+    })
+}
+
+/// Does a function's text assign a global or universal variable (`set -g`, `-gx`, `-U`, …)?
+fn sets_global(src: &str) -> bool {
+    let words: Vec<&str> = src.split(|c: char| c.is_whitespace() || c == ';').collect();
+    words.iter().enumerate().any(|(i, w)| {
+        *w == "set"
+            && words[i + 1..]
+                .iter()
+                .take_while(|t| t.starts_with('-'))
+                .any(|t| matches!(*t, "--global" | "--universal") || (!t.starts_with("--") && t[1..].contains(['g', 'U'])))
     })
 }

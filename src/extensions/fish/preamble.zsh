@@ -884,7 +884,7 @@ __fish_commandline() {
   done
   __fish_cmdline_read "${BUFFER-}" "${CURSOR-0}" "${(@)reads}"
 }
-typeset -gA __fish_events __fish_pathvars
+typeset -gA __fish_events __fish_pathvars __fish_gset
 __fish_on_event() {
   case $1 in
     fish_preexec) preexec_functions+=($2) ;;
