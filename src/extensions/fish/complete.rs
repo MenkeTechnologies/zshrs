@@ -198,6 +198,44 @@ fn escape(s: &str) -> String {
     out
 }
 
+/// fish `escape_string_script` with `no_quoted` (what the reader inserts for a
+/// completion, `completion_apply_to_command_line`): backslashes only, control
+/// characters as `\n` `\t` `\cX` `\xHH`. A `#` after an alphanumeric and a
+/// `?` (fish 4's qmark-noglob) stay bare; `~` is escaped.
+fn escape_for_insert(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut prev_alnum = false;
+    for c in s.chars() {
+        match c {
+            '\t' => out.push_str("\\t"),
+            '\n' => out.push_str("\\n"),
+            '\x08' => out.push_str("\\b"),
+            '\r' => out.push_str("\\r"),
+            '\x1b' => out.push_str("\\e"),
+            '\x7f' => out.push_str("\\x7f"),
+            '\\' | '\'' => {
+                out.push('\\');
+                out.push(c);
+            }
+            '#' if prev_alnum => out.push(c),
+            '?' => out.push(c),
+            '&' | '$' | ' ' | '#' | '<' | '>' | '(' | ')' | '[' | ']' | '{' | '}' | '*' | '|' | ';' | '"' | '%'
+            | '~' => {
+                out.push('\\');
+                out.push(c);
+            }
+            '\x01'..='\x19' => {
+                out.push_str("\\c");
+                out.push((b'a' + c as u8 - 1) as char);
+            }
+            '\x00' => out.push_str("\\x00"),
+            c => out.push(c),
+        }
+        prev_alnum = c.is_alphanumeric();
+    }
+    out
+}
+
 /// fish `completion2string` / `complete_print`.
 fn complete_print(cmd: &str) -> String {
     let st = store();
@@ -813,6 +851,9 @@ fn innermost_cmdsubst_start(s: &[char]) -> usize {
     }
     stack.last().copied().unwrap_or(0)
 }
+
+/// fish `PROG_COMPLETE_SEP`: separates a completion from its description.
+const PROG_COMPLETE_SEP: char = '\t';
 
 /// fish `ANY_STRING`: an unquoted `*` in a word being completed, told apart from
 /// a quoted or escaped one (see [`unescape_wild`]).
@@ -3063,7 +3104,13 @@ fn dir_entries(dir: &Walked, base: &str, wd: &str, fuzzy_ok: bool, describe: boo
                 _ if std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) => "command link",
                 _ => "command",
             };
-            Some(comp(format!("{}{name}{}", dir.shown, if is_dir { "/" } else { "" }), desc, is_dir))
+            let full = format!("{}{name}{}", dir.shown, if is_dir { "/" } else { "" });
+            // fish `resolve_description`: a tab in the name starts an embedded
+            // description, so the file `a<TAB>b` completes as `a`, described `b`
+            Some(match full.split_once(PROG_COMPLETE_SEP) {
+                Some((word, embedded)) => comp(word.to_string(), embedded, is_dir),
+                None => comp(full, desc, is_dir),
+            })
         })
         .collect()
 }
@@ -3218,7 +3265,8 @@ pub fn commandline_read(args: &[String], buffer: &str, cursor: usize) -> i32 {
 
 /// `__fish_complete_query TEXT`: complete the argument at the end of TEXT
 /// (the line before the cursor). Sets `__fish_cw` (words), `__fish_cd`
-/// (descriptions), `__fish_cs` (`1` = no space after), `__fish_cf` (`1` =
+/// (descriptions), `__fish_cs` (`1` = no space after), `__fish_ce` (the
+/// word escaped as fish inserts it, set only when zsh would quote it otherwise), `__fish_cf` (`1` =
 /// files too), `__fish_ck` (`1` = keep the order), `__fish_ct` (the word as
 /// typed). Status 1 when no fish definition covers the command.
 fn query_cmd(argv: &[String]) -> i32 {
@@ -3307,6 +3355,15 @@ fn query_cmd(argv: &[String]) -> i32 {
     // the word the matches are for, as typed (compsys may hold less of it)
     setsparam("__fish_ct", &whole);
     setaparam("__fish_cw", ans.comps.iter().map(|c| c.word.clone()).collect());
+    // zsh would quote a control character `$'\n'`, which fish reads as `$` and
+    // `\n`; such a match goes in escaped as fish escapes it
+    setaparam(
+        "__fish_ce",
+        ans.comps
+            .iter()
+            .map(|c| if c.word.chars().any(char::is_control) { escape_for_insert(&c.word) } else { String::new() })
+            .collect(),
+    );
     setaparam("__fish_cd", ans.comps.iter().map(|c| c.desc.clone()).collect());
     setaparam("__fish_cs", ans.comps.iter().map(|c| if c.no_space { "1" } else { "0" }.to_string()).collect());
     setsparam("__fish_cf", if ans.do_file { "1" } else { "0" });
@@ -3603,5 +3660,32 @@ mod tests {
         assert_eq!(innermost_cmdsubst_start(&s), 6);
         let s: Vec<char> = "echo '(' x".chars().collect();
         assert_eq!(innermost_cmdsubst_start(&s), 0);
+    }
+
+    #[test]
+    fn inserted_matches_escape_as_fish() {
+        // fish 4.9: `string escape --no-quoted -- <input>`
+        let cases = [
+            ("a b", "a\\ b"),
+            ("x#y", "x#y"),
+            ("#x", "\\#x"),
+            ("a?b", "a?b"),
+            ("a~t", "a\\~t"),
+            ("it's", "it\\'s"),
+            ("b\\s", "b\\\\s"),
+            ("t\tx", "t\\tx"),
+            ("n\nx", "n\\nx"),
+            ("c\x07x", "c\\cgx"),
+            ("e\x1bx", "e\\ex"),
+            ("d\x7fx", "d\\x7fx"),
+            ("u\x1ax", "u\x1ax"),
+            ("%p", "\\%p"),
+            ("a&b;c|d", "a\\&b\\;c\\|d"),
+            ("(x)[y]{z}<>", "\\(x\\)\\[y\\]\\{z\\}\\<\\>"),
+            ("a$b*c", "a\\$b\\*c"),
+        ];
+        for (input, want) in cases {
+            assert_eq!(escape_for_insert(input), want, "{input:?}");
+        }
     }
 }

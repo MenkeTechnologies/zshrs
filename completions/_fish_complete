@@ -15,7 +15,7 @@
 # from $words, fish does not
 [[ $compstate[context] == (command|parameter|tilde) ]] || return 1
 
-local -a __fish_cw __fish_cd __fish_cs spaced bare group replace
+local -a __fish_cw __fish_cd __fish_cs __fish_ce spaced bare escaped escaped_bare group replace
 local __fish_cf __fish_ck __fish_cu __fish_cq __fish_clist __fish_ct lead i w
 local line=$LBUFFER raw=$words[CURRENT] bare_word
 
@@ -41,9 +41,18 @@ for (( i = 1; i <= $#__fish_cw; i++ )); do
   [[ -n $lead ]] && w=${w#$lead}
   # inside quotes compsys has taken the opening quote off the word already
   [[ -n $compstate[quote] ]] && w=${w#$compstate[quote]}
-  w=${w//:/\\:}
-  [[ -n $__fish_cd[i] ]] && w+=":${__fish_cd[i]}"
-  if [[ $__fish_cs[i] == 1 ]]; then
+  # _describe (compdescribe's rembslash) drops every backslash and splits
+  # at the first bare `:`, in the match and in its description alike
+  w=${${w//\\/\\\\}//:/\\:}
+  [[ -n $__fish_cd[i] ]] && w+=":${__fish_cd[i]//\\/\\\\}"
+  # a control character goes in as fish writes it (`\n`), not as zsh quotes it
+  if [[ -n $__fish_ce[i] && -z $compstate[quote] ]]; then
+    w=$__fish_ce[i]
+    [[ -n $lead ]] && w=${w#$lead}
+    w=${${w//\\/\\\\}//:/\\:}
+    [[ -n $__fish_cd[i] ]] && w+=":${__fish_cd[i]//\\/\\\\}"
+    [[ $__fish_cs[i] == 1 ]] && escaped_bare+=("$w") || escaped+=("$w")
+  elif [[ $__fish_cs[i] == 1 ]]; then
     bare+=("$w")
   else
     spaced+=("$w")
@@ -58,6 +67,8 @@ done
 [[ $__fish_cq == 1 ]] && replace=(-Q -U)
 (( $#spaced )) && _describe $group -t fish-completions completion spaced $replace
 (( $#bare )) && _describe $group -t fish-completions completion bare -S '' $replace
+(( $#escaped )) && _describe $group -t fish-completions completion escaped -Q ${replace:#-Q}
+(( $#escaped_bare )) && _describe $group -t fish-completions completion escaped_bare -S '' -Q ${replace:#-Q}
 # fish only lists several matches that replace the word unless their common
 # prefix is longer than it
 [[ $__fish_clist == 1 ]] && compstate[insert]=''
