@@ -87,10 +87,15 @@ fn install_dirs() -> String {
         .ok()
         .and_then(|e| e.parent().and_then(|b| b.parent()).map(|p| p.to_path_buf()))
         .map_or_else(|| "/usr/local".to_string(), |p| p.to_string_lossy().into_owned());
-    let bin = format!("{prefix}/bin");
-    let data = format!("{prefix}/share/fish");
-    let help = format!("{prefix}/share/doc/fish");
-    let man = format!("{data}/man");
+    let (mut bin, mut data) = (format!("{prefix}/bin"), format!("{prefix}/share/fish"));
+    let (mut help, mut man) = (format!("{prefix}/share/doc/fish"), format!("{data}/man"));
+    // with no fish data installed beside zshrs, the installed fish's own
+    // (its man pages are what `man` completes fish commands from)
+    if !std::path::Path::new(&data).is_dir() {
+        if let Some(d) = complete::fish_data() {
+            [data, help, man, bin] = d.dirs.clone();
+        }
+    }
     format!(
         "__fish_bin_dir=('{}') __fish_data_dir=('{}') __fish_help_dir=('{}') __fish_man_dir=('{}') __fish_sysconf_dir=(/etc/fish)\n\
          __fish_config_dir=(${{XDG_CONFIG_HOME:-$HOME/.config}}/fish) __fish_cache_dir=(${{XDG_CACHE_HOME:-$HOME/.cache}}/fish) \

@@ -497,6 +497,31 @@ impl Emitter {
     // ---- simple commands --------------------------------------------------------
 
     fn simple(&mut self, words: &[Word], redirs: &[Redir]) -> String {
+        // `NAME=value… cmd` is fish's `begin; set -lx NAME value…; cmd; end`: the
+        // value expands to a list (`files=$dir/* cmd`) and the command's own words
+        // see it (`files=… string join \n $files`), neither of which a zsh prefix
+        // assignment does
+        let n = words.iter().take_while(|w| Self::assignment_parts(w).is_some()).count();
+        if n > 0 && n < words.len() {
+            let lit = |s: &str| Word {
+                parts: vec![Part::Lit(s.to_string())],
+            };
+            self.fn_depth += 1;
+            self.scopes.push(Frame::default());
+            let sets: Vec<String> = words[..n]
+                .iter()
+                .filter_map(Self::assignment_parts)
+                .map(|(name, value)| {
+                    // `NAME= cmd` is the empty string
+                    let value = if value.parts.is_empty() { Word { parts: vec![Part::Single(String::new())] } } else { value };
+                    self.set_cmd(&[lit("-lx"), lit(&name), value])
+                })
+                .collect();
+            let text = self.simple(&words[n..], redirs);
+            self.scopes.pop();
+            self.fn_depth -= 1;
+            return format!("() {{\n{}\n{text}\n}} \"$@\"", sets.join("\n"));
+        }
         // leading `NAME=value` words are environment assignments for this command
         let mut prefix = Vec::new();
         let mut k = 0;
@@ -584,6 +609,11 @@ impl Emitter {
             }
         };
         self.null_glob = false;
+        if name.as_deref() == Some("string") {
+            if let Some(map) = self.capture_map(&rest[1..]) {
+                out = format!("__fish_capmap={} {out}", quote_lit(&map));
+            }
+        }
         if !prefix.is_empty() {
             out = format!("{} {out}", prefix.join(" "));
         }
@@ -596,8 +626,55 @@ impl Emitter {
         out
     }
 
-    /// `NAME=value` as an environment assignment word.
-    fn assignment(&mut self, w: &Word) -> Option<String> {
+    /// `string match -r PATTERN …` sets a variable per named group of PATTERN
+    /// (`(?<name>…)`), which the native `string` does by name. A group named
+    /// after a variable this code holds under another zsh name (a `set -l`
+    /// local) goes to it as `name=zshname` in `__fish_capmap` — fish's own
+    /// `__fish_anypython` declares `set -l minor_version` and fills it with
+    /// `(?<minor_version>\d+)`. Only a literal pattern can be read here.
+    fn capture_map(&self, args: &[Word]) -> Option<String> {
+        let (sub, args) = args.split_first()?;
+        if sub.bare() != Some("match") {
+            return None;
+        }
+        let mut regex = false;
+        let mut pattern = None;
+        for (i, w) in args.iter().enumerate() {
+            let t = w.text()?;
+            match t.as_str() {
+                "--" => {
+                    pattern = args.get(i + 1);
+                    break;
+                }
+                "--regex" => regex = true,
+                f if f.starts_with("--") => {}
+                f if f.starts_with('-') && f.len() > 1 => regex |= f.contains('r'),
+                _ => {
+                    pattern = Some(w);
+                    break;
+                }
+            }
+        }
+        let pattern = pattern?.text()?;
+        if !regex {
+            return None;
+        }
+        let mut map = Vec::new();
+        for start in ["(?<", "(?P<"] {
+            for (at, _) in pattern.match_indices(start) {
+                let rest = &pattern[at + start.len()..];
+                let Some(name) = rest.split_once('>').map(|(n, _)| n) else { continue };
+                let z = self.zn(name);
+                if z != zname(name) {
+                    map.push(format!("{name}={z}"));
+                }
+            }
+        }
+        (!map.is_empty()).then(|| map.join(" "))
+    }
+
+    /// `NAME=value`: the name and the value word, or `None` for any other word.
+    fn assignment_parts(w: &Word) -> Option<(String, Word)> {
         let Some(Part::Lit(first)) = w.parts.first() else {
             return None;
         };
@@ -614,6 +691,13 @@ impl Emitter {
         if !value.is_empty() {
             tail.parts.insert(0, Part::Lit(value.to_string()));
         }
+        Some((name.to_string(), tail))
+    }
+
+    /// `NAME=value` as an environment assignment word.
+    fn assignment(&mut self, w: &Word) -> Option<String> {
+        let (name, tail) = Self::assignment_parts(w)?;
+        let name = name.as_str();
         let v = if tail.parts.is_empty() {
             "''".to_string()
         } else {

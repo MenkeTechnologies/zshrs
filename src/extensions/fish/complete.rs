@@ -899,6 +899,10 @@ pub struct Comp {
     /// least as fuzzy as that directory's match (fish
     /// `expand_literal_intermediate_segment_with_fuzz`).
     pub rank_floor: u32,
+    /// Completed after a `=` or `:` in the word (`--file=RE`, `a:b`): fish ranks
+    /// these below every other match (`StringFuzzyMatch::rank`, `from_separator
+    /// << 4`), so an option's own values (`--backup=none`) win over files.
+    pub from_separator: bool,
 }
 
 /// What a query found.
@@ -909,6 +913,8 @@ pub struct Answer {
     pub do_file: bool,
     /// a `-k` definition contributed: keep the order
     pub keep_order: bool,
+    /// the command is `cd` or wraps it: its argument completes directories
+    pub cd: bool,
 }
 
 /// How fish code is run: `test` answers a `-n` condition, `args` expands an
@@ -1025,6 +1031,7 @@ impl Completer<'_> {
                 keep: keep_order,
                 matched_as: Some(raw),
                 rank_floor: 0,
+                from_separator: false,
             });
         }
     }
@@ -1170,6 +1177,7 @@ impl Completer<'_> {
                         keep: false,
         matched_as: None,
         rank_floor: 0,
+        from_separator: false,
                     });
                     continue;
                 }
@@ -1191,6 +1199,7 @@ impl Completer<'_> {
                         keep: false,
         matched_as: None,
         rank_floor: 0,
+        from_separator: false,
                     });
                 }
                 self.out.comps.push(Comp {
@@ -1200,6 +1209,7 @@ impl Completer<'_> {
                     keep: false,
         matched_as: None,
         rank_floor: 0,
+        from_separator: false,
                 });
             }
         }
@@ -1246,7 +1256,8 @@ impl Completer<'_> {
 
 /// The parsed shape of the command line before the cursor.
 struct Line {
-    /// the effective command line: from the command word to the cursor
+    /// fish `effective_cmdline`: the line up to the cursor (from the command
+    /// word when `VAR=` words before it were skipped)
     effective: String,
     cmd: String,
     /// the command word's extent in `effective`
@@ -1328,6 +1339,7 @@ fn locate(text: &str) -> Position {
     let first = toks.iter().rposition(|t| t.kind == TokKind::Sep).map_or(0, |p| p + 1);
     let mut toks: Vec<Tok> = toks[first..].to_vec();
     let at_end = |t: &Tok| t.end >= s.len();
+    let mut assigned = false;
     // `VAR=val` before the command word. `and`, `not`, `command`, `time`, ...
     // stay: fish completes them from their own scripts (not.fish, command.fish,
     // ...), which hand the rest of the line to `__fish_complete_subcommand`.
@@ -1337,6 +1349,7 @@ fn locate(text: &str) -> Position {
             break;
         }
         toks.remove(0);
+        assigned = true;
     }
     let Some(cmd_tok) = toks.first().copied() else {
         return Position::Command(String::new());
@@ -1369,11 +1382,16 @@ fn locate(text: &str) -> Position {
         .unwrap_or_default();
     let upto = if cursor_in_ws { toks.len() } else { toks.len() - 1 };
     let had_ddash = toks[1..upto.max(1)].iter().any(|t| tok_text(t) == "--");
-    let effective: String = s[cmd_tok.start..].iter().collect();
+    // fish `effective_cmdline`: what `commandline` reports while the completers
+    // run is the whole line up to the cursor (`cwebp | cwebp -` has two
+    // commands in `commandline -cx`), from the command word only when `VAR=`
+    // words before it were taken off
+    let base = if assigned { cmd_tok.start } else { 0 };
+    let effective: String = s[base..].iter().collect();
     Position::Argument(Line {
         effective,
         cmd: unescape(&tok_text(&cmd_tok)),
-        cmd_range: (0, cmd_tok.end - cmd_tok.start),
+        cmd_range: (cmd_tok.start - base, cmd_tok.end - base),
         prev,
         cur: unescape(&cur_raw),
         had_ddash,
@@ -1402,6 +1420,7 @@ fn complete_argument(line: &Line, eval: &mut dyn Eval) -> Option<Answer> {
     let mut seen = HashSet::new();
     c.out.comps.retain(|x| seen.insert(x.word.clone()));
     c.out.do_file = do_file;
+    c.out.cd = line.cmd.rsplit('/').next() == Some("cd") || visited.contains("cd");
     Some(c.out)
 }
 
@@ -1624,10 +1643,12 @@ pub fn autoload_function(name: &str) -> bool {
 
 /// What an installed fish told us once: its sysconf and build-time vendor
 /// dirs, and the scripts it carries inside its binary.
-struct FishData {
+pub(crate) struct FishData {
     exe: PathBuf,
     cache: PathBuf,
     sysconf: String,
+    /// the installed fish's `$__fish_data_dir`, `$__fish_help_dir`, `$__fish_man_dir`, `$__fish_bin_dir`
+    pub dirs: [String; 4],
     extra_completions: String,
     extra_functions: String,
     files: HashSet<String>,
@@ -1667,9 +1688,36 @@ fn write_atomic(path: &Path, data: &[u8]) {
     }
 }
 
-fn fish_data() -> Option<&'static FishData> {
-    static DATA: OnceLock<Option<FishData>> = OnceLock::new();
-    DATA.get_or_init(|| {
+/// Run `fish -N -c ARGS…` and return its output when it succeeded. The output
+/// is read to the end before the wait: the shell's SIGCHLD handler may reap
+/// the child first (ECHILD), and then the whole output is all there is to go by.
+fn run_fish(exe: &Path, args: &[&str]) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let mut child = std::process::Command::new(exe)
+        .arg("-N")
+        .arg("-c")
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    let mut out = Vec::new();
+    child.stdout.take()?.read_to_end(&mut out).ok()?;
+    match child.wait() {
+        Ok(st) if !st.success() => None,
+        _ => Some(out),
+    }
+}
+
+/// The installed fish: its directories and the scripts it embeds. Found once;
+/// a failed lookup is tried again next time.
+pub(crate) fn fish_data() -> Option<&'static FishData> {
+    static DATA: OnceLock<FishData> = OnceLock::new();
+    if let Some(d) = DATA.get() {
+        return Some(d);
+    }
+    let found = (|| {
         let exe = find_on_path("fish")?;
         let meta = std::fs::metadata(&exe).ok()?;
         let stamp = meta
@@ -1678,42 +1726,42 @@ fn fish_data() -> Option<&'static FishData> {
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map_or(0, |d| d.as_secs());
         let cache = zshrs_home().join("fish-data").join(format!("{}-{stamp}", meta.len()));
-        let index = cache.join("index");
+        // the index names its lines' layout: a new layout is a new file
+        let index = cache.join("index-2");
         let text = match std::fs::read_to_string(&index) {
             Ok(t) => t,
             Err(_) => {
-                let out = std::process::Command::new(&exe)
-                    .args([
-                        "-N",
-                        "-c",
-                        "echo $__fish_sysconf_dir; status get-file __fish_build_paths.fish 2>/dev/null | source; \
+                let out = run_fish(
+                    &exe,
+                    &[
+                        "echo $__fish_sysconf_dir; echo $__fish_data_dir; echo $__fish_help_dir; echo $__fish_man_dir; echo $__fish_bin_dir; \
+                         status get-file __fish_build_paths.fish 2>/dev/null | source; \
                          echo $__extra_completionsdir; echo $__extra_functionsdir; status list-files",
-                    ])
-                    .stdin(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .output()
-                    .ok()?;
-                if !out.status.success() {
-                    return None;
-                }
-                write_atomic(&index, &out.stdout);
-                String::from_utf8_lossy(&out.stdout).into_owned()
+                    ],
+                )?;
+                write_atomic(&index, &out);
+                String::from_utf8_lossy(&out).into_owned()
             }
         };
         let mut lines = text.lines();
         let sysconf = lines.next()?.to_string();
+        let mut dirs: [String; 4] = Default::default();
+        for d in &mut dirs {
+            *d = lines.next()?.to_string();
+        }
         let extra_completions = lines.next()?.to_string();
         let extra_functions = lines.next()?.to_string();
         Some(FishData {
             exe,
             cache,
             sysconf,
+            dirs,
             extra_completions,
             extra_functions,
             files: lines.map(str::to_string).collect(),
         })
-    })
-    .as_ref()
+    })()?;
+    Some(DATA.get_or_init(|| found))
 }
 
 /// A script fish carries inside its binary (`completions/git.fish`), read once
@@ -1727,17 +1775,9 @@ fn embedded(rel: &str) -> Option<String> {
     if let Ok(t) = std::fs::read_to_string(&path) {
         return Some(t);
     }
-    let out = std::process::Command::new(&d.exe)
-        .args(["-N", "-c", "status get-file $argv[1]", rel])
-        .stdin(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    write_atomic(&path, &out.stdout);
-    Some(String::from_utf8_lossy(&out.stdout).into_owned())
+    let out = run_fish(&d.exe, &["status get-file $argv[1]", rel])?;
+    write_atomic(&path, &out);
+    Some(String::from_utf8_lossy(&out).into_owned())
 }
 
 /// fish's default `fish_function_path` / `fish_complete_path` (share/config.fish).
@@ -1834,9 +1874,10 @@ fn complete_dash_c(text: &str) -> Vec<Comp> {
         Position::Argument(line) => {
             let ans = complete_argument(&line, &mut ShellEval);
             let do_file = ans.as_ref().is_none_or(|a| a.do_file);
+            let ans_cd = ans.as_ref().is_some_and(|a| a.cd);
             let mut comps = ans.map(|a| a.comps).unwrap_or_default();
             if do_file {
-                comps.extend(file_names(&line.cur, false));
+                comps.extend(param_files(&line.cur, ans_cd));
             }
             (line.cur, comps)
         }
@@ -1877,10 +1918,12 @@ const PREFIX_ICASE: u32 = 1;
 const SUBSTR: u32 = 2;
 const SUBSTR_ICASE: u32 = 3;
 const SUBSEQ: u32 = 4;
+/// Added to the rank of a match made after a separator (see [`Comp::from_separator`]).
+const FROM_SEPARATOR: u32 = 16;
 
 /// The rank of `c` for the typed word (see [`Comp::matched_as`]).
 fn rank_of(typed: &str, c: &Comp) -> Option<u32> {
-    fuzzy_rank(typed, c.matched_as.as_deref().unwrap_or(&c.word)).map(|r| r.max(c.rank_floor))
+    fuzzy_rank(typed, c.matched_as.as_deref().unwrap_or(&c.word)).map(|r| r.max(c.rank_floor) + if c.from_separator { FROM_SEPARATOR } else { 0 })
 }
 
 /// fish `string_fuzzy_match_string(typed, candidate)` as a rank.
@@ -2068,19 +2111,51 @@ fn comp(word: String, desc: &str, no_space: bool) -> Comp {
         keep: false,
         matched_as: None,
         rank_floor: 0,
+        from_separator: false,
     }
 }
 
 /// fish `complete_cmd` for the command word: executables, then directories,
 /// then functions (autoloadable ones included), then builtins; the first
 /// source to offer a name gives its description.
+/// fish `complete_cmd_desc`: executables that extend what was typed take
+/// their description from `__fish_describe_command` (the whatis database,
+/// one apropos call), first letter uppercased. Not for fewer than two typed
+/// characters, a wildcard, or when nothing found is a command.
+fn describe_commands(typed: &str, comps: &mut [Comp]) {
+    let cmd = typed.rsplit('/').next().unwrap_or(typed);
+    if cmd.chars().count() < 2 || cmd.contains(['*', '?']) {
+        return;
+    }
+    if !comps.iter().any(|c| !c.word.ends_with('/') && fuzzy_rank(typed, &c.word).is_some()) {
+        return;
+    }
+    let out = fish_output(&format!("functions -q __fish_describe_command && __fish_describe_command -- {}", escape(cmd)));
+    let mut lookup = BTreeMap::new();
+    for line in out.lines() {
+        let Some((name, desc)) = line.split_once('\t') else { continue };
+        let (Some(key), Some(first)) = (name.get(cmd.len()..), desc.chars().next()) else { continue };
+        let desc: String = first.to_uppercase().chain(desc.chars().skip(1)).collect();
+        lookup.insert(key.to_string(), desc);
+    }
+    // fish keeps a same-case prefix match as the rest of the word, and looks
+    // that up; a word that replaces the token is never found
+    for c in comps.iter_mut() {
+        if let Some(desc) = c.word.strip_prefix(typed).and_then(|rest| lookup.get(rest)) {
+            c.desc = desc.clone();
+        }
+    }
+}
+
 fn command_names(prefix: &str) -> Vec<Comp> {
     if prefix.contains('/') || prefix.starts_with('~') {
         // a path: executables and directories under it
-        return file_names(prefix, true)
+        let mut out: Vec<Comp> = file_names(prefix, true)
             .into_iter()
             .filter(|c| c.word.ends_with('/') || is_executable(&expand_tilde(&c.word)))
             .collect();
+        describe_commands(prefix, &mut out);
+        return out;
     }
     // fish `complete_abbr` runs before `complete_cmd`: an abbreviation wins
     let mut out = abbr_comps();
@@ -2097,6 +2172,7 @@ fn command_names(prefix: &str) -> Vec<Comp> {
             out.push(comp(name, if link { "command link" } else { "command" }, false));
         }
     }
+    describe_commands(prefix, &mut out);
     if let Ok(rd) = std::fs::read_dir(".") {
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
@@ -2209,6 +2285,7 @@ fn variable_comps(before: &str, typed: &str) -> Vec<Comp> {
                 keep: false,
                 matched_as: Some(n.clone()),
                 rank_floor: 0,
+                from_separator: false,
             }
         })
         .collect()
@@ -2234,6 +2311,7 @@ fn user_comps(typed: &str) -> Vec<Comp> {
                 keep: false,
                 matched_as: Some(name),
                 rank_floor: 0,
+                from_separator: false,
             });
         }
         // fish gives up after 200 ms (a slow directory service)
@@ -2270,6 +2348,7 @@ fn abbr_comps() -> Vec<Comp> {
             keep: false,
             matched_as: None,
             rank_floor: 0,
+            from_separator: false,
         });
     }
     out
@@ -2335,7 +2414,59 @@ fn preamble_functions() -> &'static HashSet<String> {
 /// the caller keeps the best kind). Dot entries only when a dot is typed.
 /// `describe` gives command-position descriptions (`directory`, `command`,
 /// `command link`); argument file completions carry none (fish #254).
+/// fish `complete_param_expand`: the files an argument completes to. A word
+/// with an `=` or `:` (the last one) also completes after it, the part
+/// before kept in the words; one starting with a dash (`--file=RE`) only
+/// after it. `cd`'s argument completes directories, a relative one in each
+/// `$CDPATH` directory and then `.` (fish `PathFilter::Directory` with
+/// `for_cd_argument`).
+fn param_files(s: &str, cd: bool) -> Vec<Comp> {
+    let files = |p: &str| -> Vec<Comp> {
+        if !cd {
+            return file_names(p, false);
+        }
+        let real = expand_vars(&expand_tilde(p));
+        let wds: Vec<String> = if ["/", "./", "../"].iter().any(|r| real.starts_with(r)) {
+            vec![".".to_string()]
+        } else {
+            let cdpath = crate::ported::params::getsparam("CDPATH").unwrap_or_default();
+            cdpath
+                .split(':')
+                .filter(|d| !cdpath.is_empty() || !d.is_empty())
+                .map(|d| if d.is_empty() { "." } else { d }.to_string())
+                .chain(std::iter::once(".".to_string()))
+                .collect()
+        };
+        let mut seen = HashSet::new();
+        wds.iter()
+            .flat_map(|wd| file_names_in(p, false, wd, true))
+            .filter(|c| seen.insert(c.word.clone()))
+            .collect()
+    };
+    let sep = s.rfind(['=', ':']);
+    let mut out = Vec::new();
+    if sep.is_none() || !s.starts_with('-') {
+        out.extend(files(s));
+    }
+    if let Some(i) = sep {
+        let before = &s[..=i];
+        out.extend(files(&s[i + 1..]).into_iter().map(|mut c| {
+            c.word = format!("{before}{}", c.word);
+            c.matched_as = c.matched_as.map(|m| format!("{before}{m}"));
+            c.from_separator = true;
+            c
+        }));
+    }
+    out
+}
+
 fn file_names(prefix: &str, describe: bool) -> Vec<Comp> {
+    file_names_in(prefix, describe, ".", false)
+}
+
+/// [`file_names`] with relative paths read from the working directory `wd`,
+/// and only directories when `dirs_only` (fish `PathFilter::Directory`).
+fn file_names_in(prefix: &str, describe: bool, wd: &str, dirs_only: bool) -> Vec<Comp> {
     let (dir, base) = match prefix.rfind('/') {
         Some(i) => (&prefix[..=i], &prefix[i + 1..]),
         None => ("", prefix),
@@ -2344,8 +2475,8 @@ fn file_names(prefix: &str, describe: bool) -> Vec<Comp> {
     let fuzzy_ok = !prefix.starts_with('-');
     let segs: Vec<&str> = if dir.is_empty() { Vec::new() } else { dir[..dir.len() - 1].split('/').collect() };
     let mut out = Vec::new();
-    expand_dir_segments(String::new(), &segs, None, &mut |found, fuzz| {
-        let entries = dir_entries(&found, base, fuzzy_ok, describe);
+    expand_dir_segments(String::new(), &segs, wd, None, &mut |found, fuzz| {
+        let entries = dir_entries(&found, base, wd, fuzzy_ok, describe, dirs_only);
         let n = entries.len();
         for mut c in entries {
             if let Some(rank) = fuzz {
@@ -2371,17 +2502,17 @@ fn file_names(prefix: &str, describe: bool) -> Vec<Comp> {
 /// `emit` gets each whole directory part and, when a segment was matched
 /// fuzzily, the fuzziest rank on the way, and says how many completions it
 /// found there; the total is returned.
-fn expand_dir_segments(found: String, segs: &[&str], fuzz: Option<u32>, emit: &mut dyn FnMut(String, Option<u32>) -> usize) -> usize {
+fn expand_dir_segments(found: String, segs: &[&str], wd: &str, fuzz: Option<u32>, emit: &mut dyn FnMut(String, Option<u32>) -> usize) -> usize {
     let Some((seg, rest)) = segs.split_first() else {
         return emit(found, fuzz);
     };
     let literal = format!("{found}{seg}/");
-    let found_literally = expand_dir_segments(literal.clone(), rest, fuzz, emit);
+    let found_literally = expand_dir_segments(literal.clone(), rest, wd, fuzz, emit);
     // `$VAR` / `~` segments are expanded, never fuzzily replaced
-    if found_literally > 0 || seg.is_empty() || seg.contains(['$', '~']) || std::path::Path::new(&real_path(&literal)).exists() {
+    if found_literally > 0 || seg.is_empty() || seg.contains(['$', '~']) || std::path::Path::new(&real_path(&literal, wd)).exists() {
         return found_literally;
     }
-    let Ok(rd) = std::fs::read_dir(real_path(&found)) else {
+    let Ok(rd) = std::fs::read_dir(real_path(&found, wd)) else {
         return 0;
     };
     let mut dirs: Vec<(String, u32)> = rd
@@ -2396,21 +2527,28 @@ fn expand_dir_segments(found: String, segs: &[&str], fuzz: Option<u32>, emit: &m
     dirs.into_iter()
         .map(|(name, rank)| {
             let fuzz = Some(fuzz.map_or(rank, |f| f.max(rank)));
-            expand_dir_segments(format!("{found}{name}/"), rest, fuzz, emit)
+            expand_dir_segments(format!("{found}{name}/"), rest, wd, fuzz, emit)
         })
         .sum()
 }
 
-/// A directory part as typed (`$VAR`, `~/`) expanded to be read; `.` for none.
-fn real_path(dir: &str) -> String {
-    if dir.is_empty() { ".".to_string() } else { expand_vars(&expand_tilde(dir)) }
+/// A directory part as typed (`$VAR`, `~/`) expanded to be read, a relative
+/// one under the working directory `wd`; `wd` itself for none.
+fn real_path(dir: &str, wd: &str) -> String {
+    let dir = expand_vars(&expand_tilde(dir));
+    match () {
+        _ if dir.starts_with('/') => dir,
+        _ if dir.is_empty() => wd.to_string(),
+        _ if wd == "." => dir,
+        _ => format!("{}/{dir}", wd.trim_end_matches('/')),
+    }
 }
 
 /// The entries of the directory `dir` (as typed) that the last component
 /// `base` matches, with `dir` kept as typed in the words: fish completes
 /// `$HOME/Doc` to `$HOME/Documents/`.
-fn dir_entries(dir: &str, base: &str, fuzzy_ok: bool, describe: bool) -> Vec<Comp> {
-    let Ok(rd) = std::fs::read_dir(real_path(dir)) else {
+fn dir_entries(dir: &str, base: &str, wd: &str, fuzzy_ok: bool, describe: bool, dirs_only: bool) -> Vec<Comp> {
+    let Ok(rd) = std::fs::read_dir(real_path(dir, wd)) else {
         return Vec::new();
     };
     rd.flatten()
@@ -2422,6 +2560,9 @@ fn dir_entries(dir: &str, base: &str, fuzzy_ok: bool, describe: bool) -> Vec<Com
             }
             let path = e.path();
             let is_dir = path.is_dir();
+            if dirs_only && !is_dir {
+                return None;
+            }
             let desc = match () {
                 _ if !describe => "",
                 _ if is_dir => "directory",
@@ -2611,31 +2752,21 @@ fn query_cmd(argv: &[String]) -> i32 {
         }
         Position::Nothing => return 1,
     };
-    // fish keeps only the best kind of match. Files count as prefix matches
-    // when one exists; when the best is weaker than a prefix (`-v` finding
-    // `--verbose`) the word is replaced rather than extended (`__fish_cu`).
-    let files = if ans.do_file { file_names(&typed, false) } else { Vec::new() };
-    // a path through a fuzzily matched directory (`s/e/f`): zsh's _files does
-    // not match that way, so those files are ranked and offered from here
-    if files.iter().any(|c| c.matched_as.is_some()) {
-        ans.comps.extend(files.iter().cloned());
+    // the files come from here too, ranked with the rest as fish does: zsh's
+    // _files knows nothing of fuzzy directories (`s/e/f`), `--opt=` and
+    // `foo:` separators, `cd`'s directories through $CDPATH, or keeping a
+    // `$HOME` in the word
+    if ans.do_file {
+        ans.comps.extend(param_files(&typed, ans.cd));
         ans.do_file = false;
     }
     let ranks: Vec<Option<u32>> = ans.comps.iter().map(|c| rank_of(&typed, c)).collect();
-    let files_match = ans.do_file && files.iter().any(|c| fuzzy_rank(&typed, &c.word) == Some(PREFIX));
-    let best = ranks.iter().flatten().copied().chain(files_match.then_some(PREFIX)).min();
+    let best = ranks.iter().flatten().copied().min();
     let mut keep = ranks.iter().map(|r| r.is_some() && *r == best);
     ans.comps.retain(|_| keep.next().unwrap_or(false));
-    let replace = best.is_some_and(|b| b > PREFIX) || ans.comps.iter().any(|c| c.matched_as.is_some() && !c.word.starts_with(typed.as_str()));
-    if replace {
-        ans.do_file = false;
-    }
-    // a path through a variable (`$HOME/Doc`): fish keeps `$HOME` in the word,
-    // which zsh's _files would not, so the files come from here
-    if ans.do_file && typed.contains('$') {
-        ans.comps.extend(file_names(&typed, false).into_iter().filter(|c| fuzzy_rank(&typed, &c.word).is_some()));
-        ans.do_file = false;
-    }
+    // fish replaces the word when the best match is weaker than a prefix
+    // (`-v` finding `--verbose`) or a word does not extend it (`s/e/f`)
+    let replace = best.is_some_and(|b| b > PREFIX) || ans.comps.iter().any(|c| !c.word.starts_with(typed.as_str()));
     use crate::ported::params::{setaparam, setsparam};
     setsparam("__fish_cu", if replace { "1" } else { "0" });
     // a word through a variable goes in as written, `$` and all

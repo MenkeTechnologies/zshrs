@@ -413,7 +413,15 @@ fn str_repeat(o: &Opts, out: &mut Out) -> i32 {
 fn str_split(o: &Opts, out: &mut Out, nul: bool) -> i32 {
     let o = &without_dashdash(o);
     let (sep, items) = if nul {
-        ("\0".to_string(), inputs(&o.rest, true))
+        // fish reads split0's stdin whole (`SplitBehavior::Never`) and splits it on NUL
+        let items = if o.rest.is_empty() {
+            let mut buf = Vec::new();
+            let _ = std::io::stdin().lock().read_to_end(&mut buf);
+            vec![String::from_utf8_lossy(&buf).into_owned()]
+        } else {
+            o.rest.clone()
+        };
+        ("\0".to_string(), items)
     } else {
         match o.rest.split_first() {
             Some((s, r)) => (s.clone(), if r.is_empty() { inputs(&[], false) } else { r.to_vec() }),
@@ -449,6 +457,10 @@ fn str_split(o: &Opts, out: &mut Out, nul: bool) -> i32 {
         };
         if o.has('n') {
             parts.retain(|p| !p.is_empty());
+        }
+        // split0 ignores a trailing NUL: `a\0b\0` is two elements, `a\0\0` is `a` and ``
+        if nul && parts.last().is_some_and(String::is_empty) {
+            parts.pop();
         }
         splits |= parts.len() > 1;
         match o.val('f') {
@@ -517,6 +529,11 @@ fn str_match(o: &Opts, out: &mut Out) -> i32 {
     } else {
         glob_regex(pat, icase, !o.has('e'))
     };
+    // fish sets a variable for each named group (`(?<name>…)`) from the first
+    // argument that matched, every match of it with --all (an empty element
+    // where the group did not take part), and to no elements when nothing did
+    let names: Vec<String> = if regex { re.capture_names().flatten().map(str::to_string).collect() } else { Vec::new() };
+    let mut first_caps: Option<Vec<Vec<String>>> = None;
     let mut matched = 0usize;
     for s in &items {
         let mut hit = false;
@@ -525,10 +542,44 @@ fn str_match(o: &Opts, out: &mut Out) -> i32 {
         } else {
             re.captures(s).ok().flatten().into_iter().collect()
         };
+        if !names.is_empty() && first_caps.is_none() && !o.has('v') && !caps_iter.is_empty() {
+            first_caps = Some(
+                names
+                    .iter()
+                    .map(|n| {
+                        caps_iter
+                            .iter()
+                            .filter_map(|c| match c.name(n) {
+                                Some(m) => Some(m.as_str().to_string()),
+                                None => o.has('a').then(String::new),
+                            })
+                            .collect()
+                    })
+                    .collect(),
+            );
+        }
         for caps in caps_iter {
             hit = true;
             let whole = caps.get(0).unwrap();
             if o.has('v') {
+                continue;
+            }
+            if regex {
+                // fish `report_match`: `-e` prints the argument, then the groups
+                // from 1 (from 0 otherwise, minus 0 with -g); a group that took no
+                // part prints nothing; `-n` gives each one's index and length
+                if o.has('e') {
+                    out.line(s);
+                }
+                let first = usize::from(o.has('e') || o.has('g'));
+                for m in (first..caps.len()).filter_map(|k| caps.get(k)) {
+                    if o.has('n') {
+                        let start = s[..m.start()].chars().count() + 1;
+                        out.line(&format!("{start} {}", m.as_str().chars().count()));
+                    } else {
+                        out.line(m.as_str());
+                    }
+                }
                 continue;
             }
             if o.has('n') {
@@ -536,23 +587,30 @@ fn str_match(o: &Opts, out: &mut Out) -> i32 {
                 out.line(&format!("{} {}", start, whole.as_str().chars().count()));
                 continue;
             }
-            if regex {
-                if !o.has('g') {
-                    out.line(whole.as_str());
-                }
-                for k in 1..caps.len() {
-                    out.line(caps.get(k).map_or("", |m| m.as_str()));
-                }
-            } else {
-                out.line(if o.has('e') { whole.as_str() } else { s });
-            }
+            out.line(s);
         }
         if o.has('v') && !hit {
-            out.line(s);
+            if o.has('n') {
+                out.line(&format!("1 {}", s.chars().count()));
+            } else {
+                out.line(s);
+            }
             matched += 1;
         } else if hit && !o.has('v') {
             matched += 1;
         }
+    }
+    let vals = first_caps.unwrap_or_else(|| vec![Vec::new(); names.len()]);
+    // a group whose name the translated code holds under another zsh name (a
+    // `set -l` local) arrives in `__fish_capmap` as `name=zshname …`
+    let map = crate::ported::params::getsparam("__fish_capmap").unwrap_or_default();
+    let target = |name: &str| {
+        map.split(' ')
+            .find_map(|e| e.strip_prefix(name).and_then(|r| r.strip_prefix('=')))
+            .map_or_else(|| super::emit::zname(name), str::to_string)
+    };
+    for (name, v) in names.iter().zip(vals) {
+        crate::ported::params::setaparam(&target(name), v);
     }
     i32::from(matched == 0)
 }

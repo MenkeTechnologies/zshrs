@@ -228,6 +228,7 @@ fn completions_match_fish() {
     std::fs::create_dir_all(home.join("zqdir")).unwrap();
     std::fs::create_dir_all(cwd.join("zqsrc/zqext")).unwrap();
     std::fs::write(cwd.join("zqsrc/zqext/zqfish.rs"), "").unwrap();
+    std::fs::write(cwd.join("zqfile"), "").unwrap();
     std::fs::write(comp_dir.join("zqauto.fish"), "complete -c zqauto -f -l from-file -d 'Autoloaded'\n").unwrap();
     let script = home.join("complete.fish");
     std::fs::write(
@@ -263,6 +264,9 @@ complete -C 'echo ~roo'
 complete -C 'ls $HOME/zqd'
 complete -C 'ls zqs/x/zqf'
 complete -C 'ls ZQS/E/'
+complete -C 'cd zq'
+complete -C 'ls --zqopt=zq'
+complete -C 'ls a:zq'
 function zqp; end
 complete -c zqp -f -xa plain
 complete -p '*zqp*' -f -xa wild

@@ -282,7 +282,7 @@ type() {
   return $r
 }
 functions() {
-  local a n=() q= e= listnames= alln= details=
+  local a n=() q= e= listnames= alln= details= miss=0
   for a; do
     case $a in
       -q|--query) q=1 ;;
@@ -298,11 +298,16 @@ functions() {
     if [[ $(whence -w __fish_function_names 2>/dev/null) != *none* && -n $(whence -w __fish_function_names 2>/dev/null) ]]; then __fish_function_names ${alln:+-a}; else print -rl -- ${(ok)functions}; fi
     return
   fi
-  if [[ -n $q ]]; then (( ${#n} )) && (( $+functions[$n[1]] )); return; fi
+  # fish autoloads each name (get_props_autoload); -q returns how many are missing
+  if [[ -n $q ]]; then
+    (( ${#n} )) || return 1
+    for a in $n; do (( $+functions[$a] )) || __fish_autoload $a || (( ++miss )); done
+    return miss
+  fi
   if [[ -n $e ]]; then for a in $n; do unfunction -- $a 2>/dev/null; done; return 0; fi
   if (( ! ${#n} )); then print -rl -- ${(ko)functions}; return 0; fi
   for a in $n; do
-    (( $+functions[$a] )) || { print -u2 -r -- "functions: Unknown function '$a'"; return 1 }
+    (( $+functions[$a] )) || __fish_autoload $a || { print -u2 -r -- "functions: Unknown function '$a'"; return 1 }
     if [[ -n ${__fish_fnsrc[$a]+x} ]]; then
       if [[ -n $details ]]; then print -r -- ${__fish_fnfile[$a]}; continue; fi
       __fish_defined_in $a
