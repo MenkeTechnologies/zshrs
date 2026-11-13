@@ -15,15 +15,16 @@
 # from $words, fish does not
 [[ $compstate[context] == (command|parameter|tilde) ]] || return 1
 
-local -a __fish_cw __fish_cd __fish_cs __fish_ce spaced bare escaped escaped_bare group replace
-local __fish_cf __fish_ck __fish_cu __fish_cq __fish_clist __fish_ct lead i w
+local -a __fish_cw __fish_cd __fish_cs __fish_ce spaced bare escaped escaped_bare group replace close
+local __fish_cf __fish_ck __fish_cu __fish_cq __fish_clist __fish_ct __fish_cqt lead i w
 local line=$LBUFFER raw=$words[CURRENT] bare_word
 
 # while completing, zsh takes a word's unclosed quote out of $LBUFFER
 # (`echo "sp a` reads `echo sp a`); $words keeps the word as typed, and fish
-# must see the quote to read `sp a` as one word
+# must see the quote to read `sp a` as one word (in a `$variable` zsh leaves
+# the quote where it is)
 bare_word=${raw/[\"\']/}
-[[ $raw != $bare_word && $line == *$bare_word ]] && line=${line%$bare_word}$raw
+[[ $raw != $bare_word && $line != *$raw && $line == *$bare_word ]] && line=${line%$bare_word}$raw
 
 __fish_complete_query -- "$line" || return 1
 
@@ -65,9 +66,13 @@ done
 # a word through a variable (`$HOME/Doc`, `$HOM`) or a `~user` goes in as
 # written, unquoted, as fish does
 [[ $__fish_cq == 1 ]] && replace=(-Q -U)
-(( $#spaced )) && _describe $group -t fish-completions completion spaced $replace
+# fish closes a quote the word left open before the space after a match;
+# zsh does that itself only for a quote it knows of ($compstate[quote]), not
+# one it put in $IPREFIX (`"$US`)
+[[ -n $__fish_cqt && -z $compstate[quote] && $__fish_cu != 1 ]] && close=(-S "$__fish_cqt ")
+(( $#spaced )) && _describe $group -t fish-completions completion spaced $replace $close
 (( $#bare )) && _describe $group -t fish-completions completion bare -S '' $replace
-(( $#escaped )) && _describe $group -t fish-completions completion escaped -Q ${replace:#-Q}
+(( $#escaped )) && _describe $group -t fish-completions completion escaped -Q ${replace:#-Q} $close
 (( $#escaped_bare )) && _describe $group -t fish-completions completion escaped_bare -S '' -Q ${replace:#-Q}
 # fish only lists several matches that replace the word unless their common
 # prefix is longer than it

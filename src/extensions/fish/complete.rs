@@ -181,20 +181,35 @@ fn wrap_targets(cmd: &str) -> Vec<String> {
     store().wrappers.get(cmd).cloned().unwrap_or_default()
 }
 
-/// fish's `escape` for printing: bare when nothing needs quoting, otherwise
-/// single quotes with `\'` and `\\` inside.
+/// fish common `escape_string_script` with default flags (`escape`): the
+/// backslash form of [`escape_for_insert`], but a string that needs escaping
+/// and has no control character goes in quotes instead, `"` when it holds
+/// more `'` than `"` and `$` together, else `'`; the empty string is `''`.
 fn escape(s: &str) -> String {
-    if !s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || "_-+=.,/:@%^".contains(c)) {
-        return s.to_string();
+    if s.is_empty() {
+        return "''".to_string();
     }
-    let mut out = String::from("'");
+    let plain = escape_for_insert(s);
+    let complex = s.chars().any(|c| matches!(c, '\x00'..='\x19' | '\x7f'));
+    if plain == s || complex {
+        return plain;
+    }
+    let count = |x: char| s.chars().filter(|&c| c == x).count();
+    let quote = if count('\'') > count('"') + count('$') { '"' } else { '\'' };
+    // escape_string_with_quote
+    let mut out = String::from(quote);
     for c in s.chars() {
-        if c == '\'' || c == '\\' {
-            out.push('\\');
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '$' if quote == '"' => out.push_str("\\$"),
+            c if c == quote => {
+                out.push('\\');
+                out.push(c);
+            }
+            c => out.push(c),
         }
-        out.push(c);
     }
-    out.push('\'');
+    out.push(quote);
     out
 }
 
@@ -675,6 +690,25 @@ fn is_redirect_at(s: &[char], i: usize) -> Option<(usize, TokKind)> {
         _ => return None,
     }
     Some((j, TokKind::Redirect))
+}
+
+/// fish parse_util `get_quote` at the end of the line: the quote left open in
+/// the token the cursor ends, if any (`echo "a $US` → `"`).
+fn open_quote(line: &str) -> Option<char> {
+    let s: Vec<char> = line.chars().collect();
+    let tok = tokenize(&s).into_iter().last().filter(|t| t.end == s.len())?;
+    let mut quote = None;
+    let mut i = tok.start;
+    while i < tok.end {
+        match (quote, s[i]) {
+            (_, '\\') => i += 1,
+            (None, q @ ('"' | '\'')) => quote = Some(q),
+            (Some(q), c) if c == q => quote = None,
+            _ => {}
+        }
+        i += 1;
+    }
+    quote
 }
 
 /// Tokenize `s`, accepting an unfinished last token (open quote or bracket).
@@ -2113,20 +2147,24 @@ fn find_script(kind: &str, file: &str) -> Option<(String, String)> {
 // ---------------------------------------------------------------------------
 
 fn complete_dash_c(text: &str) -> Vec<Comp> {
-    let (typed, comps) = match locate(text) {
+    let position = locate(text);
+    let is_variable = matches!(position, Position::Variable { .. });
+    // `typed`: what a match is ranked against; `lead`: what a match that keeps
+    // what was typed starts with (the `$`, `~` and anything before them too)
+    let (typed, lead, comps) = match position {
         Position::Command(prefix) => {
             let typed = unescape(&prefix);
             let comps = command_names(&typed);
-            (typed, comps)
+            (typed.clone(), typed, comps)
         }
-        Position::Nothing => (String::new(), Vec::new()),
+        Position::Nothing => (String::new(), String::new(), Vec::new()),
         Position::Variable { before, name } => {
             let comps = variable_comps(&before, &name);
-            (name, comps)
+            (name.clone(), format!("{before}{name}"), comps)
         }
         Position::User(name) => {
             let comps = user_comps(&name);
-            (name, comps)
+            (name.clone(), format!("~{name}"), comps)
         }
         Position::Argument(line) => {
             let ans = complete_argument(&line, &mut ShellEval);
@@ -2136,7 +2174,7 @@ fn complete_dash_c(text: &str) -> Vec<Comp> {
             if do_file {
                 comps.extend(param_files(&line.cur_wild, ans_cd, false));
             }
-            (line.cur, comps)
+            (line.cur.clone(), line.cur, comps)
         }
     };
     // fish `sort_and_prioritize`: only the best kind of match survives
@@ -2156,8 +2194,16 @@ fn complete_dash_c(text: &str) -> Vec<Comp> {
         (false, true) => std::cmp::Ordering::Greater,
         // fish stores a same-case prefix match as the text after what was
         // typed and any other match as the whole word, and sorts on that
-        (false, false) => wcsfilecmp(sort_key(&typed, &a.word), sort_key(&typed, &b.word)),
+        (false, false) => wcsfilecmp(sort_key(&lead, &a.word), sort_key(&lead, &b.word)),
     });
+    // builtin complete.rs: a match is printed as the token it makes, unescaped
+    // (#1127); a variable's match carries the token's quotes and backslashes
+    // (`"a b$HOME`), which come off (`a b$HOME`)
+    if is_variable {
+        for c in &mut comps {
+            c.word = unescape(&c.word);
+        }
+    }
     comps
 }
 
@@ -2514,18 +2560,21 @@ fn variable_comps(before: &str, typed: &str) -> Vec<Comp> {
         return Vec::new();
     }
     // one shell run for all the values: per variable its element count, then
-    // each element d onto its own line (a value may hold newlines)
-    let src = format!(
-        "for __fcv in {}\n    set -l __fce $$__fcv\n    count $__fce\n    string escape -- $__fce\nend",
-        names.iter().map(|n| escape(n)).collect::<Vec<_>>().join(" ")
-    );
+    // each element escaped onto its own line (a value may hold newlines).
+    // fish skips a listed name it cannot read (`_`, an unset
+    // `fish_terminal_color_theme`): `-1` marks one. No variable of its own:
+    // this runs in the shell, and one would show up in `set -n`.
+    let src: String = names
+        .iter()
+        .map(|n| format!("if set -q {n}\n    count ${n}\n    string escape -- ${n}\nelse\n    echo -1\nend\n"))
+        .collect();
     let out = fish_output(&src);
     tracing::debug!(target: "fish_complete", src = %src, out = %out.chars().take(200).collect::<String>(), "variable values");
     let mut lines = out.lines();
-    let mut values: Vec<Vec<String>> = Vec::with_capacity(names.len());
+    let mut values: Vec<Option<Vec<String>>> = Vec::with_capacity(names.len());
     for _ in &names {
-        let n: usize = lines.next().and_then(|c| c.trim().parse().ok()).unwrap_or(0);
-        values.push((0..n).filter_map(|_| lines.next().map(unescape)).collect());
+        let n: i64 = lines.next().and_then(|c| c.trim().parse().ok()).unwrap_or(0);
+        values.push((n >= 0).then(|| (0..n).filter_map(|_| lines.next().map(unescape)).collect()));
     }
     let lit = before.trim_end_matches('$');
     // fish #6288: $history is described by its newest 63 items, each through
@@ -2540,9 +2589,9 @@ fn variable_comps(before: &str, typed: &str) -> Vec<Comp> {
     names
         .iter()
         .zip(values)
-        .map(|(n, elems)| {
+        .filter_map(|(n, elems)| {
             if n == "history" {
-                return Comp {
+                return Some(Comp {
                     word: format!("{before}{n}"),
                     desc: history_desc(),
                     no_space: false,
@@ -2550,13 +2599,14 @@ fn variable_comps(before: &str, typed: &str) -> Vec<Comp> {
                     matched_as: Some(n.clone()),
                     rank_floor: 0,
                     from_separator: false,
-                };
+                });
             }
+            let elems = elems?;
             // fish `maybe_add_slash`: the token up to here, quotes and all, expanded
             let is_dir = elems.len() == 1
                 && !lit.contains(['$', '(', '\''])
                 && Path::new(&format!("{}{}", expand_tilde(&unescape(lit)), elems[0])).is_dir();
-            Comp {
+            Some(Comp {
                 word: format!("{before}{n}{}", if is_dir { "/" } else { "" }),
                 desc: format!("Variable: {}", describe_value(&elems)),
                 no_space: is_dir,
@@ -2564,7 +2614,7 @@ fn variable_comps(before: &str, typed: &str) -> Vec<Comp> {
                 matched_as: Some(n.clone()),
                 rank_floor: 0,
                 from_separator: false,
-            }
+            })
         })
         .collect()
 }
@@ -3268,7 +3318,7 @@ pub fn commandline_read(args: &[String], buffer: &str, cursor: usize) -> i32 {
 /// (descriptions), `__fish_cs` (`1` = no space after), `__fish_ce` (the
 /// word escaped as fish inserts it, set only when zsh would quote it otherwise), `__fish_cf` (`1` =
 /// files too), `__fish_ck` (`1` = keep the order), `__fish_ct` (the word as
-/// typed). Status 1 when no fish definition covers the command.
+/// typed), `__fish_cqt` (the quote the word left open). Status 1 when no fish definition covers the command.
 fn query_cmd(argv: &[String]) -> i32 {
     let text = argv.iter().skip(1).find(|a| *a != "--").cloned().unwrap_or_default();
     // (what is ranked, the whole word as typed, the completions)
@@ -3354,6 +3404,9 @@ fn query_cmd(argv: &[String]) -> i32 {
     setsparam("__fish_cq", if as_written { "1" } else { "0" });
     // the word the matches are for, as typed (compsys may hold less of it)
     setsparam("__fish_ct", &whole);
+    // the quote the word left open: fish closes it after a match that ends
+    // the word (reader.rs `completion_apply_to_command_line`)
+    setsparam("__fish_cqt", &open_quote(&text).map(String::from).unwrap_or_default());
     setaparam("__fish_cw", ans.comps.iter().map(|c| c.word.clone()).collect());
     // zsh would quote a control character `$'\n'`, which fish reads as `$` and
     // `\n`; such a match goes in escaped as fish escapes it
@@ -3613,7 +3666,8 @@ mod tests {
     #[test]
     fn erase_and_print() {
         add(&["-c", "zt4", "-s", "a", "-d", "it's"]);
-        assert_eq!(complete_print("zt4"), "complete zt4 -s a -d 'it\\'s'\n");
+        // fish 4.9: `complete zt4 -s a -d "it's"`
+        assert_eq!(complete_print("zt4"), "complete zt4 -s a -d \"it's\"\n");
         add(&["-e", "-c", "zt4"]);
         assert_eq!(complete_print("zt4"), "");
     }
@@ -3686,6 +3740,32 @@ mod tests {
         ];
         for (input, want) in cases {
             assert_eq!(escape_for_insert(input), want, "{input:?}");
+        }
+    }
+
+    /// Expected values are fish 4.9's `string escape` output.
+    #[test]
+    fn values_escape_as_fish() {
+        let cases = [
+            ("ok", "ok"),
+            ("a,b", "a,b"),
+            ("a#b", "a#b"),
+            ("", "''"),
+            ("a*b", "'a*b'"),
+            ("a b", "'a b'"),
+            ("#a", "'#a'"),
+            ("x~", "'x~'"),
+            ("a\\b", "'a\\\\b'"),
+            ("a$b", "'a$b'"),
+            ("a\"b", "'a\"b'"),
+            ("a'b", "\"a'b\""),
+            ("it''s", "\"it''s\""),
+            ("a'$b", "'a\\'$b'"),
+            ("it's \"x\"", "'it\\'s \"x\"'"),
+            ("\n \t", "\\n\\ \\t"),
+        ];
+        for (input, want) in cases {
+            assert_eq!(escape(input), want, "{input:?}");
         }
     }
 }

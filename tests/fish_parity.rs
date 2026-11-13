@@ -292,6 +292,12 @@ complete -C 'echo $__fish_sysconf'
 complete -C 'functions __fish_print_hostn'
 complete -C 'set -e __fish_sysc'
 complete -C 'set LANG C'
+complete -C 'echo "a b$HOM'
+complete -C 'echo a\ $HOM'
+set -g zqva 1
+set -g zqVb 2
+complete -C 'echo $zqv'
+complete -C 'echo $__fish_ls'
 function zqp; end
 complete -c zqp -f -xa plain
 complete -p '*zqp*' -f -xa wild
