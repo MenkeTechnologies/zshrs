@@ -2,7 +2,7 @@
 //! zsh: `set`, `read`, `alias` and `abbr`. Each is rewritten to the zsh
 //! construct with the same effect on the caller's scope.
 
-use super::emit::{quote_lit, squote, Emitter};
+use super::emit::{fish_escape, quote_lit, squote, Emitter};
 use super::parse::{Part, Word};
 
 /// Options of `set`, after the combined short flags (`-gx`) are split.
@@ -157,6 +157,10 @@ impl Emitter {
         }
         let call = if f.erase { "__fish_uvar_erase" } else { "__fish_uvar_save" };
         let saves: Vec<String> = names.iter().map(|n| format!("{call} {n}")).collect();
+        if f.erase {
+            // (the erase's own status, 4 for a variable that was not set, comes last)
+            return format!("{}; {text}", saves.join("; "));
+        }
         format!("{text}; {}", saves.join("; "))
     }
 
@@ -207,7 +211,11 @@ impl Emitter {
                 .filter_map(|w| self.set_target(w))
                 .map(|(n, i)| match i {
                     Some(i) => format!("{}[{}]=()", self.zn(&n), Self::subscript(&i)),
-                    None => format!("unset {}", self.zn(&n)),
+                    // erasing a variable that is not set is status 4
+                    None => {
+                        let z = self.zn(&n);
+                        format!("if (( ${{+{z}}} )); then unset {z}; else (exit 4); fi")
+                    }
                 })
                 .collect::<Vec<_>>()
                 .join("; ");
@@ -405,18 +413,31 @@ impl Emitter {
             .filter_map(Word::text)
             .filter(|t| !t.starts_with('-'))
             .collect();
-        let (name, body) = match texts.as_slice() {
+        let (name, body, eq) = match texts.as_slice() {
             [one] => match one.split_once('=') {
-                Some((n, b)) => (n.to_string(), b.to_string()),
-                None => return "alias".into(),
+                Some((n, b)) => (n.to_string(), b.to_string(), true),
+                None => return "__fish_alias_list".into(),
             },
-            [n, rest @ ..] => (n.clone(), rest.join(" ")),
-            [] => return "alias".into(),
+            [n, rest @ ..] => (n.clone(), rest.join(" "), false),
+            [] => return "__fish_alias_list".into(),
         };
         let translated = match super::parse::parse(&body) {
             Ok(script) => self.script(&script),
-            Err(_) => body,
+            Err(_) => body.clone(),
         };
-        format!("function {} {{ {translated} \"$@\"; }}", quote_lit(&name))
+        // what `functions NAME` / `type NAME` print, and what `alias` lists
+        let desc = if eq { format!("alias {name}={body}") } else { format!("alias {name} {body}") };
+        let shown = format!(
+            "function {} --wraps={} --description {}\n    {body} $argv\nend",
+            fish_escape(&name),
+            fish_escape(&body),
+            fish_escape(&desc)
+        );
+        format!(
+            "function {q} {{ {translated} \"$@\"; }}\n__fish_aliases[{q}]={}; __fish_fnsrc[{q}]={}; unset '__fish_fnline[{q}]' '__fish_fnfile[{q}]'",
+            squote(&body),
+            squote(&shown),
+            q = quote_lit(&name)
+        )
     }
 }

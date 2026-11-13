@@ -830,6 +830,16 @@ impl Parser {
                         stars.push('*');
                         self.i += 1;
                     }
+                    // fish's `**` recurses wherever it stands; zsh's only as a `**/` directory
+                    // component, so a bare `**` there becomes `**/*`
+                    let component_start = match parts.last() {
+                        None => true,
+                        Some(Part::Lit(t) | Part::Raw(t)) => t.ends_with('/'),
+                        _ => false,
+                    };
+                    if stars.len() == 2 && component_start && self.peek() != Some('/') {
+                        stars.push_str("/*");
+                    }
                     parts.push(Part::Raw(stars));
                 }
                 '~' if self.i == start => {

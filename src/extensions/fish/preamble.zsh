@@ -156,7 +156,7 @@ __fish_set_show() {
   for (( i = 1; i <= ${#vals}; i++ )); do print -r -- "\$${n}[$i]: |${vals[i]}|"; done
   return 0
 }
-typeset -gA __fish_abbrs __fish_fnsrc __fish_fnline __fish_fnfile
+typeset -gA __fish_abbrs __fish_fnsrc __fish_fnline __fish_fnfile __fish_aliases
 # fish variable name -> zsh parameter, for names only known at run time (`$$name`)
 typeset -gA __fish_zmap=(PATH path CDPATH cdpath MANPATH manpath hostname HOST)
 for __n in path cdpath fpath manpath mailpath module_path signals options commands functions aliases parameters history dirstack widgets keymaps modules nameddirs userdirs galiases saliases funcstack jobtexts builtins reswords status prompt psvar watch; do
@@ -270,7 +270,7 @@ type() {
              if [[ -n $t ]]; then print -r -- function
              elif [[ -n ${__fish_fnsrc[$n]+x} ]]; then
                print -r -- "$n is a function with definition"
-               print -r -- "# Defined in ${__fish_fnfile[$n]} @ line ${__fish_fnline[$n]}"
+               __fish_defined_in $n
                print -r -- ${__fish_fnsrc[$n]}
              else print -r -- "$n is a function"; fi ;;
            builtin) [[ -n $t ]] && print -r -- builtin || print -r -- "$n is a builtin" ;;
@@ -305,7 +305,7 @@ functions() {
     (( $+functions[$a] )) || { print -u2 -r -- "functions: Unknown function '$a'"; return 1 }
     if [[ -n ${__fish_fnsrc[$a]+x} ]]; then
       if [[ -n $details ]]; then print -r -- ${__fish_fnfile[$a]}; continue; fi
-      print -r -- "# Defined in ${__fish_fnfile[$a]} @ line ${__fish_fnline[$a]}"
+      __fish_defined_in $a
       print -r -- ${__fish_fnsrc[$a]}
     else
       builtin functions -- $a
@@ -421,6 +421,17 @@ set_color() {
   local -A fg=(black 30 red 31 green 32 yellow 33 blue 34 magenta 35 cyan 36 white 37 brblack 90 brred 91 brgreen 92 bryellow 93 brblue 94 brmagenta 95 brcyan 96 brwhite 97 brgrey 90 grey 90)
   local code
   while (( $# )); do
+__fish_defined_in() {
+  if [[ -n ${__fish_fnline[$1]-} ]]; then
+    print -r -- "# Defined in ${__fish_fnfile[$1]} @ line ${__fish_fnline[$1]}"
+  else
+    print -r -- '# Defined via `source`'
+  fi
+}
+__fish_alias_list() {
+  local k
+  for k in ${(ko)__fish_aliases}; do print -r -- "alias $k ${(q-)__fish_aliases[$k]}"; done
+}
     a=$1; shift
     case $a in
       normal) print -rn -- "${esc}[m"; return 0 ;;
