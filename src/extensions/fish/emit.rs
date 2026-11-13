@@ -310,7 +310,8 @@ impl Emitter {
                 // (a builtin or a plain utility is no function of the kind, and the extra
                 // `if` would cost `$pipestatus` its list)
                 words.first().and_then(Word::bare).filter(|n| !PLAIN_PIPE_HEADS.contains(n)),
-                redirs.is_empty(),
+                // (a redirection of stderr alone leaves stdout for the file)
+                redirs.iter().all(|r| r.fd == Some(2)),
             ) {
                 let head = self.cmd(&j.cmds[0].0);
                 let mut rest = String::new();

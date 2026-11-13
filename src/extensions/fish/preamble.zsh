@@ -373,7 +373,19 @@ typeset -gA __fish_erased
 # defines yet is autoloaded first, as fish would
 __fish_inproc() {
   if (( ! ${+functions[$1]} && ! ${+commands[$1]} && ! ${+builtins[$1]} )); then __fish_autoload_ok $1 2>/dev/null; fi
-  (( ${+__fish_gset[$1]} ))
+  __fish_gsets $1
+}
+# does function $1 set a global, itself or through a function it calls?
+typeset -gA __fish_gtrans
+__fish_gsets() {
+  local n=$1 w
+  (( ${+__fish_gset[$n]} || ${+__fish_gtrans[$n]} )) && return 0
+  (( ${2:-0} > 4 )) && return 1
+  for w in ${=${__fish_fnsrc[$n]//[^A-Za-z0-9_]/ }}; do
+    [[ $w == $n ]] && continue
+    (( ${+functions[$w]} )) && __fish_gsets $w $(( ${2:-0} + 1 )) && { __fish_gtrans[$n]=1; return 0 }
+  done
+  return 1
 }
 __fish_autoload_ok() { [[ -z ${__fish_erased[$1]+x} ]] && __fish_autoload "$1" }
 # fish's `which` finds files only; `umask` prints four octal digits
