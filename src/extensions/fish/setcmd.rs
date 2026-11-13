@@ -19,6 +19,8 @@ struct SetFlags {
     prepend: bool,
     list: bool,
     show: bool,
+    /// `--path`: the values are colon-separated lists to split.
+    path: bool,
 }
 
 impl Emitter {
@@ -47,6 +49,8 @@ impl Emitter {
                 "--prepend" => Some('p'),
                 "--show" => Some('S'),
                 "--names" => Some('n'),
+                "--path" => Some('P'),
+                "--unpath" => Some('N'),
                 _ => None,
             };
             let letters: Vec<char> = if let Some(l) = opts.strip_prefix('-') {
@@ -76,6 +80,7 @@ impl Emitter {
                         f.show = true;
                     }
                     'n' => f.list = true,
+                    'P' => f.path = true,
                     _ => {}
                 }
             }
@@ -167,6 +172,19 @@ impl Emitter {
             let all: Vec<String> = args.iter().map(|w| self.word_list(w)).collect();
             return format!("__fish_set_dynamic {}", all.join(" "));
         };
+        if f.path && idx.is_none() && operands.len() > 1 {
+            // path variables hold the pieces of their colon-separated value
+            let mut split: Vec<Word> = args[..at].iter().filter(|w| w.bare() != Some("--path")).cloned().collect();
+            split.push(operands[0].clone());
+            for w in &operands[1..] {
+                let raw = match w.text() {
+                    Some(t) => format!("${{(@s.:.)${{:-{}}}}}", squote(&t)),
+                    None => format!("${{(@s.:.)${{(j.:.){}}}}}", self.word_list(w)),
+                };
+                split.push(Word { parts: vec![Part::Raw(raw)] });
+            }
+            return self.set_inner(&split);
+        }
         let mut z = self.zn(&name);
         let values = &operands[1..];
 
@@ -305,6 +323,7 @@ impl Emitter {
         let mut prompt = None;
         let mut as_list = false;
         let mut by_line = false;
+        let mut delim: Option<String> = None;
         let mut names: Vec<String> = Vec::new();
         let mut i = 0;
         while i < args.len() {
@@ -325,13 +344,11 @@ impl Emitter {
                 "-P" | "--prompt-str" => prompt = arg(self),
                 "-n" | "--nchars" => {
                     if let Some(n) = arg(self) {
-                        flags.push_str(&format!(" -k {n}"));
+                        flags.push_str(&format!(" -u 0 -k {n}"));
                     }
                 }
                 "-d" | "--delimiter" => {
-                    if let Some(d) = arg(self) {
-                        flags.push_str(&format!(" -d {d}"));
-                    }
+                    delim = arg(self).filter(|d| d != "''");
                 }
                 "-p" | "--prompt" | "-c" | "--command" | "-R" | "--right-prompt" | "-S" | "--shell" => {
                     let _ = arg(self);
@@ -369,10 +386,15 @@ impl Emitter {
         // (a group, so the declarations travel with the read when it is a pipeline's last stage)
         let group = |text: String| if pre.is_empty() { text } else { format!("{{ {text}; }}") };
         if as_list {
-            return group(format!("{pre}builtin read {flags}A {}", targets.join(" ")));
+            let ifs = delim.map_or(String::new(), |d| format!("IFS={d} "));
+            return group(format!("{pre}{ifs}builtin read {flags}A {}", targets.join(" ")));
         }
         // one variable takes the whole line, as fish does; several split on IFS
-        let ifs = if names.len() == 1 { "IFS= " } else { "" };
+        let ifs = match (&delim, names.len()) {
+            (_, 1) => "IFS= ".to_string(),
+            (Some(d), _) => format!("IFS={d} "),
+            _ => String::new(),
+        };
         group(format!("{pre}{ifs}builtin read {flags} {}", targets.join(" ")))
     }
 

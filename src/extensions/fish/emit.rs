@@ -416,6 +416,7 @@ impl Emitter {
         let mut argnames: Vec<String> = Vec::new();
         let mut events: Vec<String> = Vec::new();
         let mut signals: Vec<String> = Vec::new();
+        let mut watched: Vec<String> = Vec::new();
         let mut no_shadow = false;
         let mut i = 0;
         while i < header.len() {
@@ -436,7 +437,11 @@ impl Emitter {
                     signals.extend(header.get(i).and_then(Word::text));
                     i += 1;
                 }
-                "-d" | "--description" | "-w" | "--wraps" | "-v" | "--on-variable" | "-j"
+                "-v" | "--on-variable" => {
+                    watched.extend(header.get(i).and_then(Word::text));
+                    i += 1;
+                }
+                "-d" | "--description" | "-w" | "--wraps" | "-j"
                 | "--on-job-exit" | "-p" | "--on-process-exit" | "-V" | "--inherit-variable" => i += 1,
                 "-S" | "--no-scope-shadowing" => no_shadow = true,
                 s if s.starts_with('-') => {}
@@ -466,12 +471,9 @@ impl Emitter {
         let mut out = format!("function {} {{\n{inner}\n}}", quote_lit(&name));
         // what `functions NAME`, `type` and `funcsave` show: the definition as written, with
         // the header line in fish's canonical spelling
-        let mut head = String::from("function");
-        for w in header {
-            head.push(' ');
-            head.push_str(&fish_escape(&w.text().unwrap_or_default()));
-        }
+        let head = canonical_header(&header.iter().map(|w| w.text().unwrap_or_default()).collect::<Vec<_>>());
         let shown = match src.split_once('\n') {
+            Some((_, rest)) if rest.trim() == "end" => format!("{head}\n\nend"),
             Some((_, rest)) => format!("{head}\n{rest}"),
             None => src.to_string(),
         };
@@ -482,6 +484,9 @@ impl Emitter {
         ));
         for e in &events {
             out.push_str(&format!("\n__fish_on_event {} {}", squote(e), quote_lit(&name)));
+        }
+        for v in &watched {
+            out.push_str(&format!("\n__fish_on_variable {} {}", squote(v), quote_lit(&name)));
         }
         for sig in &signals {
             out.push_str(&format!("\ntrap {} {}", quote_lit(&name), quote_lit(sig)));
@@ -716,7 +721,9 @@ impl Emitter {
     fn dynamic_slice(&mut self, z: &str, a: &str, b: &str) -> String {
         self.hoist_id += 1;
         let v = format!("__fc{}", self.hoist_id);
-        self.hoists.push(format!("__fish_slice {v} {z} {a} {b}"));
+        // `argv` is the positional parameters, which the helper cannot reach by name
+        let src = if z == "argv" { format!("- {a} {b} \"$@\"") } else { format!("{z} {a} {b}") };
+        self.hoists.push(format!("__fish_slice {v} {src}"));
         v
     }
 
@@ -1140,4 +1147,84 @@ fn deref_expr(z: &str, flags: &str) -> String {
     let n = format!("${{(j: :){z}}}");
     let fx = format!("${{parameters[__fx_{n}]:+__fx_{n}}}");
     format!("${{({flags})${{__fish_zmap[{n}]:-${{{fx}:-{n}}}}}}}")
+}
+
+/// The `function NAME …` line as fish prints a definition back: the name, then the options
+/// in fish's fixed order and long spelling.
+fn canonical_header(words: &[String]) -> String {
+    let (mut wraps, mut desc, mut noshadow) = (Vec::new(), None, false);
+    let (mut events, mut vars, mut sigs, mut jobs, mut procs, mut argn) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let mut name = None;
+    let mut i = 0;
+    while i < words.len() {
+        let w = words[i].as_str();
+        i += 1;
+        let (opt, inline) = match w.split_once('=') {
+            Some((o, v)) if o.starts_with("--") => (o, Some(v.to_string())),
+            _ => (w, None),
+        };
+        let mut value = |i: &mut usize| {
+            inline.clone().or_else(|| {
+                let v = words.get(*i).cloned();
+                *i += 1;
+                v
+            })
+        };
+        match opt {
+            "-d" | "--description" => desc = value(&mut i),
+            "-w" | "--wraps" => wraps.extend(value(&mut i)),
+            "-e" | "--on-event" => events.extend(value(&mut i)),
+            "-v" | "--on-variable" => vars.extend(value(&mut i)),
+            "-j" | "--on-job-exit" => jobs.extend(value(&mut i)),
+            "-p" | "--on-process-exit" => procs.extend(value(&mut i)),
+            "-s" | "--on-signal" => sigs.extend(value(&mut i).map(|v| {
+                if v.chars().all(|c| c.is_ascii_alphabetic()) && !v.starts_with("SIG") {
+                    format!("SIG{v}")
+                } else {
+                    v
+                }
+            })),
+            "-V" | "--inherit-variable" => {
+                value(&mut i);
+            }
+            "-S" | "--no-scope-shadowing" => noshadow = true,
+            "-a" | "--argument-names" => {
+                while i < words.len() && !words[i].starts_with('-') {
+                    argn.push(words[i].clone());
+                    i += 1;
+                }
+            }
+            _ if name.is_none() => name = Some(w.to_string()),
+            _ => {}
+        }
+    }
+    let mut head = String::from("function");
+    if let Some(n) = &name {
+        head.push(' ');
+        head.push_str(&fish_escape(n));
+    }
+    let opt = |head: &mut String, flag: &str, v: &str| head.push_str(&format!(" {flag}{}", fish_escape(v)));
+    for v in &wraps {
+        opt(&mut head, "--wraps=", v);
+    }
+    if let Some(d) = &desc {
+        opt(&mut head, "--description ", d);
+    }
+    if noshadow {
+        head.push_str(" --no-scope-shadowing");
+    }
+    for (flag, list) in [("--on-event ", &events), ("--on-variable ", &vars), ("--on-signal ", &sigs), ("--on-job-exit ", &jobs), ("--on-process-exit ", &procs)] {
+        for v in list {
+            opt(&mut head, flag, v);
+        }
+    }
+    if !argn.is_empty() {
+        head.push_str(" --argument-names");
+        for a in &argn {
+            head.push(' ');
+            head.push_str(&fish_escape(a));
+        }
+    }
+    head
 }

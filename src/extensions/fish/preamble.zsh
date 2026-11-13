@@ -36,7 +36,8 @@ __fish_command_query() {
   return $r
 }
 __fish_slice() {
-  local -a src=("${(@P)2}") r
+  local -a src r
+  if [[ $2 == - ]]; then src=("${@:5}"); else src=("${(@P)2}"); fi
   local n=$#src a=$3 b=$4 i
   (( a < 0 )) && a=$(( n + a + 1 ))
   (( b < 0 )) && b=$(( n + b + 1 ))
@@ -657,9 +658,18 @@ emit() {
   shift
   for f in ${=__fish_events[$ev]}; do $f "$@"; done
   return 0
+# `--on-variable NAME`: only PWD can be watched (it changes through chpwd)
+__fish_on_variable() {
+  __fish_events[var:$1]+="${__fish_events[var:$1]:+ }$2"
+  [[ $1 == PWD ]] && (( ${chpwd_functions[(I)__fish_pwd_event]} )) || [[ $1 != PWD ]] || chpwd_functions+=(__fish_pwd_event)
+}
+__fish_pwd_event() {
+  local f
+  for f in ${=__fish_events[var:PWD]}; do $f VARIABLE SET PWD; done
+}
 }
 __fish_argparse() {
-  local name=argparse ign= stop= mu= amp= consumed= skipshort= spec s sfx short long id a o val k i c us=$'\x1f'
+  local name=${${funcstack[2,-1]:#(argparse|__fish_argparse)}[1]:-argparse} ign= stop= mu= amp= consumed= skipshort= spec s sfx short long id a o val k i c us=$'\x1f'
   local -a vals opts=()
   local -A kind=() alias=() acc=() noopt=() valid=()
   local -a specs=() rest=() ids=()
@@ -710,7 +720,7 @@ __fish_argparse() {
       if [[ -z $k ]]; then
         [[ -n $mu ]] && { opts+=($a); continue }
         [[ -n $ign ]] && { rest+=($a); continue }
-        print -u2 -r -- "$name: Unknown option '$o'"; return 2
+        print -u2 -r -- "$name: $o: unknown option"; return 2
       fi
       if [[ -n $kind[$k] ]]; then
         if [[ $a != *=* ]]; then
@@ -735,7 +745,7 @@ __fish_argparse() {
         if [[ -z $k ]]; then
           [[ -n $mu ]] && { opts+=($a); break }
           [[ -n $ign ]] && { rest+=($a); break }
-          print -u2 -r -- "$name: Unknown option '-$c'"; return 2
+          print -u2 -r -- "$name: -$c: unknown option"; return 2
         fi
         if [[ -n $kind[$k] ]]; then
           val=${a[i+1,-1]} consumed=
