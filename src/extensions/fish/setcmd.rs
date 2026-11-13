@@ -2,7 +2,7 @@
 //! zsh: `set`, `read`, `alias` and `abbr`. Each is rewritten to the zsh
 //! construct with the same effect on the caller's scope.
 
-use super::emit::{fish_escape, quote_lit, squote, Emitter};
+use super::emit::{fish_escape, quote_lit, squote, zname, Emitter};
 use super::parse::{Part, Word};
 
 /// Options of `set`, after the combined short flags (`-gx`) are split.
@@ -49,6 +49,7 @@ impl Emitter {
                 "--prepend" => Some('p'),
                 "--show" => Some('S'),
                 "--names" => Some('n'),
+                "--long" => Some('L'),
                 "--path" => Some('P'),
                 "--unpath" => Some('N'),
                 _ => None,
@@ -79,7 +80,7 @@ impl Emitter {
                         f.list = true;
                         f.show = true;
                     }
-                    'n' => f.list = true,
+                    'n' | 'L' => f.list = true,
                     'P' => f.path = true,
                     _ => {}
                 }
@@ -252,6 +253,13 @@ impl Emitter {
                     let zn = self.zn(&n);
                     match (n.as_str(), i) {
                         ("argv", None) => "1".to_string(),
+                        // fish's own variables, which no zsh parameter stands for (`_` is not set)
+                        ("_", None) => "0".to_string(),
+                        (
+                            "status" | "status_generation" | "fish_killring" | "fish_bind_mode" | "fish_private_mode" | "history"
+                            | "pipestatus" | "hostname" | "fish_pid" | "COLUMNS" | "LINES" | "EUID" | "IFS",
+                            None,
+                        ) if zn == zname(&n) => "1".to_string(),
                         (_, None) => format!("${{+{zn}}}"),
                         (_, Some(i)) => format!("${{#{zn}}} >= {}", i.trim_start_matches('-')),
                     }

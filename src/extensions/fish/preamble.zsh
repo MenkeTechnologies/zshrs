@@ -68,17 +68,18 @@ status() {
 }
 __fish_set_list() {
   # locals are `__`-prefixed: they show up in $parameters while this runs and are skipped
-  local __sc= __nm= __ex= __n __k __line __v __t
+  local __sc= __nm= __ex= __lg= __n __k __line __v __t
   local -a __vals __out
   for __k; do
     case $__k in
       --global|--universal) __sc=g ;;
       --local) __sc=l ;;
       --names) __nm=1 ;;
+      --long) __lg=1 ;;
       --export) __ex=1 ;;
       --*) ;;
       -*) for __v in ${(s::)__k#-}; do
-            case $__v in g|U) __sc=g ;; l) __sc=l ;; n) __nm=1 ;; x) __ex=1 ;; esac
+            case $__v in g|U) __sc=g ;; l) __sc=l ;; n) __nm=1 ;; L) __lg=1 ;; x) __ex=1 ;; esac
           done ;;
     esac
   done
@@ -114,6 +115,10 @@ __fish_set_list() {
     else
       for __v in "${__vals[@]}"; do __line+=" '${__v//\'/\\\'}'"; done
     fi
+    # `set` shortens a long value to 60 characters and an ellipsis; `set -L` does not
+    if [[ -z $__lg ]] && (( ${#__line} - ${#__k} - 1 > 64 )); then
+      __line="$__k ${__line[$(( ${#__k} + 2 )),$(( ${#__k} + 61 ))]}…"
+    fi
     __out+=($__line)
   done
   if [[ $__sc != l ]]; then
@@ -124,7 +129,7 @@ __fish_set_list() {
       __fish_help_dir ${__fish_help_dir[1]} __fish_man_dir ${__fish_man_dir[1]}
       __fish_sysconf_dir ${__fish_sysconf_dir[1]} __fish_user_data_dir ${__fish_user_data_dir[1]}
       argv '' fish_bind_mode default fish_history '' fish_killring '' fish_pid $$
-      fish_private_mode '' fish_terminal_color_theme '' history '' hostname ${HOST%%.*}
+      fish_private_mode 1 fish_terminal_color_theme '' history '' hostname ${HOST%%.*}
       pipestatus 0 status 0 status_generation 0 COLUMNS ${COLUMNS:-80} LINES ${LINES:-24}
       EUID $EUID IFS ' \t\n'
     )
@@ -176,6 +181,11 @@ for __n in path cdpath fpath manpath mailpath module_path signals options comman
   [[ -n ${__fish_zmap[$__n]+x} ]] || __fish_zmap[$__n]=_fish_v_$__n
 done
 unset __n
+# variables fish always has that no zsh parameter stands for: readable through `$$name`
+typeset -ga __fish_virt_status_generation=(0) __fish_virt_fish_killring=() __fish_virt_history=() __fish_virt_fish_bind_mode=(default) __fish_virt_fish_private_mode=(1)
+__fish_zmap+=(status '?' status_generation __fish_virt_status_generation fish_killring __fish_virt_fish_killring history __fish_virt_history fish_bind_mode __fish_virt_fish_bind_mode fish_private_mode __fish_virt_fish_private_mode)
+(( COLUMNS )) || COLUMNS=80
+(( LINES )) || LINES=24
 typeset -ga __fish_abbr_order
 __fish_abbr() {
   local op=show pos=command a name exp
