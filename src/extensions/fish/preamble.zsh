@@ -202,7 +202,7 @@ __fish_set_show() {
 typeset -gA __fish_abbrs __fish_fnsrc __fish_fnline __fish_fnfile __fish_aliases
 # fish variable name -> zsh parameter, for names only known at run time (`$$name`)
 typeset -gA __fish_zmap=(PATH path CDPATH cdpath MANPATH manpath hostname HOST)
-for __n in path cdpath fpath manpath mailpath module_path signals options commands functions aliases parameters history dirstack widgets keymaps modules nameddirs userdirs galiases saliases funcstack jobtexts builtins reswords status prompt psvar watch; do
+for __n in path cdpath fpath manpath mailpath module_path signals options commands functions aliases parameters history widgets keymaps modules nameddirs userdirs galiases saliases funcstack jobtexts builtins reswords status prompt psvar watch; do
   [[ -n ${__fish_zmap[$__n]+x} ]] || __fish_zmap[$__n]=_fish_v_$__n
 done
 unset __n
@@ -300,7 +300,7 @@ __fish_set_dynamic() {
   [[ -n $n ]] || return 1
   case $n in
     PATH) n=path ;; CDPATH) n=cdpath ;; MANPATH) n=manpath ;; hostname) n=HOST ;;
-    path|cdpath|fpath|manpath|mailpath|module_path|signals|options|commands|functions|aliases|parameters|history|dirstack|widgets|keymaps|modules|nameddirs|userdirs|galiases|saliases|funcstack|jobtexts|builtins|reswords|status|prompt|psvar|watch) n=_fish_v_$n ;;
+    path|cdpath|fpath|manpath|mailpath|module_path|signals|options|commands|functions|aliases|parameters|history|widgets|keymaps|modules|nameddirs|userdirs|galiases|saliases|funcstack|jobtexts|builtins|reswords|status|prompt|psvar|watch) n=_fish_v_$n ;;
   esac
   [[ $n == *PATH ]] && sep=:
   if [[ -n $query ]]; then (( ${+parameters[$n]} )); return; fi
@@ -685,14 +685,20 @@ dirprev=()
 dirnext=()
 __fish_chpwd() {
   [[ -n ${__fish_nav-} ]] && return
+  # a cd that stays where it was leaves no history
+  [[ $OLDPWD == $PWD ]] && return
   dirprev+=($OLDPWD)
   dirnext=()
   (( ${#dirprev} > 25 )) && dirprev[1]=()
 }
 chpwd_functions+=(__fish_chpwd)
+# `cd -` walks back through the directory history, as `prevd` does
+cd() {
+  if [[ $# == 1 && $1 == - ]]; then prevd; else builtin cd "$@"; fi
+}
 prevd() {
-  local n=1 d
-  [[ ${1-} == -l ]] && shift
+  local n=1 d list=
+  [[ ${1-} == -l || ${1-} == --list ]] && { list=1; shift }
   [[ ${1-} == <-> ]] && n=$1
   while (( n-- > 0 )); do
     (( ${#dirprev} )) || { print -u2 -r -- 'prevd: Hit end of history'; return 1 }
@@ -703,10 +709,12 @@ prevd() {
     builtin cd -- $d
     __fish_nav=
   done
+  [[ -n $list ]] && dirh
+  return 0
 }
 nextd() {
-  local n=1 d
-  [[ ${1-} == -l ]] && shift
+  local n=1 d list=
+  [[ ${1-} == -l || ${1-} == --list ]] && { list=1; shift }
   [[ ${1-} == <-> ]] && n=$1
   while (( n-- > 0 )); do
     (( ${#dirnext} )) || { print -u2 -r -- 'nextd: Hit end of history'; return 1 }
@@ -717,6 +725,8 @@ nextd() {
     builtin cd -- $d
     __fish_nav=
   done
+  [[ -n $list ]] && dirh
+  return 0
 }
 dirh() {
   local i

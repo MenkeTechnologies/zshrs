@@ -23,7 +23,7 @@ use super::parse::{Cmd, Conn, DPart, Job, Part, Pipe, Redir, Script, Stmt, VarRe
 /// `for path in $list` must not rewrite `$PATH`, so these live under a prefix.
 const ZSH_SPECIAL_LOWER: &[&str] = &[
     "path", "cdpath", "fpath", "manpath", "mailpath", "module_path", "signals", "options",
-    "commands", "functions", "aliases", "parameters", "history", "dirstack", "widgets",
+    "commands", "functions", "aliases", "parameters", "history", "widgets",
     "keymaps", "modules", "nameddirs", "userdirs", "galiases", "saliases", "funcstack",
     "funcfiletrace", "funcsourcetrace", "functrace", "jobtexts", "jobstates", "jobdirs",
     "builtins", "reswords", "patchars", "histchars", "termcap", "terminfo", "watch",
