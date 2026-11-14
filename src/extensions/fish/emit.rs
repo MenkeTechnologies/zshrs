@@ -61,6 +61,9 @@ pub struct Emitter {
     pub(super) watched_vars: std::collections::HashSet<String>,
     /// Lines a guarded declaration needs ahead of the whole `and`/`or` chain.
     pub(super) pre_chain: Vec<String>,
+    /// The command about to be emitted reads a pipe: it is not the first of its job. fish
+    /// gives `string` its stdin only then or under a stdin redirection of its own.
+    piped_in: bool,
 }
 
 /// One lexical scope. fish scopes `set -l` to the enclosing block (`if`, `while`,
@@ -294,6 +297,7 @@ impl Emitter {
             out.push_str("! ");
         }
         for (n, (cmd, pipe)) in j.cmds.iter().enumerate() {
+            self.piped_in = n > 0;
             out.push_str(&self.cmd(cmd));
             if n + 1 < j.cmds.len() {
                 out.push_str(match pipe {
@@ -313,9 +317,11 @@ impl Emitter {
                 // (a redirection of stderr alone leaves stdout for the file)
                 redirs.iter().all(|r| r.fd == Some(2)),
             ) {
+                self.piped_in = false;
                 let head = self.cmd(&j.cmds[0].0);
                 let mut rest = String::new();
                 for (n, (cmd, pipe)) in j.cmds.iter().enumerate().skip(1) {
+                    self.piped_in = true;
                     rest.push_str(&self.cmd(cmd));
                     if n + 1 < j.cmds.len() {
                         rest.push_str(match pipe {
@@ -350,6 +356,8 @@ impl Emitter {
     /// variable, so an output of no lines gives no words while blank lines inside the
     /// output stay words (`${(f)…}` alone can do only one of the two).
     fn cmd(&mut self, c: &Cmd) -> String {
+        // (a compound command takes the pipe itself: the commands inside it do not)
+        self.piped_in = std::mem::take(&mut self.piped_in) && matches!(c, Cmd::Simple { .. });
         let outer = std::mem::take(&mut self.hoists);
         let text = self.cmd_inner(c);
         let mine = std::mem::replace(&mut self.hoists, outer);
@@ -621,6 +629,7 @@ impl Emitter {
     }
 
     fn simple(&mut self, words: &[Word], redirs: &[Redir]) -> String {
+        let piped_in = std::mem::take(&mut self.piped_in);
         // `$list[0]`: fish refuses to run the command (status 121)
         if words.iter().any(Self::zero_index) {
             return "{ print -u2 -r -- 'fish: array indices start at 1, not 0.'; (exit 121); }".to_string();
@@ -645,6 +654,7 @@ impl Emitter {
                     self.set_cmd(&[lit("-lx"), lit(&name), value])
                 })
                 .collect();
+            self.piped_in = piped_in;
             let text = self.simple(&words[n..], redirs);
             self.scopes.pop();
             self.fn_depth -= 1;
@@ -750,6 +760,18 @@ impl Emitter {
             if let Some(map) = self.capture_map(&rest[1..]) {
                 out = format!("__fish_capmap={} {out}", quote_lit(&map));
             }
+        }
+        // fish's `string` reads stdin only when its own stdin is redirected: it is not
+        // first in its pipeline, or it has a `<` (other than a close) of its own
+        // (exec.rs `get_performer_for_builtin`, `stdin_is_directly_redirected`)
+        let is_string = name.as_deref() == Some("string")
+            || (name.as_deref() == Some("builtin") && rest.get(1).and_then(Word::bare) == Some("string"));
+        let stdin_redirected = redirs.iter().any(|r| {
+            let reads = r.fd == Some(0) || (r.fd.is_none() && r.op.starts_with('<'));
+            reads && !(r.op.ends_with('&') && r.target.bare() == Some("-"))
+        });
+        if is_string && (piped_in || stdin_redirected) {
+            out = format!("__fish_strin=1 {out}");
         }
         if !prefix.is_empty() {
             out = format!("{} {out}", prefix.join(" "));

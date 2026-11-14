@@ -190,6 +190,23 @@ thread_local! {
     static STDIN_SHAPE: std::cell::Cell<Option<(usize, bool)>> = const { std::cell::Cell::new(None) };
 }
 
+thread_local! {
+    /// `string` was told its stdin is redirected (`__fish_strin=1`, set by the translator
+    /// for a `string` that is not first in its pipeline or has a `<` of its own).
+    static STRING_STDIN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The strings a `string` subcommand works on. fish reads them from stdin when the
+/// command's stdin is redirected and from the operands otherwise, never both and
+/// regardless of whether there are operands (builtins/shared/misc.rs `Arguments::new`).
+fn string_inputs(operands: &[String]) -> Vec<String> {
+    if STRING_STDIN.with(std::cell::Cell::get) {
+        inputs(&[], false)
+    } else {
+        operands.to_vec()
+    }
+}
+
 struct Out {
     quiet: bool,
     buf: Vec<u8>,
@@ -263,15 +280,15 @@ fn string(args: &[String]) -> i32 {
     // option letters differ per subcommand (`-r` is regex for match, right for pad)
     let (valued, long): (&str, Vec<(&str, char)>) = match sub.as_str() {
         "sub" => ("sel", vec![("start", 's'), ("end", 'e'), ("length", 'l'), ("quiet", 'q')]),
-        "pad" => ("wc", vec![("width", 'w'), ("char", 'c'), ("right", 'r'), ("quiet", 'q')]),
+        "pad" => ("wc", vec![("width", 'w'), ("char", 'c'), ("right", 'r'), ("quiet", 'q'), ("chars", 'c'), ("center", 'C')]),
         "trim" => ("c", vec![("chars", 'c'), ("left", 'l'), ("right", 'r'), ("quiet", 'q')]),
         "repeat" => ("nm", vec![("count", 'n'), ("max", 'm'), ("quiet", 'q'), ("no-newline", 'N')]),
-        "split" => ("mf", vec![("max", 'm'), ("fields", 'f'), ("right", 'r'), ("no-empty", 'n'), ("quiet", 'q')]),
-        "shorten" => ("mc", vec![("max", 'm'), ("char", 'c'), ("left", 'l'), ("no-newline", 'N'), ("quiet", 'q')]),
+        "split" => ("mf", vec![("max", 'm'), ("fields", 'f'), ("right", 'r'), ("no-empty", 'n'), ("quiet", 'q'), ("allow-empty", 'a')]),
+        "shorten" => ("mc", vec![("max", 'm'), ("char", 'c'), ("chars", 'c'), ("left", 'l'), ("no-newline", 'N'), ("quiet", 'q')]),
         "escape" | "unescape" => ("s", vec![("style", 's'), ("no-quote", 'n')]),
         "join" | "join0" => ("", [STRING_LONG, &[("no-empty", 'n')][..]].concat()),
         "match" => ("", vec![("all", 'a'), ("entire", 'e'), ("regex", 'r'), ("invert", 'v'), ("ignore-case", 'i'), ("groups-only", 'g'), ("index", 'n'), ("quiet", 'q')]),
-        "replace" => ("", vec![("all", 'a'), ("regex", 'r'), ("ignore-case", 'i'), ("filter", 'f'), ("quiet", 'q')]),
+        "replace" => ("m", vec![("all", 'a'), ("regex", 'r'), ("ignore-case", 'i'), ("filter", 'f'), ("quiet", 'q'), ("max-matches", 'm')]),
         _ => ("", STRING_LONG.to_vec()),
     };
     let o = match parse_opts(rest, valued, &long) {
@@ -284,12 +301,25 @@ fn string(args: &[String]) -> i32 {
     } else {
         o
     };
+    // with stdin redirected, operands beyond the subcommand's own leading ones (the
+    // separator, pattern, count…) are an error (string.rs `run_impl`, TOO_MANY_ARGUMENTS)
+    let strin = crate::ported::params::getsparam("__fish_strin").as_deref() == Some("1");
+    STRING_STDIN.with(|s| s.set(strin));
+    let leading = match sub.as_str() {
+        "split" | "join" | "match" => 1,
+        "replace" => 2,
+        "repeat" if o.val('n').is_none() && o.val('m').is_none() => 1,
+        _ => 0,
+    };
+    if strin && without_dashdash(&o).rest.len() > leading {
+        return err(&format!("string {sub}"), "too many arguments");
+    }
     let quiet = o.has('q');
     let mut out = Out::new(quiet, o.has('z') && matches!(sub.as_str(), "split0" | "join0"));
     let status = match sub.as_str() {
         "length" => {
             let mut any = false;
-            for s in inputs(&o.rest, false) {
+            for s in string_inputs(&o.rest) {
                 let n = s.chars().count();
                 any |= n > 0;
                 out.line(&n.to_string());
@@ -297,13 +327,18 @@ fn string(args: &[String]) -> i32 {
             i32::from(!any)
         }
         "upper" | "lower" => {
+            // (transform.rs: the status counts the arguments the case change altered)
             let up = sub == "upper";
-            let mut any = false;
-            for s in inputs(&o.rest, false) {
-                out.line(&if up { s.to_uppercase() } else { s.to_lowercase() });
-                any = true;
+            let mut changed = 0usize;
+            for s in string_inputs(&o.rest) {
+                let t = if up { s.to_uppercase() } else { s.to_lowercase() };
+                changed += usize::from(t != s);
+                out.line(&t);
+                if quiet && changed > 0 {
+                    break;
+                }
             }
-            i32::from(!any)
+            i32::from(changed == 0)
         }
         "sub" => str_sub(&o, &mut out),
         "pad" => str_pad(&o, &mut out),
@@ -312,11 +347,11 @@ fn string(args: &[String]) -> i32 {
         "join" | "join0" => {
             let (sep, items): (String, Vec<String>) = if sub == "join" {
                 match o.rest.split_first() {
-                    Some((s, r)) => (s.clone(), if r.is_empty() { inputs(&[], false) } else { r.to_vec() }),
+                    Some((s, r)) => (s.clone(), string_inputs(r)),
                     None => return err("string join", "missing argument"),
                 }
             } else {
-                ("\0".into(), inputs(&o.rest, false))
+                ("\0".into(), string_inputs(&o.rest))
             };
             let items: Vec<String> = if o.has('n') { items.into_iter().filter(|s| !s.is_empty()).collect() } else { items };
             let joined = items.join(&sep);
@@ -326,13 +361,14 @@ fn string(args: &[String]) -> i32 {
                     let _ = so.write_all(joined.as_bytes());
                     let _ = so.write_all(b"\0");
                 }
-            } else {
+            } else if !items.is_empty() {
+                // (join.rs: no arguments, no line)
                 out.line(&joined);
             }
             i32::from(items.len() < 2)
         }
         "split" | "split0" => str_split(&o, &mut out, sub == "split0"),
-        "collect" if o.rest.is_empty() => {
+        "collect" if strin => {
             // stdin is one value, written back without a newline; trailing newlines go
             // unless -N keeps them
             let mut buf = String::new();
@@ -341,28 +377,50 @@ fn string(args: &[String]) -> i32 {
             if !quiet {
                 let mut so = std::io::stdout().lock();
                 let _ = so.write_all(kept.as_bytes());
+                // -a: nothing came in, so an empty line goes out (collect.rs)
+                if o.has('a') && kept.is_empty() {
+                    let _ = so.write_all(b"\n");
+                }
             }
             i32::from(kept.is_empty())
         }
         "collect" => {
-            let all = o.rest.join("\n");
-            out.line(&all);
-            i32::from(all.is_empty())
+            // collect.rs: each operand loses its trailing newlines (unless -N) and ends
+            // its own line; the status says whether any character was written
+            let mut appended = 0usize;
+            for s in &o.rest {
+                let kept = if o.has('N') { s.as_str() } else { s.trim_end_matches('\n') };
+                out.line(kept);
+                appended += kept.len();
+            }
+            if o.has('a') && appended == 0 {
+                out.line("");
+            }
+            i32::from(appended == 0)
         }
         "match" => str_match(&o, &mut out),
         "replace" => str_replace(&o, &mut out),
         "escape" => {
+            // (escape.rs: status 1 when there was nothing to escape)
             let style = o.val('s').unwrap_or("script");
-            for s in inputs(&o.rest, false) {
+            let mut any = false;
+            for s in string_inputs(&o.rest) {
                 out.line(&escape(&s, style));
+                any = true;
             }
-            0
+            i32::from(!any)
         }
         "unescape" => {
-            for s in inputs(&o.rest, false) {
-                out.line(&unescape(&s, o.val('s').unwrap_or("script")));
+            // (unescape.rs: an argument that does not decode is skipped; status 1 when
+            // none did)
+            let mut any = false;
+            for s in string_inputs(&o.rest) {
+                if let Some(u) = unescape(&s, o.val('s').unwrap_or("script")) {
+                    out.line(&u);
+                    any = true;
+                }
             }
-            0
+            i32::from(!any)
         }
         "shorten" => str_shorten(&o, &mut out),
         other => {
@@ -401,7 +459,7 @@ fn without_dashdash(o: &Opts) -> Opts {
 
 fn str_sub(o: &Opts, out: &mut Out) -> i32 {
     let mut any = false;
-    for s in inputs(&o.rest, false) {
+    for s in string_inputs(&o.rest) {
         let chars: Vec<char> = s.chars().collect();
         let n = chars.len() as i64;
         let start = match o.num('s') {
@@ -427,7 +485,7 @@ fn str_sub(o: &Opts, out: &mut Out) -> i32 {
 }
 
 fn str_pad(o: &Opts, out: &mut Out) -> i32 {
-    let items = inputs(&o.rest, false);
+    let items = string_inputs(&o.rest);
     let fill = o.val('c').and_then(|c| c.chars().next()).unwrap_or(' ');
     let width = o
         .num('w')
@@ -435,9 +493,16 @@ fn str_pad(o: &Opts, out: &mut Out) -> i32 {
         .unwrap_or(0)
         .max(items.iter().map(|s| s.chars().count()).max().unwrap_or(0));
     for s in &items {
-        let pad = width.saturating_sub(s.chars().count());
-        let p: String = std::iter::repeat_n(fill, pad).collect();
-        out.line(&if o.has('r') { format!("{s}{p}") } else { format!("{p}{s}") });
+        let total = width.saturating_sub(s.chars().count());
+        // pad.rs: -C splits the padding, the odd column on the side -r does not name
+        let (left, right) = match (o.has('r'), o.has('C')) {
+            (false, false) => (total, 0),
+            (true, false) => (0, total),
+            (false, true) => (total - total / 2, total / 2),
+            (true, true) => (total / 2, total - total / 2),
+        };
+        let p = |n| std::iter::repeat_n(fill, n).collect::<String>();
+        out.line(&format!("{}{s}{}", p(left), p(right)));
     }
     0
 }
@@ -446,7 +511,7 @@ fn str_trim(o: &Opts, out: &mut Out) -> i32 {
     let set: Vec<char> = o.val('c').map_or(vec![' ', '\t', '\n', '\r', '\x0c', '\x0b'], |c| c.chars().collect());
     let (left, right) = (o.has('l') || !o.has('r'), o.has('r') || !o.has('l'));
     let mut trimmed = false;
-    for s in inputs(&o.rest, false) {
+    for s in string_inputs(&o.rest) {
         let mut t: &str = &s;
         if left {
             t = t.trim_start_matches(|c| set.contains(&c));
@@ -461,46 +526,118 @@ fn str_trim(o: &Opts, out: &mut Out) -> i32 {
 }
 
 fn str_repeat(o: &Opts, out: &mut Out) -> i32 {
-    let n = o.num('n').unwrap_or(0).max(0) as usize;
-    let max = o.num('m').map(|m| m.max(0) as usize);
-    let mut any = false;
-    for s in inputs(&o.rest, false) {
-        let mut r = s.repeat(n);
-        if let Some(m) = max {
-            r = r.chars().take(m).collect();
+    // repeat.rs: the count is `-n`, or the first operand when neither -n nor -m is given;
+    // `-m` caps the output at that many characters and with no count repeats up to it
+    let parse = |v: &str, what: &str| v.trim_start().parse::<i64>().ok().filter(|n| *n >= 0).map(|n| n as usize).ok_or(format!("Invalid {what} value '{v}'"));
+    let (mut count, mut max) = (0usize, 0usize);
+    let mut operands: &[String] = &o.rest;
+    if o.val('n').is_none() && o.val('m').is_none() {
+        let Some((first, rest)) = o.rest.split_first() else {
+            return err("string repeat", "missing argument");
+        };
+        match parse(first, "count") {
+            Ok(n) => count = n,
+            Err(e) => return err("string repeat", &e),
         }
-        any |= !r.is_empty();
-        if !r.is_empty() {
-            out.line(&r);
+        operands = rest;
+    }
+    if let Some(v) = o.val('n') {
+        match parse(v, "count") {
+            Ok(n) => count = n,
+            Err(e) => return err("string repeat", &e),
         }
     }
-    if o.has('N') {
-        out.drop_final_newline();
+    if let Some(v) = o.val('m') {
+        match parse(v, "max") {
+            Ok(n) => max = n,
+            Err(e) => return err("string repeat", &e),
+        }
     }
-    i32::from(!any)
+    if max == 0 && count == 0 {
+        return 1;
+    }
+    let mut all_empty = true;
+    let mut first = true;
+    for s in string_inputs(operands) {
+        if s.is_empty() {
+            continue;
+        }
+        all_empty = false;
+        if o.has('q') {
+            return 0;
+        }
+        if !first {
+            out.buf.push(b'\n');
+        }
+        first = false;
+        let len = s.chars().count();
+        let total = if max == 0 || (count > 0 && len.saturating_mul(count) < max) { len.saturating_mul(count) } else { max };
+        let piece: String = s.chars().cycle().take(total).collect();
+        out.buf.extend_from_slice(piece.as_bytes());
+    }
+    // no newline at all when every string was empty
+    if !o.has('q') && !o.has('N') && !all_empty {
+        out.buf.push(b'\n');
+    }
+    i32::from(all_empty)
+}
+
+/// `string split -f` fields: comma-separated one-based numbers and `a-b` spans, a span
+/// running backwards when `a > b` (split.rs `Fields::try_from`). Zero-based indices.
+fn split_fields(spec: &str) -> Result<Vec<usize>, String> {
+    let mut indices = Vec::new();
+    for f in spec.split(',') {
+        let num = |s: &str| s.trim_start().parse::<i64>().map_err(|_| format!("{spec}: invalid integer"));
+        match f.split('-').collect::<Vec<_>>()[..] {
+            [a, b] => {
+                let (a, b) = (num(a)?, num(b)?);
+                if a <= 0 || b <= 0 {
+                    return Err(format!("Invalid range value for field '{spec}'"));
+                }
+                let (a, b) = (a as usize, b as usize);
+                if a <= b {
+                    indices.extend(a - 1..b);
+                } else {
+                    indices.extend((b - 1..a).rev());
+                }
+            }
+            _ => match num(f)? {
+                n @ 1.. => indices.push(n as usize - 1),
+                _ => return Err(format!("Invalid fields value '{spec}'")),
+            },
+        }
+    }
+    Ok(indices)
 }
 
 fn str_split(o: &Opts, out: &mut Out, nul: bool) -> i32 {
     let o = &without_dashdash(o);
     let (sep, items) = if nul {
         // fish reads split0's stdin whole (`SplitBehavior::Never`) and splits it on NUL
-        let items = if o.rest.is_empty() {
+        let items = if STRING_STDIN.with(std::cell::Cell::get) {
             let mut buf = Vec::new();
             let _ = std::io::stdin().lock().read_to_end(&mut buf);
-            vec![String::from_utf8_lossy(&buf).into_owned()]
+            if buf.is_empty() { Vec::new() } else { vec![String::from_utf8_lossy(&buf).into_owned()] }
         } else {
             o.rest.clone()
         };
         ("\0".to_string(), items)
     } else {
         match o.rest.split_first() {
-            Some((s, r)) => (s.clone(), if r.is_empty() { inputs(&[], false) } else { r.to_vec() }),
+            Some((s, r)) => (s.clone(), string_inputs(r)),
             None => return err("string split", "missing argument"),
         }
     };
+    let fields = match o.val('f').map(split_fields).transpose() {
+        Ok(f) => f.unwrap_or_default(),
+        Err(e) => return err(&format!("string split{}", if nul { "0" } else { "" }), &e),
+    };
+    if fields.is_empty() && o.has('a') {
+        return err("string split", "--allow-empty is only valid with --fields");
+    }
     let max = o.num('m').map_or(usize::MAX, |m| m.max(0) as usize);
-    let mut splits = false;
-    let mut all: Vec<String> = Vec::new();
+    let (mut split_count, arg_count) = (0usize, items.len());
+    let mut all_splits: Vec<Vec<String>> = Vec::new();
     for s in items {
         let mut parts: Vec<String> = if sep.is_empty() {
             // an empty separator splits between characters; `-m N` stops after N of them
@@ -528,36 +665,35 @@ fn str_split(o: &Opts, out: &mut Out, nul: bool) -> i32 {
         if o.has('n') {
             parts.retain(|p| !p.is_empty());
         }
+        // -q is done as soon as one argument split
+        if o.has('q') && parts.len() > 1 {
+            return 0;
+        }
+        split_count += parts.len();
+        all_splits.push(parts);
+    }
+    for mut parts in all_splits {
         // split0 ignores a trailing NUL: `a\0b\0` is two elements, `a\0\0` is `a` and ``
         if nul && parts.last().is_some_and(String::is_empty) {
             parts.pop();
         }
-        splits |= parts.len() > 1;
-        match o.val('f') {
-            Some(spec) => {
-                // `-f 1,4` / `-f 2-3`: the chosen fields; a line that lacks one of them
-                // prints nothing at all
-                let mut wanted: Vec<usize> = Vec::new();
-                for item in spec.split(',') {
-                    match item.split_once('-') {
-                        Some((a, b)) => {
-                            let (a, b) = (a.parse::<usize>().unwrap_or(1), b.parse::<usize>().unwrap_or(0));
-                            wanted.extend(a..=b);
-                        }
-                        None => wanted.extend(item.parse::<usize>().ok()),
-                    }
-                }
-                if !wanted.is_empty() && wanted.iter().all(|&n| n >= 1 && n <= parts.len()) {
-                    all.extend(wanted.iter().map(|&n| parts[n - 1].clone()));
-                }
+        if fields.is_empty() {
+            for p in &parts {
+                out.line(p);
             }
-            None => all.extend(parts),
+            continue;
+        }
+        // an argument that lacks one of the fields ends the command with status 1, the
+        // arguments before it printed (split.rs: unless --allow-empty)
+        if !o.has('a') && fields.iter().any(|&f| f >= parts.len()) {
+            return 1;
+        }
+        for p in fields.iter().filter_map(|&f| parts.get(f)) {
+            out.line(p);
         }
     }
-    for p in &all {
-        out.line(p);
-    }
-    i32::from(!splits)
+    // something was split when there are more pieces than arguments
+    i32::from(split_count <= arg_count)
 }
 
 fn compile(pattern: &str, icase: bool) -> Result<fancy_regex::Regex, String> {
@@ -588,7 +724,7 @@ fn str_match(o: &Opts, out: &mut Out) -> i32 {
     let Some((pat, items)) = o.rest.split_first() else {
         return err("string match", "missing argument");
     };
-    let items = if items.is_empty() { inputs(&[], false) } else { items.to_vec() };
+    let items = string_inputs(items);
     let icase = o.has('i');
     let regex = o.has('r');
     let re = if regex {
@@ -689,7 +825,7 @@ fn str_match(o: &Opts, out: &mut Out) -> i32 {
 /// it: `$1`, `${1}`, `${name}`, `$$`, `\n \t \r \e \a \f \xHH \x{H..}`, `\\` and the case
 /// operators `\U \L \u \l \E`. A backslash before any other letter or digit, or at the end,
 /// is an error.
-fn expand_replacement(rep: &str, caps: &fancy_regex::Captures) -> Result<String, String> {
+fn expand_replacement(rep: &str, caps: &fancy_regex::Captures, names: &[&str]) -> Result<String, String> {
     #[derive(Clone, Copy, PartialEq)]
     enum Case {
         None,
@@ -710,6 +846,9 @@ fn expand_replacement(rep: &str, caps: &fancy_regex::Captures) -> Result<String,
         }
     };
     let bad = || "Regular expression substitute error: bad escape sequence in replacement string".to_string();
+    // (pcre2_substitute: PCRE2_ERROR_BADREPLACEMENT, PCRE2_ERROR_NOSUBSTRING)
+    let invalid = || "Regular expression substitute error: invalid replacement string".to_string();
+    let unknown = || "Regular expression substitute error: unknown substring".to_string();
     let chars: Vec<char> = rep.chars().collect();
     let mut i = 0;
     while i < chars.len() {
@@ -720,26 +859,32 @@ fn expand_replacement(rep: &str, caps: &fancy_regex::Captures) -> Result<String,
                     i += 2;
                     continue;
                 }
-                let (name, next) = if chars.get(i + 1) == Some(&'{') {
-                    match chars[i + 2..].iter().position(|&c| c == '}') {
-                        Some(p) => (chars[i + 2..i + 2 + p].iter().collect::<String>(), i + 3 + p),
-                        None => (String::new(), i),
-                    }
-                } else {
-                    let mut j = i + 1;
-                    while j < chars.len() && (chars[j].is_alphanumeric() || chars[j] == '_') {
-                        j += 1;
-                    }
-                    (chars[i + 1..j].iter().collect(), j)
-                };
-                if name.is_empty() {
-                    push(&mut out, "$", mode, &mut once);
-                    i += 1;
-                    continue;
+                // a group number is digits only (`$2_` is group 2, then `_`), a name is
+                // letters, digits and `_`; `${…}` holds either
+                let braced = chars.get(i + 1) == Some(&'{');
+                let start = i + 1 + usize::from(braced);
+                let mut j = start;
+                let digits = chars.get(j).is_some_and(char::is_ascii_digit);
+                while j < chars.len() && (if digits { chars[j].is_ascii_digit() } else { chars[j].is_alphanumeric() || chars[j] == '_' }) {
+                    j += 1;
                 }
-                let m = name.parse::<usize>().ok().and_then(|n| caps.get(n)).or_else(|| caps.name(&name));
+                let name: String = chars[start..j].iter().collect();
+                if name.is_empty() || (braced && chars.get(j) != Some(&'}')) {
+                    return Err(invalid());
+                }
+                let m = if digits {
+                    match name.parse::<usize>() {
+                        Ok(n) if n < caps.len() => caps.get(n),
+                        _ => return Err(unknown()),
+                    }
+                } else if names.iter().any(|n| *n == name) {
+                    caps.name(&name)
+                } else {
+                    return Err(unknown());
+                };
+                // (an existing group that took no part is empty: SUBSTITUTE_UNSET_EMPTY)
                 push(&mut out, m.map_or("", |m| m.as_str()), mode, &mut once);
-                i = next;
+                i = j + usize::from(braced);
             }
             '\\' => {
                 let Some(&e) = chars.get(i + 1) else { return Err(bad()) };
@@ -805,88 +950,213 @@ fn expand_replacement(rep: &str, caps: &fancy_regex::Captures) -> Result<String,
     Ok(out)
 }
 
+/// `string replace` without `-r` (replace.rs `StringReplacer::Literal`). With `-i` fish
+/// lowercases the pattern and searches a lowercased copy of the argument, and the text
+/// before each match comes from that copy: `string replace -i o X Hello` is `hellX`.
+/// Only the rest after the last match is the argument's own. Character offsets.
+fn replace_literal(arg: &str, pattern: &str, rep: &str, icase: bool, all: bool) -> Option<String> {
+    let (pattern, subject) = if icase { (pattern.to_lowercase(), arg.to_lowercase()) } else { (pattern.to_string(), arg.to_string()) };
+    let pat: Vec<char> = pattern.chars().collect();
+    let sub: Vec<char> = subject.chars().collect();
+    let mut result = String::new();
+    let mut offset = 0;
+    while let Some(idx) = sub[offset..].windows(pat.len()).position(|w| w == pat.as_slice()) {
+        result.extend(&sub[offset..offset + idx]);
+        result.push_str(rep);
+        offset += idx + pat.len();
+        if !all {
+            break;
+        }
+    }
+    if offset == 0 {
+        return None;
+    }
+    result.extend(arg.chars().skip(offset));
+    Some(result)
+}
+
 fn str_replace(o: &Opts, out: &mut Out) -> i32 {
     let o = &without_dashdash(o);
     let (Some(pat), Some(rep)) = (o.rest.first(), o.rest.get(1)) else {
         return err("string replace", "missing argument");
     };
-    let items = if o.rest.len() > 2 { o.rest[2..].to_vec() } else { inputs(&[], false) };
+    let max_matches = match o.val('m') {
+        None => None,
+        Some(v) => match v.parse::<usize>() {
+            Ok(n) if n > 0 => Some(n),
+            _ => return err("string replace", &format!("Invalid max matches value '{v}'")),
+        },
+    };
+    let items = string_inputs(o.rest.get(2..).unwrap_or_default());
     let icase = o.has('i');
-    let regex = o.has('r');
-    if pat.is_empty() && !regex {
-        for s in &items {
-            if !o.has('f') {
-                out.line(s);
-            }
-        }
-        return 1;
-    }
-    let re = if regex {
+    let re = if o.has('r') {
         match compile(pat, icase) {
-            Ok(r) => r,
+            Ok(r) => Some(r),
             Err(e) => return err("string replace", &e),
         }
     } else {
-        match compile(&fancy_regex::escape(pat), icase) {
-            Ok(r) => r,
-            Err(e) => return err("string replace", &e),
-        }
+        None
     };
-    let mut changed = false;
+    let names: Vec<&str> = re.as_ref().map_or(Vec::new(), |r| r.capture_names().flatten().collect());
+    let mut replace_count = 0usize;
     for s in &items {
-        let mut result = String::new();
-        let mut last = 0;
-        let mut any = false;
-        for caps in re.captures_iter(s).flatten() {
-            let m = caps.get(0).unwrap();
-            if m.start() == m.end() && m.start() >= s.len() && any {
-                break;
-            }
-            any = true;
-            result.push_str(&s[last..m.start()]);
-            if regex {
-                match expand_replacement(rep, &caps) {
-                    Ok(t) => result.push_str(&t),
-                    Err(e) => return err("string replace", &e),
+        let replaced = match &re {
+            // an empty literal pattern replaces nothing
+            None if pat.is_empty() => None,
+            None => replace_literal(s, pat, rep, icase, o.has('a')),
+            Some(re) => {
+                let mut result = String::new();
+                let mut last = 0;
+                let mut any = false;
+                for caps in re.captures_iter(s).flatten() {
+                    let m = caps.get(0).unwrap();
+                    if m.start() == m.end() && m.start() >= s.len() && any {
+                        break;
+                    }
+                    any = true;
+                    result.push_str(&s[last..m.start()]);
+                    match expand_replacement(rep, &caps, &names) {
+                        Ok(t) => result.push_str(&t),
+                        // the arguments before this one stay printed
+                        Err(e) => return err("string replace", &e),
+                    }
+                    last = m.end();
+                    if !o.has('a') {
+                        break;
+                    }
                 }
-            } else {
-                result.push_str(rep);
+                result.push_str(&s[last..]);
+                any.then_some(result)
             }
-            last = m.end();
-            if !o.has('a') {
-                break;
-            }
+        };
+        replace_count += usize::from(replaced.is_some());
+        match replaced {
+            Some(r) => out.line(&r),
+            None if !o.has('f') => out.line(s),
+            None => {}
         }
-        result.push_str(&s[last..]);
-        changed |= any;
-        if any || !o.has('f') {
-            out.line(&result);
+        if (o.has('q') && replace_count > 0) || max_matches == Some(replace_count) {
+            return 0;
         }
     }
-    i32::from(!changed)
+    i32::from(replace_count == 0)
 }
 
+/// A character's terminal width as fish counts it (`fish_wcwidth_visible`): backspace is
+/// -1, other non-printing characters 0.
+fn visible_char_width(c: char) -> isize {
+    if c == '\x08' {
+        return -1;
+    }
+    unicode_width::UnicodeWidthChar::width(c).unwrap_or(0) as isize
+}
+
+/// The width of a string on its own line: a backspace cannot take it below 0.
+fn visible_width(s: &[char]) -> usize {
+    s.iter().fold(0isize, |w, &c| {
+        let cw = visible_char_width(c);
+        if cw > 0 || w > 0 { w + cw } else { w }
+    }) as usize
+}
+
+/// shorten.rs: each line is cut to `-m` columns (default: the narrowest non-empty line),
+/// the ellipsis counting toward the width and dropped when it alone is wider than that.
+/// `-m 0` shortens nothing. Escape sequences are counted as text here.
 fn str_shorten(o: &Opts, out: &mut Out) -> i32 {
-    let ell = o.val('c').unwrap_or("…");
-    let max = o.num('m').unwrap_or(0).max(0) as usize;
-    let mut shortened = false;
-    for s in inputs(&o.rest, false) {
-        let n = s.chars().count();
-        if n <= max {
-            out.line(&s);
+    let ell: Vec<char> = o.val('c').unwrap_or("…").chars().collect();
+    let max = match o.val('m') {
+        None => None,
+        Some(v) => match v.parse::<usize>() {
+            Ok(n) => Some(n),
+            Err(_) => return err("string shorten", &format!("Invalid max value '{v}'")),
+        },
+    };
+    let items = string_inputs(&o.rest);
+    if max == Some(0) {
+        for s in &items {
+            out.line(s);
+        }
+        return 0;
+    }
+    let mut lines: Vec<Vec<char>> = Vec::new();
+    let mut min_width = usize::MAX;
+    for s in &items {
+        let mut splits: Vec<&str> = s.split('\n').collect();
+        if o.has('N') {
+            // the first line (the last with -l), the ellipsis appended
+            let pick = if o.has('l') { splits.pop() } else { Some(splits.remove(0)) };
+            splits = pick.into_iter().collect();
+        }
+        for line in splits {
+            let mut l: Vec<char> = line.chars().collect();
+            if o.has('N') {
+                l.extend(&ell);
+            }
+            let w = visible_width(&l);
+            if w > 0 && w < min_width {
+                min_width = w;
+            }
+            lines.push(l);
+        }
+    }
+    let ourmax = max.unwrap_or(min_width);
+    let ell_width = visible_width(&ell);
+    let (ell, ell_width) = if ell_width > ourmax { (Vec::new(), 0) } else { (ell, ell_width) };
+    let mut nsub = 0usize;
+    for line in lines {
+        if o.has('l') {
+            // keep the end: the first position from which the rest fits
+            let mut pos = 0;
+            while pos < line.len() {
+                let w = visible_width(&line[pos..]);
+                if (w <= ourmax && pos == 0) || w + ell_width <= ourmax {
+                    break;
+                }
+                pos += 1;
+            }
+            if o.has('q') {
+                if pos != 0 {
+                    return 0;
+                }
+                continue;
+            }
+            if pos == 0 {
+                out.line(&line.iter().collect::<String>());
+            } else {
+                nsub += 1;
+                out.line(&ell.iter().chain(&line[pos..]).collect::<String>());
+            }
             continue;
         }
-        shortened = true;
-        let keep = max.saturating_sub(ell.chars().count());
-        let piece: String = if o.has('l') {
-            let tail: Vec<char> = s.chars().skip(n - keep).collect();
-            format!("{ell}{}", tail.iter().collect::<String>())
-        } else {
-            format!("{}{ell}", s.chars().take(keep).collect::<String>())
-        };
-        out.line(&piece);
+        // keep the start: as many characters as fit with the ellipsis, or all of them
+        let (mut pos, mut width) = (0usize, 0usize);
+        while width <= ourmax && pos < line.len() {
+            let w = visible_char_width(line[pos]);
+            if w <= 0 || width + w as usize + ell_width <= ourmax {
+                width = width.saturating_add_signed(w);
+                pos += 1;
+            } else {
+                let rest = line[pos..].iter().fold(width, |acc, &c| acc.saturating_add_signed(visible_char_width(c)));
+                if rest <= ourmax {
+                    pos = line.len();
+                }
+                break;
+            }
+        }
+        if o.has('q') {
+            if pos != line.len() {
+                return 0;
+            }
+            continue;
+        }
+        if pos == line.len() {
+            out.line(&line.iter().collect::<String>());
+            continue;
+        }
+        nsub += 1;
+        out.line(&line[..pos].iter().chain(&ell).collect::<String>());
     }
-    i32::from(!shortened)
+    i32::from(nsub == 0)
 }
 
 fn escape(s: &str, style: &str) -> String {
@@ -930,39 +1200,84 @@ fn escape(s: &str, style: &str) -> String {
     }
 }
 
-fn unescape(s: &str, style: &str) -> String {
-    if style == "url" {
-        let b = s.as_bytes();
-        let mut out = Vec::new();
-        let mut i = 0;
-        while i < b.len() {
-            if b[i] == b'%' && i + 3 <= b.len() {
-                if let Some(v) = s.get(i + 1..i + 3).and_then(|h| u8::from_str_radix(h, 16).ok()) {
-                    out.push(v);
-                    i += 3;
-                    continue;
+/// `string unescape`; `None` when the argument does not decode (fish_common
+/// `unescape_string`): a `%` / `_` escape without its hex digits, a non-ASCII character in
+/// the url and var styles, a backslash at the end in the script style.
+fn unescape(s: &str, style: &str) -> Option<String> {
+    let c: Vec<char> = s.chars().collect();
+    let hex = |i: usize| c.get(i).and_then(|d| d.to_digit(16));
+    match style {
+        "url" => {
+            let mut out = Vec::new();
+            let mut i = 0;
+            while i < c.len() {
+                if c[i] > '\x7f' {
+                    return None;
+                }
+                if c[i] == '%' {
+                    if c.get(i + 1) == Some(&'%') {
+                        out.push(b'%');
+                        i += 1;
+                    } else {
+                        out.push((hex(i + 1)? * 16 + hex(i + 2)?) as u8);
+                        i += 2;
+                    }
+                } else {
+                    out.push(c[i] as u8);
+                }
+                i += 1;
+            }
+            Some(String::from_utf8_lossy(&out).into_owned())
+        }
+        "var" => {
+            let mut out = Vec::new();
+            let mut prev_hex = false;
+            let mut i = 0;
+            while i < c.len() {
+                if c[i] > '\x7f' {
+                    return None;
+                }
+                if c[i] == '_' {
+                    match c.get(i + 1) {
+                        None if prev_hex => break,
+                        None => return None,
+                        Some('_') => {
+                            out.push(b'_');
+                            i += 1;
+                        }
+                        Some(d) if d.is_ascii_digit() || ('A'..='F').contains(d) => {
+                            out.push((hex(i + 1)? * 16 + hex(i + 2)?) as u8);
+                            i += 2;
+                            prev_hex = true;
+                        }
+                        // a lone `_` only separates for readability
+                        Some(_) => {}
+                    }
+                } else {
+                    out.push(c[i] as u8);
+                }
+                i += 1;
+            }
+            Some(String::from_utf8_lossy(&out).into_owned())
+        }
+        _ => {
+            let mut out = String::new();
+            let mut it = c.iter().copied();
+            while let Some(ch) = it.next() {
+                match ch {
+                    '\\' => match it.next() {
+                        Some('n') => out.push('\n'),
+                        Some('t') => out.push('\t'),
+                        Some(o) => out.push(o),
+                        None => return None,
+                    },
+                    '\'' | '"' => {}
+                    ch => out.push(ch),
                 }
             }
-            out.push(b[i]);
-            i += 1;
-        }
-        return String::from_utf8_lossy(&out).into_owned();
-    }
-    let mut out = String::new();
-    let mut it = s.chars().peekable();
-    while let Some(c) = it.next() {
-        match c {
-            '\\' => match it.next() {
-                Some('n') => out.push('\n'),
-                Some('t') => out.push('\t'),
-                Some(o) => out.push(o),
-                None => out.push('\\'),
-            },
-            '\'' | '"' => {}
-            c => out.push(c),
+            Some(out)
         }
     }
-    out
 }
 
 // ---- printf ----------------------------------------------------------------------
@@ -983,8 +1298,12 @@ fn c_format<T>(spec: &str, v: T, width_hint: usize) -> String {
 
 /// An integer argument as printf reads it: decimal, `0x` hex, leading-0 octal, or `'c` for
 /// a character's code. Anything left over, or no number at all, is reported and counted
-/// as a failure, while the value read so far is still used.
+/// as a failure, while the value read so far is still used. An empty argument is 0.
 fn printf_int(arg: &str, failed: &mut bool) -> i64 {
+    // an empty argument is silently 0 (printf.rs `verify_numeric`)
+    if arg.is_empty() {
+        return 0;
+    }
     if let Some(rest) = arg.strip_prefix(['\'', '"']) {
         return rest.chars().next().map_or(0, |c| c as i64);
     }
@@ -1011,6 +1330,9 @@ thread_local! {
 }
 
 fn printf_float(arg: &str, failed: &mut bool) -> f64 {
+    if arg.is_empty() {
+        return 0.0;
+    }
     if let Some(rest) = arg.strip_prefix(['\'', '"']) {
         return rest.chars().next().map_or(0.0, |c| c as u32 as f64);
     }
@@ -1250,7 +1572,8 @@ fn printf(args: &[String]) -> i32 {
                 'c' => {
                     let a = args.get(next).cloned().unwrap_or_default();
                     next += 1;
-                    let c: String = a.chars().take(1).collect();
+                    // an empty or missing argument is a NUL (printf.rs: `argument.char_at(0)`)
+                    let c = a.chars().next().unwrap_or('\0').to_string();
                     out.extend_from_slice(pad(&c, wnum, flags.contains('-')).as_bytes());
                 }
                 'b' => {
@@ -2096,7 +2419,8 @@ mod tests {
     fn escape_round_trip_and_styles() {
         assert_eq!(escape("a b", "script"), "'a b'");
         assert_eq!(escape("a b/", "url"), "a%20b/");
-        assert_eq!(unescape("a%20b", "url"), "a b");
+        assert_eq!(unescape("a%20b", "url").as_deref(), Some("a b"));
+        assert_eq!(unescape("%zz", "url"), None);
     }
 }
 
