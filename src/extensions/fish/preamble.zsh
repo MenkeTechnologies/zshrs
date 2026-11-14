@@ -45,22 +45,50 @@ __fish_command_query() {
   done
   return $r
 }
-__fish_slice() {
-  local -a src r
-  if [[ $2 == - ]]; then src=("${@:5}"); else src=("${(@P)2}"); fi
-  local n=$#src a=$3 b=$4 i
-  (( a < 0 )) && a=$(( n + a + 1 ))
-  (( b < 0 )) && b=$(( n + b + 1 ))
-  if (( a >= 1 && b >= 1 && a <= n )); then
-    (( b > n )) && b=n
-    if (( a <= b )); then
-      for (( i = a; i <= b; i++ )); do r+=("${src[i]}"); done
-    else
-      for (( i = a; i >= b; i-- )); do r+=("${src[i]}"); done
-    fi
+# `$name[tokens]`: the elements fish's parse_slice (expand.rs) selects, stored in the
+# array DEST. Usage: __fish_index DEST NAME 'TOKENS', or __fish_index DEST - 'TOKENS'
+# VALUE… for a list that is not a named parameter ($argv). Negative indices count from
+# the end; an index outside the list selects nothing; `a..b` runs in either direction,
+# forced backwards when only `a` is negative and forwards when only `b` is, otherwise
+# clamped to the last element (a range wholly past the end is skipped); an empty `a` is
+# 1 for the first index, an empty `b` is -1.
+__fish_index() {
+  local __dest=$1 __name=$2 __s=$3 __t __a __b __n __i __j __d
+  local -a __toks __src __idx __out
+  # fish lets whitespace stand on either side of `..` (`[2 ..3]`, `[1.. ]`)
+  while [[ $__s == *" .."* ]]; do __s=${__s// ../..}; done
+  while [[ $__s == *".. "* ]]; do __s=${__s//.. /..}; done
+  __toks=(${=__s})
+  if [[ $__name == - ]]; then
+    __src=("${@:4}")
+  elif (( ${(P)+__name} )); then
+    __src=("${(@P)__name}")
   fi
-  typeset -ga $1
-  builtin eval "$1=(\"\${(@)r}\")"
+  __n=$#__src
+  for __t in $__toks; do
+    if [[ $__t == *..* ]]; then
+      __a=${__t%%..*} __b=${__t#*..}
+      [[ -z $__a && $#__idx == 0 ]] && __a=1
+      [[ -z $__b ]] && __b=-1
+      [[ $__a =~ '^[-+]?[0-9]+$' && $__b =~ '^[-+]?[0-9]+$' ]] || continue
+      (( __i = __a < 0 ? __n + __a + 1 : __a, __j = __b < 0 ? __n + __b + 1 : __b ))
+      (( __i > __n && __j > __n )) && continue
+      if (( (__a < 0) != (__b < 0) )); then
+        (( __d = __b < 0 ? 1 : -1 ))
+      else
+        (( __d = __j < __i ? -1 : 1, __i = __i > __n ? __n : __i, __j = __j > __n ? __n : __j ))
+      fi
+      for (( ; __i * __d <= __j * __d; __i += __d )); do __idx+=($__i); done
+    elif [[ $__t =~ '^[-+]?[0-9]+$' ]]; then
+      (( __i = __t < 0 ? __n + __t + 1 : __t ))
+      __idx+=($__i)
+    fi
+  done
+  for __i in $__idx; do
+    (( __i >= 1 && __i <= __n )) && __out+=("${__src[__i]}")
+  done
+  typeset -ga $__dest
+  builtin eval "$__dest=(\"\${(@)__out}\")"
 }
 typeset -gA __fish_feature_flags=(stderr-nocaret on qmark-noglob on regex-easyesc on ampersand-nobg-in-token on remove-percent-self off test-require-arg off mark-prompt on ignore-terminfo on query-term on omit-term-workarounds off)
 __fish_features() {

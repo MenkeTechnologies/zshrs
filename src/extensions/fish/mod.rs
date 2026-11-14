@@ -198,8 +198,9 @@ mod tests {
         assert_eq!(t("set x 1 2 3"), "x=(1 2 3)");
         assert_eq!(t("echo $x"), "echo ${x+\"${x[@]}\"}");
         assert_eq!(t("echo \"$x\""), "echo \"${(j: :)x}\"");
-        assert_eq!(t("echo $x[2]"), "echo \"${(@)x[2,2]}\"");
-        assert_eq!(t("echo $x[2..3]"), "{ __fish_slice __fc1 x 2 3; echo \"${__fc1[@]}\"; }");
+        // an index goes through `__fish_index`, which selects nothing for a missing element
+        assert_eq!(t("echo $x[2]"), "{ __fish_index __fc1 x \"2\"; echo \"${__fc1[@]}\"; }");
+        assert_eq!(t("echo $x[2..3]"), "{ __fish_index __fc1 x \"2..3\"; echo \"${__fc1[@]}\"; }");
         // a list inside a word is a loop, so an unset variable leaves no word at all
         assert_eq!(
             t("echo $x.txt"),

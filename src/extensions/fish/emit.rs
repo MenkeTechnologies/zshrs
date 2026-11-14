@@ -8,8 +8,7 @@
 //! |---|---|
 //! | `$x` | `${x+"${x[@]}"}` (no words when unset, empty elements kept) |
 //! | `"$x"` | `"${(j: :)x}"` |
-//! | `$x[2]` | `"${(@)x[2,2]}"` |
-//! | `$x[2..4]` | `"${(@)x[2,4]}"` |
+//! | `$x[2]` | `"${__fcN[@]}"` after `__fish_index __fcN x 2` (no word when out of range) |
 //! | `$x.txt` | `${^x}.txt` (one word per element, as fish's cartesian product) |
 //! | `(cmd)` | `${(f)"$(cmd)"}` (split on newlines only) |
 //!
@@ -372,10 +371,17 @@ impl Emitter {
                         || (t.starts_with('-') && !t.starts_with("--") && t[1..].contains(['q', 'e', 'S', 'n']))
                 })));
         // `set x (cmd)` leaves the status of `cmd`
-        if sets_variable {
+        // building word lists must not change the `$status` the command reads
+        let keeps_status = text.contains("$?") && !mine.iter().any(|h| h.contains("$("));
+        if sets_variable && keeps_status {
+            format!(
+                "{{ __fish_ps=$?; {}; __fish_cs=$?; {}; __fish_ret $__fish_cs; }}",
+                mine.join("; "),
+                text.replace("$?", "$__fish_ps")
+            )
+        } else if sets_variable {
             format!("{{ {}; __fish_cs=$?; {text}; __fish_ret $__fish_cs; }}", mine.join("; "))
-        } else if text.contains("$?") && !mine.iter().any(|h| h.contains("$(")) {
-            // building word lists must not change the `$status` the command reads
+        } else if keeps_status {
             format!("{{ __fish_ps=$?; {}; {}; }}", mine.join("; "), text.replace("$?", "$__fish_ps"))
         } else {
             format!("{{ {}; {text}; }}", mine.join("; "))
@@ -902,15 +908,7 @@ impl Emitter {
     }
 
     fn word_list_inner(&mut self, w: &Word) -> String {
-        // Brace groups are expanded here, not by zsh: fish varies the FIRST group fastest
-        // (`{+,-}{a,b}` is `+a -a +b -b`), zsh the last.
-        if w.parts.iter().any(|p| matches!(p, Part::Raw(r) if r == "{")) {
-            let words: Vec<String> = expand_braces(&w.parts)
-                .into_iter()
-                .map(|parts| self.word_list_inner(&Word { parts }))
-                .collect();
-            return words.join(" ");
-        }
+        let has_brace = w.parts.iter().any(|p| matches!(p, Part::Raw(r) if r == "{"));
         match w.parts.as_slice() {
             [] => "''".into(),
             [Part::Var(v)] => self.var_list(v),
@@ -918,55 +916,77 @@ impl Emitter {
             // a list part makes the word as many words as it has elements: none for an
             // unset variable, which only a loop can express
             parts if parts.iter().any(|p| is_list_part(p) && !always_set(p)) => self.cartesian(parts),
+            // Brace groups are expanded here, not by zsh: fish varies the LAST group
+            // slowest (`{+,-}{a,b}` is `+a -a +b -b`), zsh the first.
+            parts if has_brace => expand_braces(parts)
+                .into_iter()
+                .map(|parts| self.word_list_inner(&Word { parts }))
+                .collect::<Vec<_>>()
+                .join(" "),
             parts => parts.iter().map(|p| self.part(p, false)).collect(),
         }
     }
 
-    /// A word with two or more list parts. fish varies the first list fastest
-    /// (`$a$b` with a=(1 2) b=(x y) is `1x 2x 1y 2y`); zsh's `${^a}${^b}` varies the last,
-    /// so the product is built by nested loops, first part innermost.
+    /// A word with list parts, as the product fish's expansion stages build, in fish's
+    /// order. Substitutions expand first, the leftmost varying slowest (expand_cmdsubst
+    /// loops over a substitution's lines outside the rest of the word); then variables,
+    /// the LAST varying slowest (expand_variables works back from the end of the word),
+    /// so `$a$b` with a=(1 2) b=(x y) is `1x 2x 1y 2y`; then brace groups, which vary
+    /// fastest of all (`{a,b}$l` is `a1 b1 a2 b2`). The product is built by nested
+    /// loops with the brace alternatives in the innermost body.
     fn cartesian(&mut self, parts: &[Part]) -> String {
         self.hoist_id += 1;
         let id = self.hoist_id;
-        let mut word = String::new();
-        let mut loops: Vec<String> = Vec::new();
+        let (mut cmd_loops, mut var_loops) = (Vec::new(), Vec::new());
+        let mut body = Vec::with_capacity(parts.len());
         for p in parts {
-            if is_list_part(p) {
-                let var = format!("__fi{id}_{}", loops.len());
-                let list = match p {
-                    Part::Var(v) => self.var_list(v),
-                    Part::Cmd(s, idx) => self.cmd_list(s, idx.as_deref()),
-                    _ => String::new(),
-                };
-                loops.push(format!("for {var} in {list}; do"));
-                word.push_str(&format!("\"${{{var}}}\""));
-            } else {
-                word.push_str(&self.part(p, false));
-            }
+            let (list, loops) = match p {
+                Part::Var(v) if is_list_part(p) => (self.var_list(v), &mut var_loops),
+                Part::Cmd(s, idx) => (self.cmd_list(s, idx.as_deref()), &mut cmd_loops),
+                _ => {
+                    body.push(p.clone());
+                    continue;
+                }
+            };
+            let var = format!("__fi{id}_{}", body.len());
+            loops.push(format!("for {var} in {list}; do"));
+            body.push(Part::Raw(format!("\"${{{var}}}\"")));
         }
-        if self.null_glob && parts.iter().any(|p| matches!(p, Part::Raw(r) if r.starts_with('*'))) {
-            word.push_str("(N)");
-        }
+        let words: Vec<String> = expand_braces(&body)
+            .iter()
+            .map(|alt| {
+                let mut word: String = alt.iter().map(|p| self.part(p, false)).collect();
+                if word.is_empty() {
+                    word.push_str("''");
+                }
+                if self.null_glob && alt.iter().any(|p| matches!(p, Part::Raw(r) if r.starts_with('*'))) {
+                    word.push_str("(N)");
+                }
+                word
+            })
+            .collect();
         let v = format!("__fc{id}");
         let mut text = format!("{v}=(); ");
-        for l in loops.iter().rev() {
+        let n = cmd_loops.len() + var_loops.len();
+        for l in cmd_loops.iter().chain(var_loops.iter().rev()) {
             text.push_str(l);
             text.push(' ');
         }
-        text.push_str(&format!("{v}+=({word}); "));
-        text.push_str(&vec!["done"; loops.len()].join("; "));
+        text.push_str(&format!("{v}+=({}); ", words.join(" ")));
+        text.push_str(&vec!["done"; n].join("; "));
         self.hoists.push(text);
         format!("\"${{{v}[@]}}\"")
     }
 
-    /// `$x[a..b]` where the direction is only known at run time (`-1..1`, `$i..$j`):
-    /// the slice is built by `__fish_slice` into a hoisted array.
-    fn dynamic_slice(&mut self, z: &str, a: &str, b: &str) -> String {
+    /// `$name[idx…]`: the selected elements of the zsh array `z`, put by `__fish_index`
+    /// into a hoisted array whose name is returned.
+    fn index_array(&mut self, z: &str, idx: &[String]) -> String {
+        let toks = self.index_tokens(idx).join(" ");
         self.hoist_id += 1;
         let v = format!("__fc{}", self.hoist_id);
         // `argv` is the positional parameters, which the helper cannot reach by name
-        let src = if z == "argv" { format!("- {a} {b} \"$@\"") } else { format!("{z} {a} {b}") };
-        self.hoists.push(format!("__fish_slice {v} {src}"));
+        let src = if z == "argv" { format!("- \"{toks}\" \"$@\"") } else { format!("{z} \"{toks}\"") };
+        self.hoists.push(format!("__fish_index {v} {src}"));
         v
     }
 
@@ -1051,42 +1071,45 @@ impl Emitter {
         self.hoist_id += 1;
         let arr = format!("__fa{}", self.hoist_id);
         self.hoists.push(format!("{arr}=({list})"));
-        self.index_words(&arr, toks)
+        format!("\"${{{}[@]}}\"", self.index_array(&arr, toks))
     }
 
-    /// The words `$name[idx…]` stands for, `z` being the zsh array that holds the list.
-    fn index_words(&mut self, z: &str, idx: &[String]) -> String {
-        let idx = self.index_tokens(idx);
-        idx.iter()
-            .map(|t| match dyn_range(t) {
-                Some((a, b)) => format!("\"${{{}[@]}}\"", self.dynamic_slice(z, a, b)),
-                None => {
-                    let (r, rev) = range_of(t);
-                    format!("\"${{(@{}){z}[{r}]}}\"", if rev { "Oa" } else { "" })
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(" ")
+    /// `$name[idx…]` for a variable with an index: the hoisted array of the selected
+    /// elements. A `*PATH` scalar is split on `:` first, as fish lists it.
+    fn var_index(&mut self, v: &VarRef, idx: &[String]) -> String {
+        let z = self.zn(&v.name);
+        if is_colon_scalar(&v.name) && !z.starts_with("__fx_") {
+            self.hoist_id += 1;
+            let arr = format!("__fa{}", self.hoist_id);
+            self.hoists.push(format!("{arr}=(${{{z}:+\"${{(@s.:.){z}}}\"}})"));
+            return self.index_array(&arr, idx);
+        }
+        self.index_array(&z, idx)
     }
 
-    /// Index tokens with any `(cmd)` token replaced by the variable its output was
-    /// hoisted into.
+    /// Index tokens with any `(cmd)` token, or `(cmd)` end of an `a..b` range, replaced
+    /// by the variable its output was hoisted into.
     fn index_tokens(&mut self, toks: &[String]) -> Vec<String> {
         toks.iter()
-            .map(|t| {
-                let inner = t.strip_prefix('(').and_then(|r| r.strip_suffix(')'));
-                match inner.and_then(|i| super::parse::parse(i).ok()) {
-                    Some(script) => {
-                        let text = self.script(&script);
-                        self.hoist_id += 1;
-                        let v = format!("__fc{}", self.hoist_id);
-                        self.hoists.push(format!("{v}=\"$( {text} )\""));
-                        format!("${v}")
-                    }
-                    None => self.map_index_vars(t),
-                }
+            .map(|t| match range_dots(t) {
+                Some(at) => format!("{}..{}", self.index_operand(&t[..at]), self.index_operand(&t[at + 2..])),
+                None => self.index_operand(t),
             })
             .collect()
+    }
+
+    fn index_operand(&mut self, t: &str) -> String {
+        let inner = t.strip_prefix('(').and_then(|r| r.strip_suffix(')'));
+        match inner.and_then(|i| super::parse::parse(i).ok()) {
+            Some(script) => {
+                let text = self.script(&script);
+                self.hoist_id += 1;
+                let v = format!("__fc{}", self.hoist_id);
+                self.hoists.push(format!("{v}=\"$( {text} )\""));
+                format!("${v}")
+            }
+            None => self.map_index_vars(t),
+        }
     }
 
     /// `$name` inside an index token, renamed to the zsh parameter that holds it.
@@ -1126,7 +1149,7 @@ impl Emitter {
             return format!("\"{}\"", deref_expr(&z, "@P"));
         }
         if let Some(idx) = &v.index {
-            return self.index_words(&z, idx);
+            return format!("\"${{{}[@]}}\"", self.var_index(v, idx));
         }
         if is_colon_scalar(n) && !z.starts_with("__fx_") {
             return format!("${{{z}:+\"${{(@s.:.){z}}}\"}}");
@@ -1167,18 +1190,10 @@ impl Emitter {
             return deref_expr(&z, "P");
         }
         if let Some(idx) = &v.index {
-            let idx = self.index_tokens(idx);
-            let parts: Vec<String> = idx
-                .iter()
-                .map(|t| match dyn_range(t) {
-                    Some((a, b)) => format!("${{(j: :){}}}", self.dynamic_slice(&z, a, b)),
-                    None => {
-                        let (r, rev) = range_of(t);
-                        format!("${{({}j: :){z}[{r}]}}", if rev { "Oa" } else { "" })
-                    }
-                })
-                .collect();
-            return parts.join(" ");
+            // only the elements that exist are joined, with the list's delimiter
+            let arr = self.var_index(v, idx);
+            let delim = if n.ends_with("PATH") { ".:." } else { ": :" };
+            return format!("${{(j{delim}){arr}}}");
         }
         if is_colon_scalar(n) && !z.starts_with("__fx_") {
             return format!("${{{z}}}");
@@ -1203,30 +1218,19 @@ fn special_scalar(name: &str) -> Option<&'static str> {
     }
 }
 
-/// One fish index token (`1`, `-1`, `2..4`, `$i`) as a zsh subscript range. A
-/// descending range of plain numbers is returned with `true` so the caller reverses it.
-fn range_of(t: &str) -> (String, bool) {
-    match t.split_once("..") {
-        Some((a, b)) => match (a.parse::<i64>(), b.parse::<i64>()) {
-            _ if a.is_empty() || b.is_empty() => (format!("{},{}", if a.is_empty() { "1" } else { a }, if b.is_empty() { "-1" } else { b }), false),
-            (Ok(x), Ok(y)) if x > y && (x < 0) == (y < 0) => (format!("{y},{x}"), true),
-            _ => (format!("{a},{b}"), false),
-        },
-        None => (format!("{t},{t}"), false),
+/// Byte offset of the `..` of an `a..b` index token, outside any `(cmd)`.
+fn range_dots(t: &str) -> Option<usize> {
+    let mut depth = 0i32;
+    let b = t.as_bytes();
+    for i in 0..b.len() {
+        match b[i] {
+            b'(' => depth += 1,
+            b')' => depth -= 1,
+            b'.' if depth == 0 && b.get(i + 1) == Some(&b'.') => return Some(i),
+            _ => {}
+        }
     }
-}
-
-/// An `a..b` index that `__fish_slice` has to resolve at run time: fish counts negative
-/// indices from the end, reverses a range whose start is after its end, and returns nothing
-/// when either end falls before the first element or the start is past the last. Only a
-/// range goes through the helper.
-fn dyn_range(t: &str) -> Option<(&str, &str)> {
-    let (a, b) = t.split_once("..")?;
-    let a = if a.is_empty() { "1" } else { a };
-    let b = if b.is_empty() { "-1" } else { b };
-    // (zsh's own `x[4,5]` on a three-element list is one empty word, not none, so even a
-    // plain ascending range goes through the helper)
-    Some((a, b))
+    None
 }
 
 /// Variables every shell session has, so `$HOME/x` need not pay for a loop.
@@ -1240,14 +1244,9 @@ fn is_list_part(p: &Part) -> bool {
         Part::Var(v) => {
             !v.deref && special_scalar(&v.name).is_none() && valid_param(&v.name)
         }
-        Part::Cmd(_, idx) => idx.is_none(),
+        Part::Cmd(..) => true,
         _ => false,
     }
-}
-
-/// fish index tokens as zsh subscript ranges.
-fn ranges(tokens: &[String]) -> Vec<(String, bool)> {
-    tokens.iter().map(|t| range_of(t)).collect()
 }
 
 /// Does any word contain an unquoted wildcard?
