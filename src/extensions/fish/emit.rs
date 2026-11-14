@@ -65,6 +65,9 @@ pub struct Emitter {
     piped_in: bool,
     /// The names `function_auto_local` gave out: they may refer to the global itself.
     pub(super) auto_locals: std::collections::HashSet<String>,
+    /// Emitting the body of a function that may run no command: a body that does run one
+    /// clears the function's `__fish_nr` as it starts (see [`Emitter::function`]).
+    track_ran: bool,
 }
 
 /// One lexical scope. fish scopes `set -l` to the enclosing block (`if`, `while`,
@@ -358,11 +361,19 @@ impl Emitter {
 
     /// A body, never empty: zsh rejects an empty `then`/`do`/`{}`.
     fn body(&mut self, s: &Script) -> String {
+        // in a function that may run nothing, a body that runs a command records that it
+        // did, keeping the status the body starts with
+        let mark = self.track_ran && !may_run_nothing(s);
+        let track = self.track_ran;
+        self.track_ran = track && !mark;
         self.scopes.push(Frame::default());
         let t = self.script(s);
         self.scopes.pop();
+        self.track_ran = track;
         if t.trim().is_empty() {
             ":".into()
+        } else if mark {
+            format!("__fish_ret $? ${{__fish_nr::=0}}\n{t}")
         } else {
             t
         }
@@ -691,13 +702,27 @@ impl Emitter {
             let m = self.declare_block_local(a);
             inner.push_str(&format!("local -a {m}=(\"${{(@)argv[{},{}]}}\")\n", k + 1, k + 1));
         }
+        // a function that ran no command at all returns 0 (exec.rs
+        // `get_performer_for_function`, `was_empty`). When the body may run none (its
+        // statements are loops, blocks and switches whose bodies can all go unrun),
+        // `__fish_nr` stays 1 until a body that runs a command starts, and the end of the
+        // function turns its status into 0 if it is still 1.
+        let track = std::mem::replace(&mut self.track_ran, !body.is_empty() && may_run_nothing(body));
+        let tracked = self.track_ran;
         let text = self.script(body);
+        self.track_ran = track;
         if let Some(f) = self.scopes.pop() {
             for d in f.entry {
                 inner.insert_str(0, &format!("{d}\n"));
             }
         }
-        inner.push_str(if text.trim().is_empty() { ":" } else { &text });
+        if tracked {
+            inner.push_str(&format!(
+                "{{ __fish_es=$?; local __fish_nr=1; __fish_ret $__fish_es; }}\n{text}\n__fish_ret $(( __fish_nr ? 0 : $? ))"
+            ));
+        } else {
+            inner.push_str(if text.trim().is_empty() { ":" } else { &text });
+        }
         self.fn_depth -= 1;
         let mut out = format!("function {} {{\n{inner}\n}}", quote_lit(&name));
         // what `functions NAME`, `type` and `funcsave` show: the definition as written, with
@@ -1387,6 +1412,35 @@ fn is_list_part(p: &Part) -> bool {
 }
 
 /// Does any word contain an unquoted wildcard?
+/// Can running `s` execute no command at all? Only when every statement is a `for`
+/// (whose list may be empty, or whose body may run nothing), a `begin`, a `switch`
+/// (whose subject may match no case, or an empty one) or a function definition, with no
+/// command substitution in a list, subject or pattern. A plain command, a condition
+/// (`if`, `while`), a pipeline, `not`, and an `and`/`or` statement count as running one.
+fn may_run_nothing(s: &Script) -> bool {
+    fn has_cmdsub(w: &Word) -> bool {
+        w.parts.iter().any(|p| match p {
+            Part::Cmd(..) => true,
+            Part::Double(ds) => ds.iter().any(|d| matches!(d, DPart::Cmd(_))),
+            _ => false,
+        })
+    }
+    fn cmd(c: &Cmd) -> bool {
+        match c {
+            Cmd::For { list, body, .. } => {
+                let literal = !list.is_empty() && list.iter().all(|w| w.text().is_some());
+                !list.iter().any(has_cmdsub) && (!literal || may_run_nothing(body))
+            }
+            Cmd::Begin { body, .. } => may_run_nothing(body),
+            Cmd::Switch { subject, cases, .. } => !has_cmdsub(subject) && !cases.iter().any(|(pats, _)| pats.iter().any(has_cmdsub)),
+            Cmd::Function { .. } => true,
+            Cmd::WithEnv { inner, .. } => cmd(inner),
+            Cmd::Simple { .. } | Cmd::If { .. } | Cmd::While { .. } => false,
+        }
+    }
+    s.iter().all(|st| st.conn == Conn::Seq && !st.job.negate && !st.job.bg && st.job.cmds.len() == 1 && cmd(&st.job.cmds[0].0))
+}
+
 fn has_glob(words: &[Word]) -> bool {
     words.iter().any(|w| {
         w.parts
