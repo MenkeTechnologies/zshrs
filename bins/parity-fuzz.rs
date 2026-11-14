@@ -97,6 +97,7 @@ enum ShellTarget {
     Pdksh,
     Ash,
     Csh,
+    Fish,
 }
 
 /// Which grammar the generator emits for a target.
@@ -112,6 +113,8 @@ enum GenKind {
     Bash,
     /// csh/tcsh (`set`, `@`, `if (…) then`, `foreach`, `switch`, `$#x`, `$x[n]`).
     Csh,
+    /// fish (`set` scopes and list indexing, `string`, `math`, `switch`, `(…)`).
+    Fish,
 }
 
 /// How to invoke the reference (oracle) for a target.
@@ -228,11 +231,26 @@ fn target_cfg(t: ShellTarget) -> TargetCfg {
             refk: RefKind::Real(&["/bin/tcsh", "tcsh", "/opt/homebrew/bin/tcsh", "/bin/csh", "csh"]),
             gen: GenKind::Csh,
         },
+        // Same contract as `tests/fish_parity.rs`: the script runs as a FILE with
+        // startup files off (`fish --no-config` / `zshrs --fish -f`), in an empty
+        // scratch cwd under an empty `$HOME` (see `run_fish_side`).
+        Fish => TargetCfg {
+            name: "fish",
+            flags: &["--fish"],
+            refk: RefKind::Real(&[
+                "/opt/homebrew/bin/fish",
+                "/usr/local/bin/fish",
+                "/usr/bin/fish",
+                "/bin/fish",
+                "fish",
+            ]),
+            gen: GenKind::Fish,
+        },
     }
 }
 
 /// All targets, for `--matrix` enumeration.
-const ALL_TARGETS: [ShellTarget; 11] = [
+const ALL_TARGETS: [ShellTarget; 12] = [
     ShellTarget::Zsh,
     ShellTarget::Bash,
     ShellTarget::Ksh,
@@ -244,6 +262,7 @@ const ALL_TARGETS: [ShellTarget; 11] = [
     ShellTarget::Pdksh,
     ShellTarget::Ash,
     ShellTarget::Csh,
+    ShellTarget::Fish,
 ];
 
 fn target_from_name(s: &str) -> Option<ShellTarget> {
@@ -259,6 +278,7 @@ fn target_from_name(s: &str) -> Option<ShellTarget> {
         "pdksh" => ShellTarget::Pdksh,
         "ash" => ShellTarget::Ash,
         "csh" | "tcsh" => ShellTarget::Csh,
+        "fish" => ShellTarget::Fish,
         _ => return None,
     })
 }
@@ -345,11 +365,15 @@ fn reference_oracle_id() -> String {
         RefKind::ZshEmulate(mode) => format!("{} (emulate {mode})", zsh_oracle_id()),
         RefKind::Real(_) => {
             let path = reference_bin(t).unwrap_or_else(|| cfg.name.to_string());
+            // fish does not parse the Bourne probe below; `--version` prints
+            // `fish, version 4.9.3`.
+            let probe: &[&str] = if t == ShellTarget::Fish {
+                &["--version"]
+            } else {
+                &["-c", "printf %s \"${KSH_VERSION:-${BASH_VERSION:-${0##*/}}}\""]
+            };
             let ver = Command::new(&path)
-                .args([
-                    "-c",
-                    "printf %s \"${KSH_VERSION:-${BASH_VERSION:-${0##*/}}}\"",
-                ])
+                .args(probe)
                 .output()
                 .ok()
                 .filter(|o| o.status.success())
@@ -579,10 +603,61 @@ fn csh_script_file(script: &str) -> PathBuf {
     path
 }
 
+/// The fish target's fixed run environment, created once per process under the
+/// temp dir: an empty `cwd` and an empty `home`, the same contract as
+/// `tests/fish_parity.rs`. Kept out of the source tree's `target/`, which other
+/// builds wipe mid-run.
+fn fish_dirs() -> &'static (PathBuf, PathBuf) {
+    static DIRS: std::sync::OnceLock<(PathBuf, PathBuf)> = std::sync::OnceLock::new();
+    DIRS.get_or_init(|| {
+        let root = std::env::temp_dir().join(format!("parity-fuzz-fish-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (cwd, home) = (root.join("cwd"), root.join("home"));
+        std::fs::create_dir_all(&cwd).expect("create fish scratch cwd");
+        std::fs::create_dir_all(&home).expect("create fish scratch home");
+        (cwd, home)
+    })
+}
+
+/// Run one side of the fish target: `bin args… FILE` with the environment of
+/// `tests/fish_parity.rs` (only HOME, PATH, TERM=dumb, LC_ALL=C.UTF-8).
+///
+/// The script file has ONE path per worker thread, rewritten for each run, so
+/// the reference and zshrs read the same path: a diagnostic that names the file
+/// (`(file …: line N)`) and `status filename` are identical on both sides.
+fn run_fish_side(bin: &str, args: &[&str], script: &str, timeout: Duration) -> RunOut {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    thread_local! {
+        static SLOT: u64 = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    let (cwd, home) = fish_dirs();
+    let file = cwd
+        .parent()
+        .unwrap()
+        .join(format!("case-{}.fish", SLOT.with(|s| *s)));
+    let _ = std::fs::write(&file, script);
+    let mut cmd = Command::new(bin);
+    cmd.args(args)
+        .arg(&file)
+        .env_clear()
+        .env("HOME", home)
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("TERM", "dumb")
+        .env("LC_ALL", "C.UTF-8")
+        .current_dir(cwd);
+    let out = run_with_timeout_stdin(cmd, timeout, None);
+    let _ = std::fs::remove_file(&file);
+    out
+}
+
 /// Run the reference (oracle) for the current target on `script`.
 fn run_zsh(script: &str, timeout: Duration) -> RunOut {
     let t = shell_target();
     let cfg = target_cfg(t);
+    if t == ShellTarget::Fish {
+        let bin = reference_bin(t).unwrap_or_else(|| cfg.name.to_string());
+        return run_fish_side(&bin, &["--no-config"], script, timeout);
+    }
     match cfg.refk {
         RefKind::Zsh => {
             // Real zsh: `-f -c` (rich syntax). Honours Shinstdin (stdin) mode.
@@ -658,6 +733,10 @@ fn run_zsh(script: &str, timeout: Duration) -> RunOut {
 /// Run `zshrs` in the current target's emulation on `script`.
 fn run_zshrs(script: &str, bin: &Path, timeout: Duration) -> RunOut {
     let cfg = target_cfg(shell_target());
+    if shell_target() == ShellTarget::Fish {
+        // `-f` is fish's `--no-config` in `--fish` mode.
+        return run_fish_side(&bin.to_string_lossy(), &["--fish", "-f"], script, timeout);
+    }
     let mut cmd = Command::new(bin);
     // Only the real-zsh target carries the Shinstdin (stdin) mode.
     let stdin = matches!(cfg.refk, RefKind::Zsh) && stdin_mode();
@@ -12310,6 +12389,115 @@ fn gen_csh(seed: u64) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
+// fish grammar (`--shell fish`)
+// ---------------------------------------------------------------------------
+
+/// Variables every fish program starts with. Fixed names, deterministic values:
+/// a scalar, a five-element list, a number, an EMPTY list (zero elements, not
+/// one empty element), a list whose first element has a space, and a path.
+const FISH_PREAMBLE: &str = "set -g s Hello_World\n\
+set -g l one two three four five\n\
+set -g n 42\n\
+set -g e\n\
+set -g w 'a b' c\n\
+set -g p /usr/local/bin/fish.tar.gz";
+
+/// List subscripts: single, negative, ranges (open, reversed, past the end) and
+/// a multi-index. Index 0 is left out — fish rejects it at parse time.
+const FISH_INDICES: &[&str] = &[
+    "1", "2", "-1", "-2", "5", "9", "-9", "1..2", "2..-1", "-1..1", "3..", "..2", "2..9", "1 3",
+    "-3..-2",
+];
+
+/// Arguments, already in fish quoting: plain, empty, with a space, a leading
+/// dash, separators, padding, mixed case.
+const FISH_WORDS: &[&str] = &[
+    "a", "Hello_World", "42", "'x y'", "''", "-n", "a,b,,c", "'  pad  '", "ABC", "o",
+];
+
+/// One fish statement (possibly a multi-line block). Every construct was run
+/// through fish 4.9 before it was added: each is accepted by fish and prints
+/// the same thing on every run — no `random`, pids, time, universal variables,
+/// job control, history, or wildcards over the filesystem.
+fn fish_one(rng: &mut StdRng) -> String {
+    let var = *pick(rng, &["s", "l", "n", "e", "w", "p"]);
+    let list = *pick(rng, &["l", "w", "e"]);
+    let list2 = *pick(rng, &["l", "w", "e"]);
+    let idx = *pick(rng, FISH_INDICES);
+    let word = *pick(rng, FISH_WORDS);
+    let word2 = *pick(rng, FISH_WORDS);
+    let num = rng.gen_range(0..20);
+    let num2 = rng.gen_range(1..9);
+    let cmp = *pick(rng, &["-eq", "-ne", "-lt", "-gt", "-le", "-ge"]);
+    let glob = *pick(rng, &["'H*'", "'*_*'", "'4?'", "'*o*'", "'[a-z]*'", "Hello_World", "'*'", "''"]);
+    match rng.gen_range(0..46) {
+        // Expansion and indexing.
+        0 => format!("echo ${var} (count ${list}) ${list}"),
+        1 => format!("echo ${list}[{idx}] /"),
+        2 => format!("echo \"${list}[{idx}]\" /"),
+        3 => format!("echo ${list}${list2} / x${list}y"),
+        4 => format!("echo {{a,b}}{{1,2}} x{{,{word}}}y pre{{a,b}}${list}"),
+        5 => format!("echo (string split , a,b,c)[{}] (echo {word}) \"$(echo {word2} ${list})\" $(printf '%s\\n' ${list})", *pick(rng, &["1", "2", "-1", "2..3"])),
+        // `set` and its scopes.
+        6 => format!("set -l x {word} B C\nset -a x {word2}\nset -p x Z\necho (count $x) $x"),
+        7 => format!("set -l x $l\nset -e x[{}]\necho (count $x) $x", *pick(rng, &["2", "-1", "1..2", "2 4", "-2..-1"])),
+        8 => format!("set -l x $l\nset x[{}\necho (count $x) $x", *pick(rng, &["2] NEW", "-1] NEW", "1 3] N1 N2", "7] NEW", "2..3] N2 N3"])),
+        9 => format!("set -q {}\necho $status", *pick(rng, &["s", "e", "nope", "l[3]", "l[9]", "s e nope", "w[2]"])),
+        10 => format!("set -l x {word}\nset -e x\nset -q x\necho $status \"[$x]\""),
+        11 => format!("function h\n    echo \"[$x]\"\nend\nset -l x {word}\nh\nset -g x {word2}\nh"),
+        12 => format!("function sg\n    set -g G {word}\n    set -l L {word2}\nend\nsg\necho \"[$G]\" \"[$L]\""),
+        13 => format!("begin\n    set -l x {word}\n    echo \"[$x]\"\nend\necho \"[$x]\""),
+        14 => format!("set -lx V {word}\nsh -c 'echo \"[$V]\"'\nset -gx V2 {word2}\nsh -c 'echo \"[$V2]\"'"),
+        // `string`.
+        15 => format!("string {} -- ${var}\necho $status", *pick(rng, &["upper", "lower", "length", "length -q", "escape", "trim"])),
+        16 => format!("string split {} -- {} {word}\necho $status", *pick(rng, &["", "-m1", "-r -m1", "-n", "-f2", "-f1,3"]), *pick(rng, &[",", "_", "o", "''", "' '"])),
+        17 => format!("string join {} ${list}\necho $status", *pick(rng, &[",", "''", "' - '", "_"])),
+        18 => format!("string replace {} {} {} ${var}\necho $status", *pick(rng, &["", "-a", "-r", "-ra", "-i", "-f"]), *pick(rng, &["o", "l+", "'(\\w+)_(\\w+)'", "hello", "''"]), *pick(rng, &["0", "L", "'$2_$1'", "''"])),
+        19 => format!("string match {} {glob} ${var}\necho $status", *pick(rng, &["", "-i", "-v", "-q", "-n", "-e", "-a"])),
+        20 => format!("string match {} {} ${var}\necho $status", *pick(rng, &["-r", "-ra", "-rg", "-rq", "-rv", "-rn"]), *pick(rng, &["'(\\w+)_(\\w+)'", "l", "'o(.)'", "'^t'", "'e$'", "'[0-9]+'"])),
+        21 => format!("string sub {} ${var}", *pick(rng, &["-s 2", "-s -3", "-s 2 -l 3", "-l 4", "-e 3", "-s 3 -e -1", "-s 9"])),
+        22 => format!("echo \"[\"(string trim {} -- {word})\"]\"", *pick(rng, &["", "-l", "-r", "-c _", "-c ' a'"])),
+        23 => format!("string repeat -n {} {} -- {word}\necho", rng.gen_range(0..4), *pick(rng, &["", "-m 5", "--no-newline"])),
+        24 => format!("string pad -w {} {} -- {word} {word2}", rng.gen_range(0..10), *pick(rng, &["", "-r", "-c .", "-r -c ."])),
+        25 => format!("count (string split , a,b,c) ${list}; echo $status; count; echo $status"),
+        // `math`.
+        26 => format!("math {num} {} {num2}", *pick(rng, &["+", "-", "x", "/", "%", "^"])),
+        27 => format!("math -s{} {num} / {num2}", rng.gen_range(0..4)),
+        28 => format!("math '{}'", *pick(rng, &["max(3,5)", "min(3,-5)", "abs(-3)", "floor(2.7)", "ceil(2.1)", "round(2.5)", "sqrt(2)", "2^10", "(1+2)*3", "10 % 4", "1/0", "0x10 + 1"])),
+        29 => format!("math $n {} {num2}\necho $status", *pick(rng, &["+", "/", "x", "-"])),
+        // `test` / `[`.
+        30 => format!("test {num} {cmp} {num2}; and echo yes; or echo no"),
+        31 => format!("[ \"${var}\" {} {word} ]\necho $status", *pick(rng, &["=", "!="])),
+        32 => format!("test {} \"${var}\"\necho $status", *pick(rng, &["-n", "-z"])),
+        // Control flow.
+        33 => format!("if test {num} -gt {num2}\n    echo big\nelse if test {num} -eq {num2}\n    echo same\nelse\n    echo small\nend"),
+        // `switch` takes exactly one argument: scalars only.
+        34 => format!("switch ${}\n    case {glob}\n        echo first\n    case 'H*' '4*'\n        echo second\n    case '*'\n        echo other\nend", *pick(rng, &["s", "n", "p", "w[1]"])),
+        35 => format!("for i in ${list}\n    if test \"$i\" = {}\n        {}\n    end\n    echo $i\nend", *pick(rng, &["two", "three", "c", "nope"]), *pick(rng, &["continue", "break"])),
+        36 => format!("set -l i 0\nwhile test $i -lt {}\n    set i (math $i + 1)\n    echo $i\nend", rng.gen_range(0..5)),
+        37 => format!("{} test {num} {cmp} {num2}; and echo A; or echo B\nnot {}; echo $status", *pick(rng, &["", "not"]), *pick(rng, &["true", "false"])),
+        38 => format!("{} && echo a || echo b; {} || echo c; echo $status", *pick(rng, &["true", "false"]), *pick(rng, &["true", "false"])),
+        // Functions.
+        39 => format!("function f\n    echo (count $argv) \"[$argv[1]]\" $argv[-1]\nend\nf {word} {word2}\nf"),
+        40 => format!("function g --argument-names x y\n    echo \"[$x]\" \"[$y]\" (count $argv)\nend\ng {word}\ng {word} {word2} z"),
+        41 => format!("function r\n    return {}\nend\nr\necho $status", rng.gen_range(0..4)),
+        // Builtins.
+        42 => format!("contains {} -- {word} ${list}\necho $status", *pick(rng, &["", "-i"])),
+        43 => format!("printf '{}' {word} {num} {word2}", *pick(rng, &["%s:%d\\n", "%5s|%-4s|\\n", "%03d %x\\n", "[%s]", "%c%c\\n", "%5.2f\\n"])),
+        44 => format!("echo {} {word} {word2}\necho", *pick(rng, &["-n", "-e 'a\\tb'", "-s", "--", "-ne 'x\\ny'"])),
+        _ => format!("{}; echo $status\nfalse | true; echo $pipestatus\nstatus {}; echo $status", *pick(rng, &["false", "true", "not false"]), *pick(rng, &["is-interactive", "is-block", "is-login", "is-command-substitution"])),
+    }
+}
+
+/// fish program generator (`--shell fish`).
+fn gen_fish(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts = vec![FISH_PREAMBLE.to_string()];
+    stmts.extend((0..rng.gen_range(2..=5)).map(|_| fish_one(&mut rng)));
+    stmts
+}
+
+// ---------------------------------------------------------------------------
 // `--mode expand` — expansion semantics across the Bourne family
 // ---------------------------------------------------------------------------
 
@@ -12328,15 +12516,15 @@ enum ExpandDialect {
     Bash,
 }
 
-/// The expansion dialect for `t`, or `None` for the csh family (which has its
-/// own grammar and does not use `$((…))`/`${v:-w}` at all).
+/// The expansion dialect for `t`, or `None` for the csh family and fish (each
+/// has its own grammar and does not use `$((…))`/`${v:-w}` at all).
 fn expand_dialect(t: ShellTarget) -> Option<ExpandDialect> {
     use ShellTarget::*;
     Some(match t {
         Sh | Dash | Ash | ShZsh => ExpandDialect::Posix,
         Ksh | Mksh | Pdksh | KshZsh | Zsh => ExpandDialect::Ksh,
         Bash => ExpandDialect::Bash,
-        Csh => return None,
+        Csh | Fish => return None,
     })
 }
 
@@ -12656,6 +12844,7 @@ fn gen_case(seed: u64, mode: Mode) -> Vec<String> {
         GenKind::Posix => return gen_posix(seed),
         GenKind::Bash => return gen_bash(seed),
         GenKind::Csh => return gen_csh(seed),
+        GenKind::Fish => return gen_fish(seed),
     }
     match mode {
         Mode::Stateful => gen_program(seed),
@@ -12732,7 +12921,7 @@ fn gen_case(seed: u64, mode: Mode) -> Vec<String> {
         Mode::Qjoin => gen_qjoin(seed),
         Mode::Wordsplit => gen_wordsplit(seed),
         Mode::Reject => gen_reject(seed),
-        // Targets without an expand dialect (csh) already returned above.
+        // Targets without an expand dialect (csh, fish) already returned above.
         Mode::Expand => gen_posix(seed),
     }
 }
@@ -12980,7 +13169,7 @@ fn parse_args() -> Args {
             }
             // `--shell <name>` — one of the differential targets (default
             // zsh): zsh, bash, ksh, sh, dash, sh/zsh-style, ksh/zsh-style,
-            // mksh, pdksh, ash, csh.
+            // mksh, pdksh, ash, csh, fish.
             "--shell" => {
                 i += 1;
                 match argv.get(i).and_then(|s| target_from_name(s)) {
@@ -13039,7 +13228,7 @@ fn parse_args() -> Args {
                      gflag, select, bindkey, zmv, zcalc, rcexpand,\n\
                      cond, funclist, shinstdin, mbident, jobs, extglob,\n\
                      flagorder, qjoin, wordsplit, reject, expand\n\
-                     (expand fuzzes expansion semantics on EVERY non-csh\n\
+                     (expand fuzzes expansion semantics on EVERY Bourne-family\n\
                      target: it picks a POSIX / ksh / bash dialect from\n\
                      --shell, so `--matrix --mode expand` covers sh, dash,\n\
                      ash, ksh, mksh, pdksh, bash and the zsh-style legs)\n\
@@ -13053,6 +13242,10 @@ fn parse_args() -> Args {
                                       real pdksh/mksh/oksh vs `zshrs --pdksh` using\n\
                                       a ksh/POSIX generator (mode is ignored).\n\
                                       `--pdksh` is shorthand. Skips if no ref found.\n\
+                                      fish differentials `fish --no-config` vs\n\
+                                      `zshrs --fish -f` with a fish grammar (`set`\n\
+                                      scopes/indexing, `string`, `math`, `switch`,\n\
+                                      functions); mode is ignored.\n\
                      --stderr         also require the DIAGNOSTICS to match (the\n\
                                       leading `zsh:`/`zshrs:` tag is normalized\n\
                                       away; the wording after it must agree)\n\
