@@ -190,17 +190,20 @@ thread_local! {
     static STDIN_SHAPE: std::cell::Cell<Option<(usize, bool)>> = const { std::cell::Cell::new(None) };
 }
 
-thread_local! {
-    /// `string` was told its stdin is redirected (`__fish_strin=1`, set by the translator
-    /// for a `string` that is not first in its pipeline or has a `<` of its own).
-    static STRING_STDIN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+/// fish's `string`, `count`, `math` and `path` take their input from stdin only when their
+/// own stdin is redirected: not first in the pipeline, or a `<` of their own (exec.rs
+/// `get_performer_for_builtin`, builtins/shared/misc.rs `Arguments::new`). The translator
+/// marks such a command with `__fish_stdin=1`; otherwise stdin is not read at all, even
+/// with no operands, so `(count)` with a pipe for stdin does not wait on it.
+fn stdin_redirected() -> bool {
+    crate::ported::params::getsparam("__fish_stdin").as_deref() == Some("1")
 }
 
 /// The strings a `string` subcommand works on. fish reads them from stdin when the
 /// command's stdin is redirected and from the operands otherwise, never both and
 /// regardless of whether there are operands (builtins/shared/misc.rs `Arguments::new`).
 fn string_inputs(operands: &[String]) -> Vec<String> {
-    if STRING_STDIN.with(std::cell::Cell::get) {
+    if stdin_redirected() {
         inputs(&[], false)
     } else {
         operands.to_vec()
@@ -222,8 +225,11 @@ impl Out {
         }
     }
     fn line(&mut self, s: &str) {
+        self.line_bytes(s.as_bytes());
+    }
+    fn line_bytes(&mut self, s: &[u8]) {
         if !self.quiet {
-            self.buf.extend_from_slice(s.as_bytes());
+            self.buf.extend_from_slice(s);
             self.buf.push(if self.nul { 0 } else { b'\n' });
         }
     }
@@ -303,8 +309,7 @@ fn string(args: &[String]) -> i32 {
     };
     // with stdin redirected, operands beyond the subcommand's own leading ones (the
     // separator, pattern, count…) are an error (string.rs `run_impl`, TOO_MANY_ARGUMENTS)
-    let strin = crate::ported::params::getsparam("__fish_strin").as_deref() == Some("1");
-    STRING_STDIN.with(|s| s.set(strin));
+    let strin = stdin_redirected();
     let leading = match sub.as_str() {
         "split" | "join" | "match" => 1,
         "replace" => 2,
@@ -320,9 +325,19 @@ fn string(args: &[String]) -> i32 {
         "length" => {
             let mut any = false;
             for s in string_inputs(&o.rest) {
-                let n = s.chars().count();
-                any |= n > 0;
-                out.line(&n.to_string());
+                if !o.has('V') {
+                    let n = s.chars().count();
+                    any |= n > 0;
+                    out.line(&n.to_string());
+                    continue;
+                }
+                // length.rs -V: a width per line, the widest stretch between carriage
+                // returns, escape sequences taking none
+                for line in s.split('\n') {
+                    let n = line.split('\r').map(|r| width_without_escapes(&r.chars().collect::<Vec<_>>(), 0)).max().unwrap_or(0);
+                    any |= n > 0;
+                    out.line(&n.to_string());
+                }
             }
             i32::from(!any)
         }
@@ -413,10 +428,12 @@ fn string(args: &[String]) -> i32 {
         "unescape" => {
             // (unescape.rs: an argument that does not decode is skipped; status 1 when
             // none did)
+            let style = o.val('s').unwrap_or("script");
             let mut any = false;
             for s in string_inputs(&o.rest) {
-                if let Some(u) = unescape(&s, o.val('s').unwrap_or("script")) {
-                    out.line(&u);
+                let u = if style == "script" { unescape_script(&s) } else { unescape(&s, style).map(String::into_bytes) };
+                if let Some(u) = u {
+                    out.line_bytes(&u);
                     any = true;
                 }
             }
@@ -614,7 +631,7 @@ fn str_split(o: &Opts, out: &mut Out, nul: bool) -> i32 {
     let o = &without_dashdash(o);
     let (sep, items) = if nul {
         // fish reads split0's stdin whole (`SplitBehavior::Never`) and splits it on NUL
-        let items = if STRING_STDIN.with(std::cell::Cell::get) {
+        let items = if stdin_redirected() {
             let mut buf = Vec::new();
             let _ = std::io::stdin().lock().read_to_end(&mut buf);
             if buf.is_empty() { Vec::new() } else { vec![String::from_utf8_lossy(&buf).into_owned()] }
@@ -998,36 +1015,22 @@ fn str_replace(o: &Opts, out: &mut Out) -> i32 {
         None
     };
     let names: Vec<&str> = re.as_ref().map_or(Vec::new(), |r| r.capture_names().flatten().collect());
+    // the retry after an empty match: anchored where the search started, not empty there
+    let retry = re.as_ref().and_then(|_| {
+        let p = if icase { format!("(?i)\\G(?:{pat})") } else { format!("\\G(?:{pat})") };
+        fancy_regex::RegexBuilder::new(&p).find_not_empty(true).build().ok()
+    });
     let mut replace_count = 0usize;
     for s in &items {
         let replaced = match &re {
             // an empty literal pattern replaces nothing
             None if pat.is_empty() => None,
             None => replace_literal(s, pat, rep, icase, o.has('a')),
-            Some(re) => {
-                let mut result = String::new();
-                let mut last = 0;
-                let mut any = false;
-                for caps in re.captures_iter(s).flatten() {
-                    let m = caps.get(0).unwrap();
-                    if m.start() == m.end() && m.start() >= s.len() && any {
-                        break;
-                    }
-                    any = true;
-                    result.push_str(&s[last..m.start()]);
-                    match expand_replacement(rep, &caps, &names) {
-                        Ok(t) => result.push_str(&t),
-                        // the arguments before this one stay printed
-                        Err(e) => return err("string replace", &e),
-                    }
-                    last = m.end();
-                    if !o.has('a') {
-                        break;
-                    }
-                }
-                result.push_str(&s[last..]);
-                any.then_some(result)
-            }
+            Some(re) => match pcre2_substitute(re, retry.as_ref(), s, o.has('a'), |caps| expand_replacement(rep, caps, &names)) {
+                Ok(r) => r,
+                // the arguments before this one stay printed
+                Err(e) => return err("string replace", &e),
+            },
         };
         replace_count += usize::from(replaced.is_some());
         match replaced {
@@ -1042,26 +1045,151 @@ fn str_replace(o: &Opts, out: &mut Out) -> i32 {
     i32::from(replace_count == 0)
 }
 
-/// A character's terminal width as fish counts it (`fish_wcwidth_visible`): backspace is
-/// -1, other non-printing characters 0.
-fn visible_char_width(c: char) -> isize {
-    if c == '\x08' {
-        return -1;
+/// `pcre2_substitute` (pcre2_substitute.c, the global loop), which fish's `replace -r`
+/// calls through `Regex::replace{,_all}` (string/replace.rs `StringReplacer::replace`).
+/// After an empty match that did not start past the search point, the next search is
+/// anchored there and may not be empty (`PCRE2_NOTEMPTY_ATSTART | PCRE2_ANCHORED`, the
+/// `retry` regex); when that fails one character is copied and the search goes on. An
+/// empty match right after a non-empty one counts, and so does one at the end of the
+/// subject: `string replace -ra '' L one` is `LoLnLeL`, `replace -ra 'x*' - xa` is `--a-`.
+/// `None` when nothing matched.
+fn pcre2_substitute(
+    re: &fancy_regex::Regex,
+    retry: Option<&fancy_regex::Regex>,
+    s: &str,
+    global: bool,
+    mut expand: impl FnMut(&fancy_regex::Captures) -> Result<String, String>,
+) -> Result<Option<String>, String> {
+    let mut result = String::new();
+    let mut subs = 0usize;
+    let mut start = 0;
+    let mut anchored = false;
+    // the previous match and the offset its search started from (`ovecsave`)
+    let mut save: Option<(usize, usize, usize)> = None;
+    loop {
+        let found = if anchored { retry.and_then(|r| r.captures_from_pos(s, start).ok().flatten()) } else { re.captures_from_pos(s, start).ok().flatten() };
+        let Some(caps) = found else {
+            if !anchored || start >= s.len() {
+                break;
+            }
+            // advance one character, copying it
+            let next = start + s[start..].chars().next().map_or(1, char::len_utf8);
+            result.push_str(&s[start..next]);
+            start = next;
+            anchored = false;
+            continue;
+        };
+        let m = caps.get(0).unwrap();
+        if let Some((s0, e0, from)) = save.filter(|&(s0, e0, _)| (s0, e0) == (m.start(), m.end())) {
+            // the same empty match found again from its own end: retry anchored there
+            if m.start() == m.end() && from != start {
+                save = Some((s0, e0, start));
+                anchored = true;
+                continue;
+            }
+            return Err("Regular expression substitute error: internal error - duplicate substitution match".into());
+        }
+        subs += 1;
+        result.push_str(&s[start..m.start()]);
+        result.push_str(&expand(&caps)?);
+        save = Some((m.start(), m.end(), start));
+        anchored = m.start() == m.end() && m.start() <= start;
+        start = m.end();
+        if !global {
+            break;
+        }
     }
-    unicode_width::UnicodeWidthChar::width(c).unwrap_or(0) as isize
+    result.push_str(&s[start..]);
+    Ok((subs > 0).then_some(result))
 }
 
-/// The width of a string on its own line: a backspace cannot take it below 0.
-fn visible_width(s: &[char]) -> usize {
-    s.iter().fold(0isize, |w, &c| {
+/// A character's terminal width as fish counts it (wcstringutil `fish_wcwidth_visible` over
+/// fallback `fish_wcwidth`): backspace is -1, other non-printing characters 0, VS16 1,
+/// VS15 and the Fitzpatrick modifiers 0.
+fn visible_char_width(c: char) -> isize {
+    match c {
+        '\x08' => -1,
+        '\u{FE0F}' => 1,
+        '\u{FE0E}' | '\u{1F3FB}'..='\u{1F3FF}' => 0,
+        c => unicode_width::UnicodeWidthChar::width(c).unwrap_or(0) as isize,
+    }
+}
+
+/// wstr `char_at`: the character at `i`, NUL just past the end.
+fn char_at(s: &[char], i: usize) -> char {
+    s.get(i).copied().unwrap_or('\0')
+}
+
+/// The length of the terminal escape sequence that starts `code`, if it is one
+/// (screen.rs `escape_code_length`): a screen-name `\ek…\e\\`, an OSC `\e]…` ended by BEL
+/// or `\e\\`, a three-character `\e[` + `@`..`_`, a CSI `\e[…` up to its final character,
+/// or a two-character `\e` + `@`..`_`.
+fn escape_code_length(code: &[char]) -> Option<usize> {
+    if char_at(code, 0) != '\x1b' {
+        return None;
+    }
+    // is_screen_name_escape_seq (its tmux test compares the whole code, ESC included, with
+    // `Ptmux;`, so only `\ek` gets past it)
+    let screen_name = || {
+        if char_at(code, 1) != 'k' {
+            return None;
+        }
+        let end = code[2..].windows(2).position(|w| w == ['\x1b', '\\']);
+        Some(end.map_or(2, |p| 2 + p + 2))
+    };
+    let osc = || {
+        if char_at(code, 1) != ']' {
+            return None;
+        }
+        (2..code.len()).find(|&i| code[i] == '\x07' || (code[i] == '\\' && code[i - 1] == '\x1b')).map(|i| i + 1)
+    };
+    let three_byte = || (char_at(code, 1) == '[' && ('@'..='_').contains(&char_at(code, 2))).then_some(3);
+    let csi = || {
+        if char_at(code, 1) != '[' {
+            return None;
+        }
+        let mut cursor = 2;
+        while cursor < code.len() {
+            let c = code[cursor];
+            if !c.is_ascii() {
+                break;
+            }
+            cursor += 1;
+            if ('@'..'~').contains(&c) {
+                break;
+            }
+        }
+        Some(cursor)
+    };
+    let two_byte = || ('@'..='_').contains(&char_at(code, 1)).then_some(2);
+    screen_name().or_else(osc).or_else(three_byte).or_else(csi).or_else(two_byte)
+}
+
+/// string.rs `width_without_escapes`: the width of `s[start..]` on its own line (a
+/// backspace cannot take it below 0), less the width of the escape sequences in it.
+fn width_without_escapes(s: &[char], start: usize) -> usize {
+    let mut width = s[start..].iter().fold(0isize, |w, &c| {
         let cw = visible_char_width(c);
         if cw > 0 || w > 0 { w + cw } else { w }
-    }) as usize
+    });
+    let mut pos = start;
+    while let Some(off) = s[pos..].iter().position(|&c| c == '\x1b') {
+        pos += off;
+        match escape_code_length(&s[pos..]) {
+            Some(len) => {
+                width -= s[pos..pos + len].iter().map(|&c| visible_char_width(c)).sum::<isize>();
+                // (the code may hold a second escape, `\e(B\e[m`)
+                pos += len - 1;
+            }
+            None => pos += 1,
+        }
+    }
+    width.max(0) as usize
 }
 
 /// shorten.rs: each line is cut to `-m` columns (default: the narrowest non-empty line),
 /// the ellipsis counting toward the width and dropped when it alone is wider than that.
-/// `-m 0` shortens nothing. Escape sequences are counted as text here.
+/// `-m 0` shortens nothing. Escape sequences take no width and are kept whole.
 fn str_shorten(o: &Opts, out: &mut Out) -> i32 {
     let ell: Vec<char> = o.val('c').unwrap_or("…").chars().collect();
     let max = match o.val('m') {
@@ -1092,7 +1220,7 @@ fn str_shorten(o: &Opts, out: &mut Out) -> i32 {
             if o.has('N') {
                 l.extend(&ell);
             }
-            let w = visible_width(&l);
+            let w = width_without_escapes(&l, 0);
             if w > 0 && w < min_width {
                 min_width = w;
             }
@@ -1100,19 +1228,28 @@ fn str_shorten(o: &Opts, out: &mut Out) -> i32 {
         }
     }
     let ourmax = max.unwrap_or(min_width);
-    let ell_width = visible_width(&ell);
+    let ell_width = width_without_escapes(&ell, 0);
     let (ell, ell_width) = if ell_width > ourmax { (Vec::new(), 0) } else { (ell, ell_width) };
+    // the escape sequences starting at `pos`, back to back
+    let skip_escapes = |l: &[char], pos: usize| {
+        let mut total = 0;
+        while char_at(l, pos + total) == '\x1b' {
+            let Some(len) = escape_code_length(&l[pos + total..]) else { break };
+            total += len;
+        }
+        total
+    };
     let mut nsub = 0usize;
     for line in lines {
         if o.has('l') {
             // keep the end: the first position from which the rest fits
             let mut pos = 0;
             while pos < line.len() {
-                let w = visible_width(&line[pos..]);
+                let w = width_without_escapes(&line, pos);
                 if (w <= ourmax && pos == 0) || w + ell_width <= ourmax {
                     break;
                 }
-                pos += 1;
+                pos += skip_escapes(&line, pos).max(1);
             }
             if o.has('q') {
                 if pos != 0 {
@@ -1124,21 +1261,31 @@ fn str_shorten(o: &Opts, out: &mut Out) -> i32 {
                 out.line(&line.iter().collect::<String>());
             } else {
                 nsub += 1;
-                out.line(&ell.iter().chain(&line[pos..]).collect::<String>());
+                out.line(&ell.iter().chain(line.get(pos..).unwrap_or_default()).collect::<String>());
             }
             continue;
         }
-        // keep the start: as many characters as fit with the ellipsis, or all of them
+        // keep the start: as many characters as fit with the ellipsis, or all of them. An
+        // escape sequence at the very end steps past the end, so the line counts as cut
+        // and gets the ellipsis, as in fish.
         let (mut pos, mut width) = (0usize, 0usize);
         while width <= ourmax && pos < line.len() {
-            let w = visible_char_width(line[pos]);
+            pos += skip_escapes(&line, pos);
+            let w = visible_char_width(char_at(&line, pos));
             if w <= 0 || width + w as usize + ell_width <= ourmax {
                 width = width.saturating_add_signed(w);
                 pos += 1;
             } else {
-                let rest = line[pos..].iter().fold(width, |acc, &c| acc.saturating_add_signed(visible_char_width(c)));
-                if rest <= ourmax {
-                    pos = line.len();
+                // at the limit: does the whole line fit?
+                let mut width2 = width + w as usize;
+                let mut pos2 = pos + 1;
+                while pos2 < line.len() {
+                    pos2 += skip_escapes(&line, pos2);
+                    width2 = width2.saturating_add_signed(visible_char_width(char_at(&line, pos2)));
+                    pos2 += 1;
+                }
+                if width2 <= ourmax {
+                    pos = pos2;
                 }
                 break;
             }
@@ -1154,7 +1301,7 @@ fn str_shorten(o: &Opts, out: &mut Out) -> i32 {
             continue;
         }
         nsub += 1;
-        out.line(&line[..pos].iter().chain(&ell).collect::<String>());
+        out.line(&line[..pos.min(line.len())].iter().chain(&ell).collect::<String>());
     }
     i32::from(nsub == 0)
 }
@@ -1202,7 +1349,7 @@ fn escape(s: &str, style: &str) -> String {
 
 /// `string unescape`; `None` when the argument does not decode (fish_common
 /// `unescape_string`): a `%` / `_` escape without its hex digits, a non-ASCII character in
-/// the url and var styles, a backslash at the end in the script style.
+/// the url and var styles, a malformed escape in the script style (`unescape_script`).
 fn unescape(s: &str, style: &str) -> Option<String> {
     let c: Vec<char> = s.chars().collect();
     let hex = |i: usize| c.get(i).and_then(|d| d.to_digit(16));
@@ -1260,23 +1407,136 @@ fn unescape(s: &str, style: &str) -> Option<String> {
             }
             Some(String::from_utf8_lossy(&out).into_owned())
         }
-        _ => {
-            let mut out = String::new();
-            let mut it = c.iter().copied();
-            while let Some(ch) = it.next() {
-                match ch {
-                    '\\' => match it.next() {
-                        Some('n') => out.push('\n'),
-                        Some('t') => out.push('\t'),
-                        Some(o) => out.push(o),
-                        None => return None,
-                    },
-                    '\'' | '"' => {}
-                    ch => out.push(ch),
+        _ => unescape_script(s).map(|b| String::from_utf8_lossy(&b).into_owned()),
+    }
+}
+
+/// fish_common `unescape_string_internal` with no flags, the script style of
+/// `string unescape`. Unquoted, a backslash starts an escape (`unescape_one`); quotes are
+/// dropped and switch modes. In single quotes only `\\` and `\'` escape, in double quotes
+/// `\\`, `\$`, `\"` and backslash-newline. A backslash at the end is an error, an unclosed
+/// quote is not. Bytes, since `\xHH` writes a raw byte.
+fn unescape_script(s: &str) -> Option<Vec<u8>> {
+    #[derive(PartialEq)]
+    enum Mode {
+        Unquoted,
+        Single,
+        Double,
+    }
+    let c: Vec<char> = s.chars().collect();
+    let mut out = Vec::new();
+    let push = |out: &mut Vec<u8>, ch: char| out.extend_from_slice(ch.encode_utf8(&mut [0; 4]).as_bytes());
+    let mut mode = Mode::Unquoted;
+    let mut i = 0;
+    while i < c.len() {
+        let ch = c[i];
+        let next = char_at(&c, i + 1);
+        match mode {
+            Mode::Unquoted => match ch {
+                '\\' => i += unescape_one(&c[i..], &mut out)? - 1,
+                '\'' => mode = Mode::Single,
+                '"' => mode = Mode::Double,
+                ch => push(&mut out, ch),
+            },
+            Mode::Single => match (ch, next) {
+                ('\\', '\\' | '\'') => {
+                    push(&mut out, next);
+                    i += 1;
                 }
-            }
-            Some(out)
+                ('\\', '\0') => return None,
+                ('\'', _) => mode = Mode::Unquoted,
+                (ch, _) => push(&mut out, ch),
+            },
+            Mode::Double => match (ch, next) {
+                ('"', _) => mode = Mode::Unquoted,
+                ('\\', '\0') => return None,
+                ('\\', '\\' | '$' | '"') => {
+                    push(&mut out, next);
+                    i += 1;
+                }
+                // a backslash-newline is swallowed
+                ('\\', '\n') => i += 1,
+                (ch, _) => push(&mut out, ch),
+            },
         }
+        i += 1;
+    }
+    Some(out)
+}
+
+/// fish_common `unescape_one`: the escape at the start of `code` (a backslash), appended
+/// to `out`; the number of characters it took, `None` when it is malformed. `\0`–`\777`
+/// octal up to 0x7f, `\xHH`/`\XHH` a raw byte, `\uHHHH`, `\UHHHHHHHH` up to U+10FFFF, `\cX`,
+/// the letter escapes, backslash-newline nothing, anything else itself. A character fish
+/// reserves for its own use is an error.
+fn unescape_one(code: &[char], out: &mut Vec<u8>) -> Option<usize> {
+    let mut pos = 1;
+    loop {
+        let c = char_at(code, pos);
+        pos += 1;
+        let ch = match c {
+            // a backslash at the end
+            '\0' => return None,
+            '0'..='7' | 'u' | 'U' | 'x' | 'X' => {
+                let (base, chars, max, byte) = match c {
+                    'u' => (16, 4, 0xFFFF, false),
+                    'U' => (16, 8, 0x10FFFF, false),
+                    'x' | 'X' => (16, 2, 0xFF, true),
+                    _ => {
+                        pos -= 1;
+                        (8, 3, 0x7F, false)
+                    }
+                };
+                let mut res: u64 = 0;
+                for n in 0..chars {
+                    let Some(d) = char_at(code, pos).to_digit(base) else {
+                        if n == 0 {
+                            return None;
+                        }
+                        break;
+                    };
+                    res = res * u64::from(base) + u64::from(d);
+                    pos += 1;
+                }
+                if res > max {
+                    return None;
+                }
+                if byte {
+                    out.push(res as u8);
+                    // adjacent byte escapes make one multibyte character together
+                    if char_at(code, pos) == '\\' && matches!(char_at(code, pos + 1), 'x' | 'X') {
+                        pos += 1;
+                        continue;
+                    }
+                    return Some(pos);
+                }
+                char::from_u32(res as u32).unwrap_or('\u{FFFD}')
+            }
+            'a' => '\x07',
+            'b' => '\x08',
+            'c' => {
+                let x = char_at(code, pos) as u32;
+                pos += 1;
+                if !(u32::from('@')..0x7f).contains(&x) {
+                    return None;
+                }
+                char::from_u32(x % 32).unwrap()
+            }
+            'e' => '\x1b',
+            'f' => '\x0c',
+            'n' => '\n',
+            'r' => '\r',
+            't' => '\t',
+            'v' => '\x0b',
+            '\n' => return Some(pos),
+            c => c,
+        };
+        // fish_reserved_codepoint
+        if ('\u{FDD0}'..'\u{FDF0}').contains(&ch) || ('\u{F500}'..'\u{F700}').contains(&ch) {
+            return None;
+        }
+        out.extend_from_slice(ch.encode_utf8(&mut [0; 4]).as_bytes());
+        return Some(pos);
     }
 }
 
@@ -1847,7 +2107,13 @@ fn path(args: &[String]) -> i32 {
         Err(e) => return err(&format!("path {sub}"), &e),
     };
     let mut out = Out::new(o.has('q'), o.has('Z'));
-    let items = if o.rest.is_empty() { inputs_detecting_nul(o.has('z')) } else { o.rest.clone() };
+    // path.rs `parse_opts`: with stdin redirected, operands past the subcommand's own one are
+    // too many, and the paths come from stdin
+    let leading = usize::from(sub == "change-extension");
+    if stdin_redirected() && o.rest.len() > leading {
+        return err(&format!("path {sub}"), "too many arguments");
+    }
+    let items = if stdin_redirected() { inputs_detecting_nul(o.has('z')) } else { o.rest.clone() };
     let status = match sub.as_str() {
         "basename" | "dirname" | "extension" | "normalize" | "resolve" => {
             let mut any = false;
@@ -1889,14 +2155,15 @@ fn path(args: &[String]) -> i32 {
             let Some((ext, paths)) = o.rest.split_first() else {
                 return err("path change-extension", "missing argument");
             };
-            let paths = if paths.is_empty() { inputs(&[], false) } else { paths.to_vec() };
+            // (path.rs `path_change_extension`: status 1 when there was no path)
+            let paths = if stdin_redirected() { items.clone() } else { paths.to_vec() };
             for p in &paths {
                 let e = extension(p);
                 let stem = &p[..p.len() - e.len()];
                 let dot = if ext.is_empty() || ext.starts_with('.') { "" } else { "." };
                 out.line(&format!("{stem}{dot}{ext}"));
             }
-            0
+            i32::from(paths.is_empty())
         }
         "filter" | "is" => {
             let mut passed = 0usize;
@@ -1962,19 +2229,15 @@ fn path(args: &[String]) -> i32 {
 
 // ---- count / contains ------------------------------------------------------------
 
+/// count.rs: the arguments, plus the lines of a redirected stdin that end in a newline
+/// (`echo a | count x y` is 3).
 fn count(args: &[String]) -> i32 {
-    let n = if args.is_empty() {
-        let mut buf = String::new();
-        if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-            0
-        } else {
-            let _ = std::io::stdin().read_to_string(&mut buf);
-            // fish counts newline characters: an unterminated last line is not counted
-            buf.matches('\n').count()
-        }
-    } else {
-        args.len()
-    };
+    let mut n = args.len();
+    if stdin_redirected() {
+        let mut buf = Vec::new();
+        let _ = std::io::stdin().lock().read_to_end(&mut buf);
+        n += buf.iter().filter(|&&b| b == b'\n').count();
+    }
     println!("{n}");
     i32::from(n == 0)
 }
@@ -2014,12 +2277,12 @@ fn math(args: &[String]) -> i32 {
         Ok(o) => o,
         Err(e) => return err("math", &e),
     };
-    let expr = o.rest.join(" ");
-    let expr = if expr.trim().is_empty() {
-        inputs(&[], false).join(" ")
-    } else {
-        expr
-    };
+    // math.rs: the operands, or the lines of a redirected stdin instead, joined by spaces
+    let expr = if stdin_redirected() { inputs(&[], false).join(" ") } else { o.rest.join(" ") };
+    if expr.is_empty() {
+        eprintln!("math: expected >= 1 arguments; got 0");
+        return 1;
+    }
     match eval_math(&expr) {
         Ok(v) => {
             let scale = o.num('s').map_or(6, |s| s.clamp(0, 15) as usize);

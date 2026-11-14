@@ -522,13 +522,26 @@ impl Emitter {
                 // exists; a list that reads the variable itself must see the outer value first
                 let local_var = self.fn_depth > 0 && !v.starts_with("_fish") && !items.iter().any(|i| reads_var(i, &v));
                 let pre = if local_var { format!("local {v}=\n") } else { String::new() };
-                let text = format!(
-                    "for {v} in {}\ndo\n{}\ndone{}",
-                    items.join(" "),
-                    self.body(body),
-                    self.redirs(redirs)
-                );
-                let text = format!("{pre}{text}");
+                // `$status` is what the last command run in the body left, and the status
+                // from before the loop when nothing ran: a list of no items, or a body of
+                // no commands (parse_execution.rs `run_for_statement` sets none itself).
+                // zsh's `for` would be 0 there, so an empty list skips the loop, and the
+                // list is tested before the body can run another loop over the same name.
+                // A list of literal words alone cannot be empty and needs no test (unless a
+                // `local` ahead of the loop would reset the status first).
+                let body = self.body(body);
+                let body = if body == ":" { "__fish_ret $?".to_string() } else { body };
+                let literal = pre.is_empty() && !list.is_empty() && list.iter().all(|w| w.text().is_some());
+                let text = if literal {
+                    format!("for {v} in {}\ndo\n{body}\ndone{}", items.join(" "), self.redirs(redirs))
+                } else {
+                    format!(
+                        "{{ __fish_fs=$?; __fish_fl=({})\n{pre}if (( $#__fish_fl )); then __fish_ret $__fish_fs\nfor {v} in \"${{__fish_fl[@]}}\"\ndo\n{body}\ndone\nelse __fish_ret $__fish_fs; fi\n}}{}",
+                        // (the list reads the status from before the loop)
+                        items.join(" ").replace("$?", "$__fish_fs"),
+                        self.redirs(redirs)
+                    )
+                };
                 if has_glob(list) {
                     null_glob_loop(&text)
                 } else {
@@ -544,11 +557,15 @@ impl Emitter {
                     return err;
                 }
                 let mut out = format!("case {} in\n", self.word_scalar(subject));
+                // with no case matched, or an empty one, `$status` stays as it was
+                // (parse_execution.rs `run_switch_statement` runs no job then)
                 for (pats, body) in cases {
                     let pats: Vec<String> = pats.iter().map(|p| self.case_pattern(p)).collect();
-                    out.push_str(&format!("({})\n{}\n;;\n", pats.join("|"), self.body(body)));
+                    let body = self.body(body);
+                    let body = if body == ":" { "__fish_ret $?".to_string() } else { body };
+                    out.push_str(&format!("({})\n{body}\n;;\n", pats.join("|")));
                 }
-                out.push_str("esac");
+                out.push_str("(*) __fish_ret $? ;;\nesac");
                 out.push_str(&self.redirs(redirs));
                 out
             }
@@ -564,7 +581,11 @@ impl Emitter {
                 format!("() {{\nlocal -x {}\n{text}\n}} \"$@\"", vars.join(" "))
             }
             Cmd::Begin { body, redirs } => {
-                format!("{{\n{}\n}}{}", self.body(body), self.redirs(redirs))
+                // an empty block leaves `$status` alone (parse_execution.rs `run_begin_statement`
+                // runs no job)
+                let body = self.body(body);
+                let body = if body == ":" { "__fish_ret $?".to_string() } else { body };
+                format!("{{\n{body}\n}}{}", self.redirs(redirs))
             }
         }
     }
@@ -882,17 +903,18 @@ impl Emitter {
                 out = format!("__fish_capmap={} {out}", quote_lit(&map));
             }
         }
-        // fish's `string` reads stdin only when its own stdin is redirected: it is not
-        // first in its pipeline, or it has a `<` (other than a close) of its own
-        // (exec.rs `get_performer_for_builtin`, `stdin_is_directly_redirected`)
-        let is_string = name.as_deref() == Some("string")
-            || (name.as_deref() == Some("builtin") && rest.get(1).and_then(Word::bare) == Some("string"));
+        // fish's `string`, `count`, `math` and `path` read stdin only when their own stdin is
+        // redirected: not first in the pipeline, or a `<` (other than a close) of their own
+        // (exec.rs `get_performer_for_builtin`, `stdin_is_directly_redirected`; read by
+        // builtins/shared/misc.rs `Arguments::new`)
+        let builtin_name = if name.as_deref() == Some("builtin") { rest.get(1).and_then(Word::bare) } else { name.as_deref() };
+        let reads_stdin = matches!(builtin_name, Some("string" | "count" | "math" | "path"));
         let stdin_redirected = redirs.iter().any(|r| {
             let reads = r.fd == Some(0) || (r.fd.is_none() && r.op.starts_with('<'));
             reads && !(r.op.ends_with('&') && r.target.bare() == Some("-"))
         });
-        if is_string && (piped_in || stdin_redirected) {
-            out = format!("__fish_strin=1 {out}");
+        if reads_stdin && (piped_in || stdin_redirected) {
+            out = format!("__fish_stdin=1 {out}");
         }
         if !prefix.is_empty() {
             out = format!("{} {out}", prefix.join(" "));

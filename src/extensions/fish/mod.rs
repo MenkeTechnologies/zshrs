@@ -220,7 +220,7 @@ mod tests {
 
     #[test]
     fn colliding_names_do_not_touch_zsh_specials() {
-        assert_eq!(t("for path in a b\nend"), "for _fish_v_path in a b\ndo\n:\ndone");
+        assert_eq!(t("for path in a b\nend"), "for _fish_v_path in a b\ndo\n__fish_ret $?\ndone");
         assert_eq!(t("set PATH $PATH /x"), "path=(${path+\"${path[@]}\"} /x)");
     }
 
