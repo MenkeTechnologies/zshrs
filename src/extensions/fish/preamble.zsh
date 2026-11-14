@@ -208,7 +208,7 @@ __fish_set_show() {
   [[ $exp == exported ]] && orig=$(__fish_inherited $n) && print -r -- "\$${n}: originally inherited as |$orig|"
   return 0
 }
-typeset -gA __fish_abbrs __fish_fnsrc __fish_fnline __fish_fnfile __fish_aliases
+typeset -gA __fish_abbrs __fish_fnsrc __fish_fnline __fish_fnfile __fish_aliases __fish_fndesc __fish_fnshadow
 # fish variable name -> zsh parameter, for names only known at run time (`$$name`)
 typeset -gA __fish_zmap=(PATH path CDPATH cdpath MANPATH manpath hostname HOST)
 for __n in path cdpath fpath manpath mailpath module_path signals options commands functions aliases parameters history widgets keymaps modules nameddirs userdirs galiases saliases funcstack jobtexts builtins reswords status prompt psvar watch; do
@@ -408,7 +408,7 @@ umask() {
   esac
 }
 functions() {
-  local a n=() q= e= listnames= alln= details= miss=0 args=() i cp=
+  local a n=() q= e= listnames= alln= details= verbose= miss=0 args=() i cp= dsc= setdesc=
   # fish's getopt takes short flags together (`functions -na`)
   for a; do
     if [[ $a == -[^-]?* ]]; then
@@ -417,18 +417,36 @@ functions() {
       args+=($a)
     fi
   done
+  local nx=
   for a in $args; do
+    if [[ -n $nx ]]; then setdesc=$a; nx=; continue; fi
     case $a in
+      -d|--description) dsc=1; nx=1 ;;
       -q|--query) q=1 ;;
       -e|--erase) e=1 ;;
       -c|--copy) cp=1 ;;
       -D|--details) details=1 ;;
+      -v|--verbose) verbose=1 ;;
+      --description=*) dsc=1; setdesc=${a#--description=} ;;
       -n|--names) listnames=1 ;;
       -a|--all) alln=1 ;;
       -*) ;;
       *) n+=($a) ;;
     esac
   done
+  if [[ -n $dsc ]]; then
+    (( ${#n} == 1 )) || { print -u2 -r -- 'functions: Expected exactly one function name'; return 2 }
+    (( $+functions[$n[1]] )) || __fish_autoload_ok $n[1] || { print -u2 -r -- "functions: Function '$n[1]' does not exist"; return 1 }
+    __fish_fndesc[$n[1]]=$setdesc
+    if [[ -n ${__fish_fnsrc[$n[1]]+x} ]]; then
+      local __h=${__fish_fnsrc[$n[1]]%%$'\n'*} __r=${__fish_fnsrc[$n[1]]#*$'\n'}
+      local __re=" --description ('[^']*'|[^ ]+)"
+      [[ $__h =~ $__re ]] && __h=${__h/$MATCH/}
+      [[ -n $setdesc ]] && __h+=" --description ${(q-)setdesc}"
+      __fish_fnsrc[$n[1]]=$__h$'\n'$__r
+    fi
+    return 0
+  fi
   if [[ -n $listnames ]]; then
     if [[ $(whence -w __fish_function_names 2>/dev/null) != *none* && -n $(whence -w __fish_function_names 2>/dev/null) ]]; then __fish_function_names ${alln:+-a}; else print -rl -- ${(ok)functions}; fi
     return
@@ -451,12 +469,22 @@ functions() {
     fi
     return 0
   fi
-  if [[ -n $e ]]; then for a in $n; do unfunction -- $a 2>/dev/null; __fish_erased[$a]=1; unset "__fish_aliases[$a]" "__fish_fnsrc[$a]" "__fish_fnline[$a]" "__fish_fnfile[$a]" 2>/dev/null; done; return 0; fi
+  if [[ -n $e ]]; then for a in $n; do unfunction -- $a 2>/dev/null; __fish_erased[$a]=1; unset "__fish_aliases[$a]" "__fish_fndesc[$a]" "__fish_fnshadow[$a]" "__fish_fnsrc[$a]" "__fish_fnline[$a]" "__fish_fnfile[$a]" 2>/dev/null; done; return 0; fi
   if (( ! ${#n} )); then print -rl -- ${(ko)functions}; return 0; fi
   for a in $n; do
+    if [[ -n $details ]] && ! { (( $+functions[$a] )) || __fish_autoload_ok $a }; then
+      if [[ -n $verbose ]]; then print -rl -- n/a n/a 0 n/a n/a; else print -r -- n/a; fi
+      continue
+    fi
     (( $+functions[$a] )) || __fish_autoload_ok $a || { print -u2 -r -- "functions: Unknown function '$a'"; return 1 }
     if [[ -n ${__fish_fnsrc[$a]+x} ]]; then
-      if [[ -n $details ]]; then print -r -- ${__fish_fnfile[$a]}; continue; fi
+      if [[ -n $details ]]; then
+        if [[ -n $verbose ]]; then
+          print -r -- ${__fish_fnfile[$a]:-stdin}$'\nnot-autoloaded\n'${__fish_fnline[$a]:-0}
+          print -r -- ${${__fish_fnshadow[$a]:+no-scope-shadowing}:-scope-shadowing}$'\n'${__fish_fndesc[$a]}
+        else print -r -- ${__fish_fnfile[$a]:-stdin}; fi
+        continue
+      fi
       __fish_defined_in $a
       print -r -- ${__fish_fnsrc[$a]}
     else

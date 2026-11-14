@@ -264,7 +264,7 @@ impl Emitter {
                     // `-g` asks for the global, not a local of the same name
                     let global_name = zname(&n);
                     if f.global && !f.local && zn != global_name {
-                        zn = global_name;
+                        zn = global_name.clone();
                     }
                     match (n.as_str(), i) {
                         ("argv", None) => "1".to_string(),
@@ -275,6 +275,8 @@ impl Emitter {
                             | "pipestatus" | "hostname" | "fish_pid" | "COLUMNS" | "LINES" | "EUID" | "IFS",
                             None,
                         ) if zn == zname(&n) => "1".to_string(),
+                        // `-l` asks for a local: a name that resolves to the plain global is local only when a function declared it
+                        (_, None) if f.local && !f.global && zn == global_name => format!("${{+{zn}}} && ${{#${{(M)${{(t){zn}}}:#*local*}}}}"),
                         (_, None) => format!("${{+{zn}}}"),
                         (_, Some(i)) => {
                             // every index named must exist: the largest decides (an index built from
@@ -314,11 +316,20 @@ impl Emitter {
         if f.export {
             return self.set_export(&name, &z, values, &list, (f.local, f.append, f.prepend), f.path);
         }
+        // `set -l -a x v` on a name not yet local makes the local first
+        let mut pre = String::new();
+        if f.local && (f.append || f.prepend) && z == zname(&name) {
+            z = self.declare_local(&name);
+            if z != zname(&name) {
+                let decl = if self.in_local_scope() { "local -a" } else { "typeset -ga" };
+                pre = format!("{decl} {z}=(); ");
+            }
+        }
         if f.append {
-            return format!("{z}+=({list})");
+            return format!("{pre}{z}+=({list})");
         }
         if f.prepend {
-            return format!("{z}=({list} \"${{{z}[@]}}\")");
+            return format!("{pre}{z}=({list} \"${{{z}[@]}}\")");
         }
         // A fish local is invisible to the functions it calls, which zsh's dynamically
         // scoped `local` is not, so it lives under a name no other code refers to.

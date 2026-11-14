@@ -491,6 +491,7 @@ impl Emitter {
         let mut wraps: Vec<String> = Vec::new();
         let mut exit_pids: Vec<String> = Vec::new();
         let mut no_shadow = false;
+        let mut desc: Option<String> = None;
         let mut i = 0;
         while i < header.len() {
             let t = header[i].text().unwrap_or_default();
@@ -526,7 +527,12 @@ impl Emitter {
                     }
                     i += 1;
                 }
-                "-d" | "--description" | "-j"
+                "-d" | "--description" => {
+                    desc = header.get(i).and_then(Word::text);
+                    i += 1;
+                }
+                w if w.starts_with("--description=") => desc = Some(w["--description=".len()..].to_string()),
+                "-j"
                 | "--on-job-exit" | "-V" | "--inherit-variable" => i += 1,
                 "-S" | "--no-scope-shadowing" => no_shadow = true,
                 s if s.starts_with('-') => {}
@@ -575,6 +581,8 @@ impl Emitter {
             squote(&shown),
             q = quote_lit(&name)
         ));
+        out.push_str(&format!("\n__fish_fndesc[{}]={}", quote_lit(&name), squote(desc.as_deref().unwrap_or(""))));
+        out.push_str(&format!("\n__fish_fnshadow[{}]={}", quote_lit(&name), if no_shadow { "1" } else { "''" }));
         for e in &events {
             out.push_str(&format!("\n__fish_on_event {} {}", squote(e), quote_lit(&name)));
         }
