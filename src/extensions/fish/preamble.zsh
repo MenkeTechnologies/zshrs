@@ -62,13 +62,30 @@ __fish_slice() {
   typeset -ga $1
   builtin eval "$1=(\"\${(@)r}\")"
 }
+typeset -gA __fish_feature_flags=(stderr-nocaret on qmark-noglob on regex-easyesc on ampersand-nobg-in-token on remove-percent-self off test-require-arg off mark-prompt on ignore-terminfo on query-term on omit-term-workarounds off)
+__fish_features() {
+  command cat <<'__FISH_EOF'
+stderr-nocaret          on  3.0 ^ no longer redirects stderr (historical, can no longer be changed)
+qmark-noglob            on  3.0 ? no longer globs
+regex-easyesc           on  3.1 string replace -r needs fewer \'s
+ampersand-nobg-in-token on  3.4 & only backgrounds if followed by a separator
+remove-percent-self     off 4.0 %self is no longer expanded (use $fish_pid)
+test-require-arg        off 4.0 builtin test requires an argument
+mark-prompt             on  4.0 write OSC 133 prompt markers to the terminal
+ignore-terminfo         on  4.1 do not look up $TERM in terminfo database (historical, can no longer be changed)
+query-term              on  4.1 query the TTY to enable extra functionality
+omit-term-workarounds   off 4.3 skip workarounds for incompatible terminals
+__FISH_EOF
+}
 status() {
   case ${1-} in
     is-interactive|-i|--is-interactive) [[ -o interactive ]] ;;
     is-login|-l|--is-login) [[ -o login ]] ;;
     is-command-substitution|-c) (( ZSH_SUBSHELL )) ;;
-    is-block|is-breakpoint|is-event|-b|-n) return 1 ;;
-    job-control|-j) return 1 ;;
+    is-block|is-breakpoint|is-event|-b) return 1 ;;
+    job-control|-j) (( $# > 1 )) && return 0; return 1 ;;
+    features) __fish_features ;;
+    test-feature) [[ -n ${__fish_feature_flags[$2]-} ]] || return 2; [[ ${__fish_feature_flags[$2]} == on ]] ;;
     filename|-f|--current-filename) print -r -- ${ZSH_ARGZERO:-Standard input} ;;
     current-command) print -r -- ${funcstack[2]:-fish} ;;
     current-function|function) print -r -- ${funcstack[2]:-Not a function} ;;
@@ -76,8 +93,9 @@ status() {
     current-line-number|line-number|-n) print -r -- $LINENO ;;
     basename) print -r -- ${ZSH_ARGZERO:t} ;;
     dirname) print -r -- ${ZSH_ARGZERO:A:h} ;;
-    stack-trace|print-stack-trace|test-feature|buildinfo|terminal-os) return 0 ;;
-    *) [[ -o interactive ]] && print -r -- 'This is an interactive session' || print -r -- 'This is a non-interactive session' ;;
+    stack-trace|print-stack-trace|buildinfo|terminal-os) return 0 ;;
+    '') [[ -o interactive ]] && print -r -- 'This is an interactive session' || print -r -- 'This is a non-interactive session' ;;
+    *) print -u2 -r -- "status $1: invalid subcommand"; return 2 ;;
   esac
 }
 __fish_set_list() {

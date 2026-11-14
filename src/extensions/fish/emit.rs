@@ -681,6 +681,10 @@ impl Emitter {
                 let all: Vec<String> = rest[1..].iter().map(|w| self.word_list(w)).collect();
                 format!("__fish_abbr {}", all.join(" "))
             }
+            // inside a function or any block, `status is-block` is true
+            Some("status") if rest.len() == 2 && matches!(rest[1].text().as_deref(), Some("is-block" | "-b")) => {
+                format!("__fish_ret {}", if self.fn_depth > 0 || self.block_level() > 0 { 0 } else { 1 })
+            }
             // fish's bare `test` is a usage error (status 2); zsh's is false (1)
             Some("test") if rest.len() == 1 => "__fish_ret 2".to_string(),
             Some(t @ ("test" | "[")) => {
