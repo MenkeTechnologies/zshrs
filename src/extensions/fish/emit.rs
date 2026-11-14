@@ -40,7 +40,7 @@ pub struct Emitter {
     /// Function nesting; `set -l` is `local` only inside one.
     pub(super) fn_depth: usize,
     /// `__fcN="$(…)"` assignments the command being emitted needs ahead of it.
-    hoists: Vec<String>,
+    pub(super) hoists: Vec<String>,
     hoist_id: usize,
     /// Lexical scopes, innermost last; see [`Frame`].
     scopes: Vec<Frame>,
@@ -53,7 +53,8 @@ pub struct Emitter {
     pub(super) guarded: bool,
     /// Source line of the statement being emitted (for `status line-number`).
     pub(super) cur_line: usize,
-    /// The script names variables at run time or uses `eval`: top-level locals keep their names.
+    /// The script names variables at run time or uses `eval`: its top-level and block
+    /// locals are recorded in `__fish_lm` (see `dynamic_names`).
     pub(super) plain_top: bool,
     /// Variables some `--on-variable` handler in this script watches; only their
     /// `set`s are followed by the handler call.
@@ -68,6 +69,12 @@ pub struct Emitter {
     /// Emitting the body of a function that may run no command: a body that does run one
     /// clears the function's `__fish_nr` as it starts (see [`Emitter::function`]).
     track_ran: bool,
+    /// Locals an erase may have turned into a reference to the next scope out (see
+    /// `erase_one`): a later declaration must drop the reference first.
+    pub(super) ref_locals: std::collections::HashSet<String>,
+    /// The locals of the code that runs `eval`, which the evaluated text sees: fish name
+    /// to zsh parameter (`ZSHRS_FISH_LOCALS`, from `__fish_lm`).
+    pub(super) seeded: std::collections::HashMap<String, String>,
 }
 
 /// One lexical scope. fish scopes `set -l` to the enclosing block (`if`, `while`,
@@ -79,8 +86,8 @@ pub struct Emitter {
 struct Frame {
     vars: std::collections::HashMap<String, String>,
     barrier: bool,
-    /// The scope names variables at run time (`set $name`, `$$name`), which only plain
-    /// names can follow; its locals are not renamed.
+    /// The function body names variables at run time (`set $name`, `$$name`, `eval`):
+    /// its locals are recorded in `__fish_lm` (see `Emitter::dynamic_names`).
     plain: bool,
     /// A function body: fish's function scope, where `set -f` and a `set` of a name
     /// that is neither local nor global put the variable.
@@ -126,10 +133,59 @@ pub fn zname(name: &str) -> String {
     }
 }
 
-/// fish splits variables named `*PATH` on `:` when expanded; zsh keeps them scalar.
-/// The tied ones (`PATH` → `path`) already are arrays.
+/// zsh's own colon-joined scalars, which fish sees as path variables: split when read.
 pub fn is_colon_scalar(name: &str) -> bool {
-    name.ends_with("PATH") && !matches!(name, "PATH" | "CDPATH" | "MANPATH")
+    matches!(name, "FPATH" | "MODULE_PATH" | "MAILPATH")
+}
+
+/// fish makes a variable a path variable by its name when nothing says otherwise
+/// (`variable_should_auto_pathvar`, env/impl/environment.rs:46).
+pub fn is_auto_pathvar(name: &str) -> bool {
+    name.ends_with("PATH") || name == "LANGUAGE"
+}
+
+/// A path variable fish imported from the environment, split on `:`
+/// (`colon_split` in `set_in_node`, env/impl/environment.rs:940). The preamble ties it to
+/// the list `__fx_NAME`, like an exported list (see `mod.rs` `env_fixups`).
+pub fn is_imported_pathvar(name: &str) -> bool {
+    is_auto_pathvar(name) && !matches!(name, "PATH" | "CDPATH" | "MANPATH") && !is_colon_scalar(name) && std::env::var_os(name).is_some()
+}
+
+thread_local! {
+    /// Some script translated in this process uses `set --path` / `--unpath`: whether a
+    /// variable is a path variable is then known only at run time (`__fish_is_pathvar`).
+    static PATH_FLAGS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Note a script that uses `set --path` / `--unpath`.
+pub fn note_path_flags(src: &str) {
+    if src.contains("--path") || src.contains("--unpath") {
+        PATH_FLAGS.with(|p| p.set(true));
+    }
+}
+
+pub(super) fn path_flags_seen() -> bool {
+    PATH_FLAGS.with(std::cell::Cell::get)
+}
+
+/// Whether `set` stores `name` as a path variable (split on `:`, joined with `:`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum PathKind {
+    Never,
+    Always,
+    AtRunTime,
+}
+
+/// `explicit` is `--path` (true) / `--unpath` (false). Without it fish keeps what the
+/// variable already was, else goes by the name (`EnvStackImpl::set`, env/impl/environment.rs:638-648).
+pub(super) fn path_kind(name: &str, explicit: Option<bool>) -> PathKind {
+    match explicit {
+        Some(true) => PathKind::Always,
+        Some(false) => PathKind::Never,
+        None if path_flags_seen() => PathKind::AtRunTime,
+        None if is_auto_pathvar(name) => PathKind::Always,
+        None => PathKind::Never,
+    }
 }
 
 /// A name usable as a zsh parameter, or `None` for things like `$1`.
@@ -195,31 +251,53 @@ impl Emitter {
         TOP_LOCALS
             .with(|t| t.borrow().contains(name))
             .then(|| format!("_fl_top_{name}"))
+            .or_else(|| self.seeded.get(name).cloned())
     }
 
     /// The zsh parameter of the fish global `name`.
     pub(super) fn global_of(name: &str) -> String {
-        if TOP_EXPORTED.with(|t| t.borrow().contains(name)) {
+        if TOP_EXPORTED.with(|t| t.borrow().contains(name)) || is_imported_pathvar(name) {
             return format!("__fx_{name}");
         }
         zname(name)
     }
 
-    /// `set -e x` removed the local `x`: from here on `$x` is the global again. Only
-    /// when the erase runs whenever the declaration did (same block, not behind
-    /// `and`/`or`); an erase in a nested block leaves the name mapped.
-    pub(super) fn unmap_local(&mut self, name: &str) {
+    /// `set -e x` removed the local `x`: from here on `$x` is the next scope out again.
+    /// Only when the erase runs whenever the declaration did (same block, not behind
+    /// `and`/`or`) can the name simply stop being mapped; returns false otherwise, where
+    /// the caller turns the local into a reference to that next scope instead.
+    pub(super) fn unmap_local(&mut self, name: &str) -> bool {
         if self.guarded {
-            return;
+            return false;
         }
         if let Some(f) = self.scopes.last_mut() {
-            if f.vars.remove(name).is_some() {
-                return;
+            return f.vars.remove(name).is_some();
+        }
+        if self.fn_depth == 0 {
+            return TOP_LOCALS.with(|t| t.borrow_mut().remove(name));
+        }
+        false
+    }
+
+    /// The zsh parameter `$name` reads once the innermost local of that name is gone:
+    /// the next local out, else the global (`EnvStackImpl::getf`, env/impl/environment.rs:366).
+    pub(super) fn outer_of(&self, name: &str) -> String {
+        let mut seen = false;
+        for f in self.scopes.iter().rev() {
+            if let Some(m) = f.vars.get(name) {
+                if seen {
+                    return m.clone();
+                }
+                seen = true;
+            }
+            if f.barrier {
+                return Self::global_of(name);
             }
         }
-        if self.fn_depth == 0 && self.scopes.is_empty() {
-            TOP_LOCALS.with(|t| t.borrow_mut().remove(name));
+        if seen && TOP_LOCALS.with(|t| t.borrow().contains(name)) {
+            return format!("_fl_top_{name}");
         }
+        Self::global_of(name)
     }
 
     /// Declare `name` in fish's function scope (`set -f`): the outermost scope of the
@@ -227,21 +305,18 @@ impl Emitter {
     /// (`EnvStackImpl::set`, env/impl/environment.rs:665-678).
     pub(super) fn declare_function_local(&mut self, name: &str) -> String {
         let Some(at) = self.scopes.iter().rposition(|f| f.func) else {
-            if self.fn_depth > 0 || self.plain_top {
+            if self.fn_depth > 0 {
                 return self.declare_local(name);
             }
-            TOP_LOCALS.with(|t| t.borrow_mut().insert(name.to_string()));
-            return format!("_fl_top_{name}");
+            return self.declare_top_local(name);
         };
-        if self.scopes[at..].iter().any(|f| f.plain) {
-            return zname(name);
-        }
         if let Some(m) = self.scopes[at].vars.get(name) {
             return m.clone();
         }
         self.local_id += 1;
         let m = format!("_fl{}_{name}", self.local_id);
         self.scopes[at].vars.insert(name.to_string(), m.clone());
+        self.register(name, &m);
         m
     }
 
@@ -251,11 +326,10 @@ impl Emitter {
     /// only at run time, so the function gets a name for `x` that is declared unset on
     /// entry and, at the first assignment, becomes either a reference to the global or
     /// the function's own list. Returns that name and the text that settles it, or
-    /// `None` where the plain name must stay (no function, names chosen at run time,
-    /// fish's special variables).
+    /// `None` where the plain name must stay (no function, fish's special variables).
     pub(super) fn function_auto_local(&mut self, name: &str) -> Option<(String, String)> {
         let at = self.scopes.iter().rposition(|f| f.func)?;
-        if !self.scopes[at].barrier || self.scopes[at..].iter().any(|f| f.plain) || zname(name) != name || Self::global_of(name) != name {
+        if !self.scopes[at].barrier || zname(name) != name || Self::global_of(name) != name {
             return None;
         }
         if matches!(name, "argv" | "PWD" | "SHLVL" | "umask" | "version" | "FISH_VERSION" | "fish_pid" | "_") {
@@ -264,12 +338,33 @@ impl Emitter {
         self.local_id += 1;
         let m = format!("_fl{}_{name}", self.local_id);
         self.auto_locals.insert(m.clone());
+        let dynamic = self.dynamic_names();
         let f = &mut self.scopes[at];
         f.vars.insert(name.to_string(), m.clone());
         // (a global that exists when the function starts is what `$x` shows until then)
         f.entry.push(format!("if (( ${{+{name}}} )); then local -n {m}={name}; else local -a {m}; unset {m}; fi"));
-        let settle = format!("(( ${{+{m}}} )) || {{ if (( ${{+{name}}} )); then local -n {m}={name}; else local -a {m}; fi; }}");
+        if dynamic {
+            f.entry.push(format!("__fish_lm[{name}]={m}"));
+        }
+        let settle = Self::auto_settle(&m, name);
         Some((m, settle))
+    }
+
+    /// The text that settles the `function_auto_local` name `m` at an assignment: the
+    /// global if there is one by then, else the function's own list. Every scopeless
+    /// assignment needs it, not only the first one written: the first may be on a path
+    /// that does not run (`if …; set -a x …; return; end; set -a x …`).
+    pub(super) fn auto_settle(m: &str, name: &str) -> String {
+        format!("(( ${{+{m}}} )) || {{ if (( ${{+{name}}} )); then local -n {m}={name}; else local -a {m}; fi; }}")
+    }
+
+    /// The text that makes the unsettled `function_auto_local` name `m` refer to the
+    /// global once there is one (after `set -g x`, before `set -e x`), or nothing when
+    /// `z` is no such name.
+    pub(super) fn auto_ref(&self, z: &str, name: &str) -> Option<String> {
+        self.auto_locals
+            .contains(z)
+            .then(|| format!("{{ (( ${{+{z}}} )) || ! (( ${{+{name}}} )) || local -n {z}={name}; }}"))
     }
 
     /// Declare `name` local to the innermost scope, whatever that is, and return the zsh
@@ -278,11 +373,44 @@ impl Emitter {
         if self.block_level() > 0 || self.fn_depth > 0 {
             return self.declare_block_local(name);
         }
-        if self.plain_top {
-            return zname(name);
+        self.declare_top_local(name)
+    }
+
+    /// A local of the script's top level.
+    fn declare_top_local(&mut self, name: &str) -> String {
+        let m = format!("_fl_top_{name}");
+        if TOP_LOCALS.with(|t| t.borrow_mut().insert(name.to_string())) {
+            self.register(name, &m);
         }
-        TOP_LOCALS.with(|t| t.borrow_mut().insert(name.to_string()));
-        format!("_fl_top_{name}")
+        m
+    }
+
+    /// Does the code being emitted name variables at run time (`$$name`, `set $name …`,
+    /// `eval`)? Then `__fish_lm` maps the name of each local in view to the zsh
+    /// parameter it lives under, so the run-time name finds it: the script's top level
+    /// keeps it global, a function body starts its own empty one (its caller's locals
+    /// are not in view), and a block puts back on exit what it changed.
+    pub(super) fn dynamic_names(&self) -> bool {
+        match self.scopes.iter().rev().find(|f| f.barrier) {
+            Some(f) => f.plain,
+            None => self.plain_top,
+        }
+    }
+
+    /// Record a new local in `__fish_lm` (see `dynamic_names`), ahead of the statement.
+    fn register(&mut self, name: &str, z: &str) {
+        if self.dynamic_names() {
+            // (ahead of the statement, so it keeps the status the statement reads)
+            self.pre_chain.push(format!("__fish_reg {name} {z}"));
+        }
+    }
+
+    /// The `__fish_lm` entry for `name` as the static scopes now see it.
+    pub(super) fn reregister(&self, name: &str) -> String {
+        match self.local_of(name) {
+            Some(z) => format!("__fish_lm[{name}]={z}"),
+            None => format!("unset '__fish_lm[{name}]'"),
+        }
     }
 
     /// Does the innermost scope already map `name` to `to`?
@@ -315,11 +443,6 @@ impl Emitter {
 
     /// Register `name` as local to the innermost block and return its zsh name.
     pub(super) fn declare_block_local(&mut self, name: &str) -> String {
-        if self.scopes.iter().rev().take_while(|f| !f.barrier).any(|f| f.plain)
-            || self.scopes.iter().rev().find(|f| f.barrier).is_some_and(|f| f.plain)
-        {
-            return zname(name);
-        }
         if let Some(m) = self.scopes.last().and_then(|f| f.vars.get(name)) {
             return m.clone();
         }
@@ -328,6 +451,7 @@ impl Emitter {
         if let Some(f) = self.scopes.last_mut() {
             f.vars.insert(name.to_string(), m.clone());
         }
+        self.register(name, &m);
         m
     }
 
@@ -367,8 +491,16 @@ impl Emitter {
         let track = self.track_ran;
         self.track_ran = track && !mark;
         self.scopes.push(Frame::default());
-        let t = self.script(s);
-        self.scopes.pop();
+        let mut t = self.script(s);
+        let frame = self.scopes.pop().unwrap_or_default();
+        // the block's locals leave `__fish_lm` with it (see `dynamic_names`)
+        if self.dynamic_names() && !frame.vars.is_empty() {
+            let mut names: Vec<&String> = frame.vars.keys().collect();
+            names.sort();
+            let restore: Vec<String> = names.into_iter().map(|n| self.reregister(n)).collect();
+            // (keeping the block's status)
+            t.push_str(&format!("\n__fish_st __fish_bs; {}; __fish_ret $__fish_bs", restore.join("; ")));
+        }
         self.track_ran = track;
         if t.trim().is_empty() {
             ":".into()
@@ -475,17 +607,18 @@ impl Emitter {
                     t == "--query" || t == "--erase" || t == "--show"
                         || (t.starts_with('-') && !t.starts_with("--") && t[1..].contains(['q', 'e', 'S', 'n']))
                 })));
-        // `set x (cmd)` leaves the status of `cmd`
+        // `set x (cmd)` leaves the status of `cmd`, unless `set` itself fails
+        // (`set`, builtins/set.rs:1046)
         // building word lists must not change the `$status` the command reads
         let keeps_status = text.contains("$?") && !mine.iter().any(|h| h.contains("$("));
         if sets_variable && keeps_status {
             format!(
-                "{{ __fish_ps=$?; {}; __fish_cs=$?; {}; __fish_ret $__fish_cs; }}",
+                "{{ __fish_ps=$?; {}; __fish_cs=$?; {{ {}; }} || __fish_cs=$?; __fish_ret $__fish_cs; }}",
                 mine.join("; "),
                 text.replace("$?", "$__fish_ps")
             )
         } else if sets_variable {
-            format!("{{ {}; __fish_cs=$?; {text}; __fish_ret $__fish_cs; }}", mine.join("; "))
+            format!("{{ {}; __fish_cs=$?; {{ {text}; }} || __fish_cs=$?; __fish_ret $__fish_cs; }}", mine.join("; "))
         } else if keeps_status {
             format!("{{ __fish_ps=$?; {}; {}; }}", mine.join("; "), text.replace("$?", "$__fish_ps"))
         } else {
@@ -698,10 +831,16 @@ impl Emitter {
             ..Frame::default()
         });
         let mut inner = String::new();
+        let outer_pre = self.pre_chain.len();
         for (k, a) in argnames.iter().enumerate() {
             let m = self.declare_block_local(a);
             inner.push_str(&format!("local -a {m}=(\"${{(@)argv[{},{}]}}\")\n", k + 1, k + 1));
         }
+        // (the argument names' `__fish_lm` entries, see `dynamic_names`)
+        for r in self.pre_chain.split_off(outer_pre) {
+            inner.push_str(&format!("{r}\n"));
+        }
+        let dynamic = self.dynamic_names();
         // a function that ran no command at all returns 0 (exec.rs
         // `get_performer_for_function`, `was_empty`). When the body may run none (its
         // statements are loops, blocks and switches whose bodies can all go unrun),
@@ -715,6 +854,10 @@ impl Emitter {
             for d in f.entry {
                 inner.insert_str(0, &format!("{d}\n"));
             }
+        }
+        // a function starts with no locals in view
+        if dynamic && !no_shadow {
+            inner.insert_str(0, "local -A __fish_lm\n");
         }
         if tracked {
             inner.push_str(&format!(
@@ -1354,17 +1497,28 @@ impl Emitter {
         if let Some(idx) = &v.index {
             // only the elements that exist are joined, with the list's delimiter
             let arr = self.var_index(v, idx);
-            let delim = if n.ends_with("PATH") { ".:." } else { ": :" };
-            return format!("${{(j{delim}){arr}}}");
+            return format!("${{({}){arr}}}", self.join_flag(n));
         }
         if is_colon_scalar(n) && !z.starts_with("__fx_") {
             return format!("${{{z}}}");
         }
-        // the path variables join with `:` in a string
-        if matches!(n.as_str(), "PATH" | "CDPATH" | "MANPATH") {
-            return format!("${{(j.:.){z}}}");
+        format!("${{({}){z}}}", self.join_flag(n))
+    }
+
+    /// The `(j…)` flag that joins the list `name` the way fish does in a string: with `:`
+    /// for a path variable, else a space (`EnvVar::delimiter`, env/var.rs:235).
+    fn join_flag(&mut self, name: &str) -> String {
+        match path_kind(name, None) {
+            PathKind::Always => "j.:.".into(),
+            PathKind::Never => "j: :".into(),
+            PathKind::AtRunTime => {
+                self.hoist_id += 1;
+                let sep = format!("__fc{}", self.hoist_id);
+                let auto = if is_auto_pathvar(name) { ":" } else { " " };
+                self.hoists.push(format!("{sep}=\"${{__fish_pathvars[{name}]-{auto}}}\""));
+                format!("pj:${sep}:")
+            }
         }
-        format!("${{(j: :){z}}}")
     }
 }
 
@@ -1597,7 +1751,8 @@ pub(super) fn fish_escape(s: &str) -> String {
 fn deref_expr(z: &str, flags: &str) -> String {
     let n = format!("${{(j: :){z}}}");
     let fx = format!("${{parameters[__fx_{n}]:+__fx_{n}}}");
-    format!("${{({flags})${{__fish_zmap[{n}]:-${{{fx}:-{n}}}}}}}")
+    // (a local in view first: see `Emitter::dynamic_names`)
+    format!("${{({flags})${{__fish_lm[{n}]:-${{__fish_zmap[{n}]:-${{{fx}:-{n}}}}}}}}}")
 }
 
 /// The `function NAME …` line as fish prints a definition back: the name, then the options

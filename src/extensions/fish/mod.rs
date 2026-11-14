@@ -45,6 +45,12 @@ pub fn translate(src: &str) -> Result<String, String> {
     let mut emitter = emit::Emitter::default();
     emitter.plain_top = emit::uses_dynamic_names(&script);
     emitter.watched_vars = watched_variables(src);
+    emit::note_path_flags(src);
+    // `eval` text sees the locals of the code that runs it
+    if let Ok(pairs) = std::env::var("ZSHRS_FISH_LOCALS") {
+        let words: Vec<&str> = pairs.split(' ').filter(|w| !w.is_empty()).collect();
+        emitter.seeded = words.chunks(2).filter(|p| p.len() == 2).map(|p| (p[0].to_string(), p[1].to_string())).collect();
+    }
     let mut text = emitter.script(&script);
     text.push('\n');
     Ok(text)
@@ -166,6 +172,18 @@ fn env_fixups() -> String {
             out.push_str(&format!("typeset +x {n} 2>/dev/null\n"));
         }
     }
+    // fish imports a path variable split on `:` (env_init sets each inherited variable,
+    // and set_in_node splits a path variable's value, env/impl/environment.rs:940): it is
+    // tied to the list the translator reads, `__fx_NAME` (`emit::is_imported_pathvar`)
+    if let Some(env) = crate::ported::params::environ.get() {
+        for (k, _) in env.iter() {
+            if !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && emit::is_imported_pathvar(k) {
+                out.push_str(&format!(
+                    "__fish_v=\"${{{k}}}\"; unset {k}; typeset -gxT {k} __fx_{k} ':'; __fx_{k}=(\"${{(@s.:.)__fish_v}}\"); unset __fish_v\n"
+                ));
+            }
+        }
+    }
     // fish sets USER from the passwd entry when the environment has none
     if let Some(user) = passwd_user() {
         out.push_str(&format!(
@@ -189,13 +207,18 @@ fn env_fixups() -> String {
 mod tests {
     use super::translate;
 
+    /// A `set` assignment as translated: one that works keeps `$status`.
+    fn kept(s: &str) -> String {
+        format!("{{ __fish_ss=$?; {s} && __fish_ret $__fish_ss; }}")
+    }
+
     fn t(src: &str) -> String {
         translate(src).unwrap().trim_end().to_string()
     }
 
     #[test]
     fn set_assigns_a_list_and_expansion_keeps_it_a_list() {
-        assert_eq!(t("set x 1 2 3"), "x=(1 2 3)");
+        assert_eq!(t("set x 1 2 3"), kept("x=(1 2 3)"));
         assert_eq!(t("echo $x"), "echo ${x+\"${x[@]}\"}");
         assert_eq!(t("echo \"$x\""), "echo \"${(j: :)x}\"");
         // an index goes through `__fish_index`, which selects nothing for a missing element
@@ -211,17 +234,17 @@ mod tests {
 
     #[test]
     fn scopes_map_to_typeset() {
-        assert_eq!(t("set -g y a"), "y=(a)");
-        assert_eq!(t("function f\nset -l z 1\nset -g w 2\nend"), "function f {\nlocal -a _fl1_z=(1)\ntypeset -ga w=(2)\n}\n__fish_gset[f]=1\n__fish_fnsrc[f]='function f\nset -l z 1\nset -g w 2\nend'; __fish_fnline[f]=1; __fish_fnfile[f]=\"${__fish_srcfile:-${(%):-%x}}\"\n__fish_fndesc[f]=''\n__fish_fnshadow[f]=''");
+        assert_eq!(t("set -g y a"), kept("y=(a)"));
+        assert_eq!(t("function f\nset -l z 1\nset -g w 2\nend"), "function f {\n{ __fish_ss=$?; local -a _fl1_z=(1) && __fish_ret $__fish_ss; }\n{ __fish_ss=$?; typeset -ga w=(2) && __fish_ret $__fish_ss; }\n}\n__fish_gset[f]=1\n__fish_fnsrc[f]='function f\nset -l z 1\nset -g w 2\nend'; __fish_fnline[f]=1; __fish_fnfile[f]=\"${__fish_srcfile:-${(%):-%x}}\"\n__fish_fndesc[f]=''\n__fish_fnshadow[f]=''");
         // an exported list stays a list: the exported scalar is tied to the array __fx_NAME
-        assert_eq!(t("set -gx E vim"), "{ _fish_x=(vim); if (( ! ${+__fx_E} )); then unset E 2>/dev/null; typeset -gxT E __fx_E ' '; fi; __fx_E=(\"${_fish_x[@]}\"); }");
-        assert_eq!(t("set -x GOPATH a b"), "{ _fish_x=(a b); if (( ! ${+__fx_GOPATH} )); then unset GOPATH 2>/dev/null; typeset -gxT GOPATH __fx_GOPATH ':'; fi; __fx_GOPATH=(\"${_fish_x[@]}\"); }");
+        assert_eq!(t("set -gx E vim"), kept(&format!("{{ {}; }}", "{ _fish_x=(vim); if (( ! ${+__fx_E} )); then unset E 2>/dev/null; typeset -gxT E __fx_E ' '; fi; __fx_E=(\"${_fish_x[@]}\"); }")));
+        assert_eq!(t("set -x GOPATH a b"), kept(&format!("{{ {}; }}", "{ _fish_x=(a b); if (( ! ${+__fx_GOPATH} )); then unset GOPATH 2>/dev/null; typeset -gxT GOPATH __fx_GOPATH ':'; fi; __fx_GOPATH=(\"${_fish_x[@]}\"); }")));
     }
 
     #[test]
     fn colliding_names_do_not_touch_zsh_specials() {
         assert_eq!(t("for path in a b\nend"), "for _fish_v_path in a b\ndo\n__fish_ret $?\ndone");
-        assert_eq!(t("set PATH $PATH /x"), "path=(${path+\"${path[@]}\"} /x)");
+        assert_eq!(t("set PATH $PATH /x"), kept("path=(${path+\"${path[@]}\"} /x)"));
     }
 
     #[test]
@@ -259,7 +282,7 @@ mod tests {
     fn set_l_in_a_block_is_scoped_to_the_block() {
         let out = t("set -l a 1\nif true\nset -l a 2\necho $a\nend\necho $a");
         // top level stays plain; the block's `a` lives under its own name
-        assert!(out.starts_with("typeset -ga _fl_top_a=(1)\nif true\nthen\ntypeset -ga _fl1_a=(2)\necho "), "{out}");
+        assert!(out.starts_with("{ __fish_ss=$?; typeset -ga _fl_top_a=(1) && __fish_ret $__fish_ss; }\nif true\nthen\n{ __fish_ss=$?; typeset -ga _fl1_a=(2) && __fish_ret $__fish_ss; }\necho "), "{out}");
         assert!(out.contains("${_fl1_a+\"${_fl1_a[@]}\"}"), "{out}");
         assert!(out.ends_with("fi\necho ${_fl_top_a+\"${_fl_top_a[@]}\"}"), "{out}");
     }

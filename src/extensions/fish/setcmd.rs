@@ -2,11 +2,11 @@
 //! zsh: `set`, `read`, `alias` and `abbr`. Each is rewritten to the zsh
 //! construct with the same effect on the caller's scope.
 
-use super::emit::{fish_escape, quote_lit, squote, zname, Emitter};
+use super::emit::{fish_escape, is_auto_pathvar, path_kind, quote_lit, squote, zname, Emitter, PathKind};
 use super::parse::{Part, Word};
 
 /// Options of `set`, after the combined short flags (`-gx`) are split.
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct SetFlags {
     local: bool,
     /// `-f`: the function scope (`local` is set too).
@@ -23,6 +23,10 @@ struct SetFlags {
     show: bool,
     /// `--path`: the values are colon-separated lists to split.
     path: bool,
+    /// `--unpath`: the variable is not a path variable, whatever its name.
+    unpath: bool,
+    /// `-g` itself (`-U` sets `global` too, for the paths that treat both alike).
+    g_flag: bool,
 }
 
 impl Emitter {
@@ -71,7 +75,10 @@ impl Emitter {
                         f.local = true;
                         f.function = true;
                     }
-                    'g' => f.global = true,
+                    'g' => {
+                        f.global = true;
+                        f.g_flag = true;
+                    }
                     'U' => {
                         f.global = true;
                         f.universal = true;
@@ -88,6 +95,7 @@ impl Emitter {
                     }
                     'n' | 'L' => f.list = true,
                     'P' => f.path = true,
+                    'N' => f.unpath = true,
                     _ => {}
                 }
             }
@@ -136,11 +144,25 @@ impl Emitter {
     /// `set -U` also writes the variable to the universal store; `set -U -e` removes it.
     pub(super) fn set_cmd(&mut self, args: &[Word]) -> String {
         let (f, at) = self.set_flags(args);
+        let text = self.set_stored(args, &f, at);
+        // an assignment that works leaves `$status` as it was; one that fails has its own
+        // (`preserve_failure_exit_status`, builtins/set.rs:1046)
+        if f.erase || f.query || f.list || f.show || args.len() == at {
+            return text;
+        }
+        let one = !text.contains([';', '\n']) && !text.contains("&&") && !text.contains("||");
+        let text = if one { text } else { format!("{{ {text}; }}") };
+        format!("{{ __fish_ss=$?; {text} && __fish_ret $__fish_ss; }}")
+    }
+
+    fn set_stored(&mut self, args: &[Word], f: &SetFlags, at: usize) -> String {
+        let f = f.clone();
         let text = self.set_watched(args, &f, at);
         // `set -e NAME` with no scope flag erases the universal variable too, when that is
         // what the name was (the file is left alone if it does not hold it)
         let plain_erase = f.erase && !f.universal && !f.local && !f.global;
-        if (!f.universal && !plain_erase) || f.query || f.list {
+        // (`set -e -U` is a pass of its own in `erase_cmd`)
+        if (!f.universal && !plain_erase) || f.query || f.list || (f.erase && f.universal) {
             return text;
         }
         let names: Vec<String> = args[at..]
@@ -173,15 +195,21 @@ impl Emitter {
         let Some((name, None)) = args.get(at).and_then(|w| self.set_target(w)) else {
             return text;
         };
-        if f.path {
-            text = format!("{text}; __fish_pathvars[{name}]=1");
+        // `--path` / `--unpath` make it a path variable or not from now on; erasing it
+        // drops that, and the next variable of the name goes by its name again
+        if f.path || f.unpath {
+            let kind = if f.path { ":" } else { "' '" };
+            text = format!("{text}; __fish_pathvars[{name}]={kind}");
+        } else if f.erase && super::emit::path_flags_seen() {
+            let z = self.zn(&name);
+            text = format!("{{ {text}; __fish_st __fish_rc; (( ${{+{z}}} )) || unset '__fish_pathvars[{name}]'; (exit $__fish_rc); }}");
         }
         if !self.watched_vars.contains(&name) {
             return text;
         }
         let what = if f.erase { "ERASE" } else { "SET" };
         format!(
-            "{{ {text}; __fish_rc=$?; (( ${{+__fish_events[var:{name}]}} )) && __fish_var_event {name} {what}; (exit $__fish_rc); }}"
+            "{{ {text}; __fish_st __fish_rc; (( ${{+__fish_events[var:{name}]}} )) && __fish_var_event {name} {what}; (exit $__fish_rc); }}"
         )
     }
 
@@ -197,20 +225,6 @@ impl Emitter {
             let all: Vec<String> = args.iter().map(|w| self.word_list(w)).collect();
             return format!("__fish_set_dynamic {}", all.join(" "));
         };
-        let presplit = |w: &Word| matches!(w.parts.as_slice(), [Part::Raw(r)] if r.starts_with("${(@s.:.)"));
-        if f.path && idx.is_none() && operands.len() > 1 && !operands[1..].iter().all(presplit) {
-            // path variables hold the pieces of their colon-separated value
-            let mut split: Vec<Word> = args[..at].to_vec();
-            split.push(operands[0].clone());
-            for w in &operands[1..] {
-                let raw = match w.text() {
-                    Some(t) => format!("${{(@s.:.)${{:-{}}}}}", squote(&t)),
-                    None => format!("${{(@s.:.)${{(j.:.){}}}}}", self.word_list(w)),
-                };
-                split.push(Word { parts: vec![Part::Raw(raw)] });
-            }
-            return self.set_inner(&split);
-        }
         // fish variable names are letters, digits and underscores
         if !f.query && !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
             return format!(
@@ -245,67 +259,106 @@ impl Emitter {
             return self.set_list_call(flags);
         }
         if f.erase {
-            let targets: Vec<(String, Option<String>)> = operands.iter().filter_map(|w| self.set_target(w)).collect();
-            return targets
-                .into_iter()
-                .map(|(n, i)| self.erase_one(&f, &n, i))
-                .collect::<Vec<_>>()
-                .join("; ");
+            return self.erase_cmd(&f, operands);
         }
         if f.query {
-            let tests: Vec<String> = operands
-                .iter()
-                .filter_map(|w| self.set_target(w))
-                .map(|(n, i)| {
-                    let mut zn = self.zn(&n);
-                    // `-g` asks for the global, not a local of the same name
-                    let global_name = zname(&n);
-                    if f.global && !f.local && zn != global_name {
-                        zn = global_name.clone();
-                    }
-                    match (n.as_str(), i) {
-                        ("argv", None) => "1".to_string(),
-                        // fish's own variables, which no zsh parameter stands for (`_` is not set)
-                        ("_", None) => "0".to_string(),
-                        (
-                            "status" | "status_generation" | "fish_killring" | "fish_history" | "fish_bind_mode" | "fish_private_mode" | "history"
-                            | "pipestatus" | "hostname" | "fish_pid" | "COLUMNS" | "LINES" | "EUID" | "IFS",
-                            None,
-                        ) if zn == zname(&n) => "1".to_string(),
-                        // `-l` asks for a local: a name that resolves to the plain global is local only when a function declared it
-                        (_, None) if f.local && !f.global && zn == global_name => format!("${{+{zn}}} && ${{#${{(M)${{(t){zn}}}:#*local*}}}}"),
-                        (_, None) => format!("${{+{zn}}}"),
-                        (_, Some(i)) => {
-                            // every index named must exist: the largest decides (an index built from
-                            // variables is left for the shell to evaluate)
-                            let toks: Vec<&str> = i.split(|c: char| c == ' ' || c == '.').filter(|t| !t.is_empty()).collect();
-                            match toks.iter().map(|t| t.trim_start_matches('-').parse::<usize>()).collect::<Result<Vec<_>, _>>() {
-                                Ok(nums) => format!("${{#{zn}}} >= {}", nums.into_iter().max().unwrap_or(1)),
-                                Err(_) => format!("${{#{zn}}} >= {}", i.trim_start_matches('-')),
-                            }
+            // an operand whose index is built from a list is one operand per word
+            let single = operands.len() == 1;
+            let mut indexed = false;
+            let mut tests: Vec<String> = Vec::new();
+            for w in operands {
+                let Some((n, i)) = self.set_target(w) else { continue };
+                let mut zn = self.zn(&n);
+                // `-g` asks for the global, not a local of the same name
+                let global_name = zname(&n);
+                if f.global && !f.local && zn != global_name {
+                    zn = global_name.clone();
+                }
+                if i.is_some() {
+                    // every index out of range counts, an invalid index ends the query with
+                    // status 1 (`query`, builtins/set.rs:574-611)
+                    indexed = true;
+                    let arr = format!("${{+{zn}}} ${{{zn}+\"${{{zn}[@]}}\"}}");
+                    tests.push(match self.runtime_target(w) {
+                        Some(words) => {
+                            let none = if single { "; (( __fish_en )) || __fish_nq=255" } else { "" };
+                            format!(
+                                "{{ __fish_en=0 __fish_qe=0; for __fish_w in {words}; do (( ++__fish_en )); __fish_set_idx query \"${{${{__fish_w#*\\[}}%\\]}}\" {arr} || {{ __fish_nq=1 __fish_qe=1; break; }}; done{none}; (( ! __fish_qe )); }}"
+                            )
                         }
+                        None => format!("{{ __fish_set_idx query {} {arr} || {{ __fish_nq=1; false; }}; }}", Self::index_spec(i.as_deref().unwrap_or_default())),
+                    });
+                    continue;
+                }
+                let t = match n.as_str() {
+                    "argv" => "1".to_string(),
+                    // fish's own variables, which no zsh parameter stands for (`_` is not set)
+                    "_" => "0".to_string(),
+                    "status" | "status_generation" | "fish_killring" | "fish_history" | "fish_bind_mode" | "fish_private_mode" | "history"
+                    | "pipestatus" | "hostname" | "fish_pid" | "COLUMNS" | "LINES" | "EUID" | "IFS"
+                        if zn == zname(&n) =>
+                    {
+                        "1".to_string()
                     }
-                })
-                .collect();
-            // the status is how many of the names are not set
-            let checks: Vec<String> = tests.iter().map(|t| format!("(( {t} )) || (( ++__fish_nq ))")).collect();
-            return format!("{{ __fish_nq=0; {}; (exit $__fish_nq); }}", checks.join("; "));
+                    // `-l` asks for a local: a name that resolves to the plain global is local only when a function declared it
+                    _ if f.local && !f.global && zn == global_name => format!("${{+{zn}}} && ${{#${{(M)${{(t){zn}}}:#*local*}}}}"),
+                    _ => format!("${{+{zn}}}"),
+                };
+                // (the status is how many of the names are not set)
+                tests.push(format!("(( {t} )) || (( ++__fish_nq ))"));
+            }
+            // (an invalid index stops at the operand it is in)
+            let sep = if indexed { " && " } else { "; " };
+            return format!("{{ __fish_nq=0; {}; (exit $__fish_nq); }}", tests.join(sep));
         }
 
         // `set x[2 4..5] a b c`: one value per index, through `__fish_set_idx`
         if let Some(i) = idx {
             let list: Vec<String> = values.iter().map(|w| self.word_list(w)).collect();
             let mode = if f.append || f.prepend { "slice" } else { "set" };
+            let target_words = self.runtime_target(&operands[0]);
             let (pre, z) = self.set_scope_target(&f, &name);
+            // fish splits a path variable's new list on `:` like any other (set_in_node,
+            // env/impl/environment.rs:940)
+            let store = match self.path_split_cmd(&name, &f, "\"${__fish_io[@]}\"") {
+                Some(split) => format!("{{ {split}; {z}=(\"${{__fish_csv[@]}}\"); }}"),
+                None => format!("{z}=(\"${{__fish_io[@]}}\")"),
+            };
+            let Some(words) = target_words else {
+                return format!(
+                    "{{ {pre}__fish_iv=({}); __fish_set_idx {mode} {} ${{+{z}}} ${{{z}+\"${{{z}[@]}}\"}} && {store}; }}",
+                    list.join(" "),
+                    Self::index_spec(&i)
+                );
+            };
+            // `set l[$i] …`: the operand is one argument per word it expands to; the first
+            // is the target and the others are values. None at all leaves the values as
+            // `set`'s operands.
+            let flags: Vec<String> = args[..at].iter().map(|w| self.word_scalar(w)).collect();
             return format!(
-                "{{ {pre}__fish_iv=({}); __fish_set_idx {mode} {} ${{+{z}}} ${{{z}+\"${{{z}[@]}}\"}} && {z}=(\"${{__fish_io[@]}}\"); }}",
+                "{{ __fish_tw=({words}); if (( ${{#__fish_tw}} )); then {pre}__fish_iv=(\"${{(@)__fish_tw[2,-1]}}\" {}); __fish_set_idx {mode} \"${{${{__fish_tw[1]#*\\[}}%\\]}}\" ${{+{z}}} ${{{z}+\"${{{z}[@]}}\"}} && {store}; else __fish_set_dynamic {} {}; fi; }}",
                 list.join(" "),
-                Self::index_spec(&i)
+                flags.join(" "),
+                list.join(" ")
             );
         }
 
         let words: Vec<String> = values.iter().map(|w| self.word_list(w)).collect();
-        let list = words.join(" ");
+        let mut list = words.join(" ");
+        // a path variable's values are split on `:` (set_in_node, env/impl/environment.rs:940);
+        // a literal without one and an unindexed path variable need no splitting
+        let unsplit = |w: &Word| match w.parts.as_slice() {
+            [Part::Var(v)] => v.index.is_none() && !v.deref && path_kind(&v.name, None) == PathKind::Always,
+            _ => w.text().is_some_and(|t| !t.contains(':')),
+        };
+        if path_kind(&name, Self::path_flag(&f)) == PathKind::AtRunTime || !values.iter().all(unsplit) {
+            if let Some(split) = self.path_split_cmd(&name, &f, &list) {
+                // (as the last word list built, it leaves the status a substitution set)
+                let reset = if self.hoists.is_empty() { ": ; " } else { "" };
+                self.hoists.push(format!("{reset}{split}"));
+                list = "\"${__fish_csv[@]}\"".into();
+            }
+        }
 
         if f.unexport {
             return format!("typeset -g +x {z}");
@@ -316,8 +369,9 @@ impl Emitter {
         if global_only {
             z = Self::global_of(&name);
         }
-        if f.export {
-            return self.set_export(&name, &z, values, &list, (f.local, f.append, f.prepend), f.path);
+        // (`--path` / `--unpath` on an exported list keeps it exported, joined anew)
+        if f.export || ((f.path || f.unpath) && z.starts_with("__fx_")) {
+            return self.set_export(&name, &z, values, &list, (f.local, f.append, f.prepend), Self::path_flag(&f));
         }
         // `-a` / `-p` start from the value `$x` shows, whatever scope it is in, and store
         // the result in the scope asked for (`new_var_values`, builtins/set.rs:852)
@@ -330,7 +384,11 @@ impl Emitter {
         };
         if global_only {
             let decl = if self.fn_depth > 0 { "typeset -ga " } else { "" };
-            return format!("{decl}{z}=({items})");
+            // (a function's unsettled name for `x` refers to the global from here on)
+            return match self.auto_ref(&shown, &name) {
+                Some(r) => format!("{{ {r}; {decl}{z}=({items}); {r}; }}"),
+                None => format!("{decl}{z}=({items})"),
+            };
         }
         // A fish local is invisible to the functions it calls, which zsh's dynamically
         // scoped `local` is not, so it lives under a name no other code refers to.
@@ -344,7 +402,7 @@ impl Emitter {
             if self.guarded && z != outer {
                 self.pre_chain.push(format!("(( ${{+{outer}}} )) && {decl} {z}=(${{{outer}+\"${{{outer}[@]}}\"}})"));
             }
-            return format!("{decl} {z}=({items})");
+            return self.declare_list(decl, &z, &items);
         }
         // no scope: the visible local, else the global, else (in a function) a new
         // function local
@@ -360,13 +418,139 @@ impl Emitter {
                 return format!("{{ {settle}; {m}=({items}); }}");
             }
         }
-        if f.append {
-            return format!("{z}+=({list})");
+        let assign = if f.append {
+            format!("{z}+=({list})")
+        } else if f.prepend {
+            format!("{z}=({list} \"${{{z}[@]}}\")")
+        } else {
+            format!("{z}=({list})")
+        };
+        if self.auto_locals.contains(&z) {
+            return format!("{{ {}; {assign}; }}", Self::auto_settle(&z, &name));
         }
-        if f.prepend {
-            return format!("{z}=({list} \"${{{z}[@]}}\")");
+        assign
+    }
+
+    /// `--path` / `--unpath`, when given.
+    fn path_flag(f: &SetFlags) -> Option<bool> {
+        if f.path {
+            Some(true)
+        } else if f.unpath {
+            Some(false)
+        } else {
+            None
         }
-        format!("{z}=({list})")
+    }
+
+    /// The command that leaves the words `words` in `__fish_csv` the way `set` stores them
+    /// in `name`: split on `:` when it is a path variable, or `None` when it never is.
+    fn path_split_cmd(&self, name: &str, f: &SetFlags, words: &str) -> Option<String> {
+        match path_kind(name, Self::path_flag(f)) {
+            PathKind::Never => None,
+            PathKind::Always => Some(format!("__fish_colon_split {words}")),
+            PathKind::AtRunTime => Some(format!("__fish_pvsplit {} {words}", squote(name))),
+        }
+    }
+
+    /// `NAME[…]` whose index is built from variables (`l[$i]`): fish expands it like any
+    /// argument, into one `NAME[…]` word per element (per combination, for several
+    /// lists), and `set` takes each word as an operand of its own. The word list, or
+    /// `None` for an operand with a literal index.
+    fn runtime_target(&mut self, w: &Word) -> Option<String> {
+        if w.text().is_some() || !matches!(self.set_target(w), Some((_, Some(_)))) {
+            return None;
+        }
+        Some(self.word_list(w))
+    }
+
+    /// `set -e NAME…` (`erase`, builtins/set.rs:760-847): one pass per scope flag, inner
+    /// to outer (`-l`, `-f`, `-g`, `-U`; the default lookup with none), each over every
+    /// operand in turn. The status is that of the last operand that failed; an index
+    /// error or a missing list under an index (status 1) ends the whole command. An
+    /// operand like `l[$i]` is erased once per word it expands to, each against the
+    /// list the previous one left.
+    fn erase_cmd(&mut self, f: &SetFlags, operands: &[Word]) -> String {
+        let scope = |local: bool, function: bool, global: bool| SetFlags {
+            local,
+            function,
+            global,
+            g_flag: global,
+            ..SetFlags::default()
+        };
+        let mut passes: Vec<SetFlags> = Vec::new();
+        if f.function {
+            passes.push(scope(true, true, false));
+        } else if f.local {
+            passes.push(scope(true, false, false));
+        }
+        if f.g_flag {
+            passes.push(scope(false, false, true));
+        }
+        if f.universal {
+            passes.push(SetFlags { universal: true, ..SetFlags::default() });
+        }
+        if passes.is_empty() {
+            passes.push(SetFlags::default());
+        }
+        let single = operands.len() == 1;
+        let mut units: Vec<String> = Vec::new();
+        for pass in &passes {
+            for w in operands {
+                let Some((n, i)) = self.set_target(w) else { continue };
+                let Some(words) = self.runtime_target(w) else {
+                    let op = self.erase_in(pass, &n, i);
+                    units.push(op);
+                    continue;
+                };
+                let op = self.erase_in(pass, &n, Some("${__fish_ix}".into()));
+                let none = if single && passes.len() == 1 {
+                    "; (( __fish_en )) || { print -u2 -r -- 'set: --erase: option requires an argument'; __fish_erc=2; }"
+                } else {
+                    ""
+                };
+                units.push(format!(
+                    "__fish_en=0; for __fish_w in {words}; do (( ++__fish_en )); __fish_ix=${{${{__fish_w#*\\[}}%\\]}}; {op} || {{ __fish_st __fish_erc; (( __fish_erc == 1 )) && break; }}; done{none}"
+                ));
+            }
+        }
+        if units.len() == 1 && passes.len() == 1 && !passes[0].universal && operands.first().and_then(Word::text).is_some() {
+            return units.pop().unwrap_or_default();
+        }
+        // each operand runs unless one before it ended the command
+        let mut text = String::new();
+        for (k, u) in units.iter().enumerate().rev() {
+            let u = if u.starts_with("__fish_en=0;") { u.clone() } else { format!("{u} || __fish_st __fish_erc") };
+            text = if k + 1 == units.len() { u } else { format!("{u}; (( __fish_erc == 1 )) || {{ {text}; }}") };
+        }
+        format!("{{ __fish_erc=0; {text}; (exit $__fish_erc); }}")
+    }
+
+    /// One `set -e` operand in one pass: [`erase_one`](Self::erase_one), or for `-U`
+    /// the universal variable. That is a scope of its own in fish, erased only when the
+    /// universal store has the name (`EnvStackImpl::remove`, env/impl/environment.rs:727:
+    /// status 4 when not, and the global of that name stays), and an index needs the
+    /// universal list (status 1 without it, builtins/set.rs:797).
+    fn erase_in(&mut self, pass: &SetFlags, name: &str, idx: Option<String>) -> String {
+        if !pass.universal {
+            return self.erase_one(pass, name, idx);
+        }
+        let z = Self::global_of(name);
+        let q = squote(name);
+        match idx {
+            None => format!("if __fish_uvar_has {q}; then __fish_uvar_erase {z}; unset {z}; else (exit 4); fi"),
+            Some(i) => format!(
+                "if __fish_uvar_has {q}; then {} && __fish_uvar_save {z}; else (exit 1); fi",
+                Self::erase_index(&z, &i)
+            ),
+        }
+    }
+
+    /// `set -e NAME[…]` on the zsh parameter `z`.
+    fn erase_index(z: &str, i: &str) -> String {
+        format!(
+            "{{ __fish_set_idx erase {} ${{+{z}}} ${{{z}+\"${{{z}[@]}}\"}} && {z}=(\"${{__fish_io[@]}}\"); }}",
+            Self::index_spec(i)
+        )
     }
 
     /// The index list of `name[…]` as one word for `__fish_set_idx`: literal text
@@ -396,6 +580,9 @@ impl Emitter {
             return (format!("{decl} {z}; unset {z}; "), z);
         }
         if let Some(z) = self.local_of(name) {
+            if self.auto_locals.contains(&z) {
+                return (format!("{}; ", Self::auto_settle(&z, name)), z);
+            }
             return (String::new(), z);
         }
         match self.function_auto_local(name) {
@@ -410,6 +597,16 @@ impl Emitter {
     /// A missing variable is status 4, a missing list with indexes status 1
     /// (builtins/set.rs:783-799).
     fn erase_one(&mut self, f: &SetFlags, name: &str, idx: Option<String>) -> String {
+        // (a function's unsettled name for `x` is the global once there is one)
+        let pre = if f.global && !f.local { None } else { self.local_of(name).and_then(|l| self.auto_ref(&l, name)) };
+        let text = self.erase_scoped(f, name, idx);
+        match pre {
+            Some(r) => format!("{{ {r}; {text}; }}"),
+            None => text,
+        }
+    }
+
+    fn erase_scoped(&mut self, f: &SetFlags, name: &str, idx: Option<String>) -> String {
         let local = self.local_of(name);
         let target = if f.global && !f.local {
             Some(Self::global_of(name))
@@ -421,26 +618,44 @@ impl Emitter {
         let Some(z) = target else {
             return if idx.is_some() { "(exit 1)" } else { "(exit 4)" }.into();
         };
-        match idx {
-            Some(i) => format!(
-                "{{ __fish_set_idx erase {} ${{+{z}}} ${{{z}+\"${{{z}[@]}}\"}} && {z}=(\"${{__fish_io[@]}}\"); }}",
-                Self::index_spec(&i)
-            ),
-            None => {
-                if local.as_deref() == Some(z.as_str()) {
-                    self.unmap_local(name);
-                }
-                format!("if (( ${{+{z}}} )); then unset {z}; else (exit 4); fi")
+        let Some(i) = idx else {
+            if local.as_deref() == Some(z.as_str()) && !self.unmap_local(name) {
+                // the erase runs in a nested block or behind `and`/`or`, so whether `$x`
+                // is the next scope out afterwards is known only at run time: the local
+                // becomes a reference to it, and a second erase goes through to it
+                let outer = self.outer_of(name);
+                let decl = if self.in_local_scope() { "local -n" } else { "typeset -gn" };
+                self.ref_locals.insert(z.clone());
+                return format!("if (( ${{+{z}}} )); then unset {z}; {decl} {z}={outer}; else (exit 4); fi");
             }
+            return format!("if (( ${{+{z}}} )); then unset {z}; else (exit 4); fi");
+        };
+        Self::erase_index(&z, &i)
+    }
+
+    /// `local -a z=(items)` for a local that may be a reference left by an erase: the
+    /// value is read first (it may come through the reference), then the reference is
+    /// dropped.
+    fn declare_list(&self, decl: &str, z: &str, items: &str) -> String {
+        if !self.ref_locals.contains(z) {
+            return format!("{decl} {z}=({items})");
         }
+        format!("{{ __fish_rv=({items}); unset -n {z} 2>/dev/null; {decl} {z}=(\"${{__fish_rv[@]}}\"); }}")
     }
 
     /// `set -x NAME value…`: zsh exports scalars, so the list is joined the way fish
     /// writes it into the environment.
-    fn set_export(&mut self, name: &str, z: &str, values: &[Word], list: &str, scope: (bool, bool, bool), path: bool) -> String {
+    fn set_export(&mut self, name: &str, z: &str, values: &[Word], list: &str, scope: (bool, bool, bool), path: Option<bool>) -> String {
         let (local, append, prepend) = scope;
         let decl = if local && self.in_local_scope() { "local -x" } else { "typeset -gx" };
-        let sep = if path || name.ends_with("PATH") { ':' } else { ' ' };
+        // a path variable is exported joined with `:` (`EnvVar::delimiter`, env/var.rs:235)
+        let sep = match path_kind(name, path) {
+            PathKind::Always => "':'".to_string(),
+            PathKind::Never => "' '".to_string(),
+            PathKind::AtRunTime => format!("\"${{__fish_pathvars[{name}]-{}}}\"", if is_auto_pathvar(name) { ":" } else { " " }),
+        };
+        // (`--path` / `--unpath` on an exported list ties it again with the new separator)
+        let tie_when = if path.is_some() { "true".to_string() } else { format!("(( ! ${{+__fx_{name}}} ))") };
         // `path`, `cdpath`, `manpath` are tied to their exported scalars already
         if matches!(name, "PATH" | "CDPATH" | "MANPATH") {
             let old = format!("\"${{{z}[@]}}\"");
@@ -472,14 +687,14 @@ impl Emitter {
             let decl = if already {
                 String::new()
             } else {
-                format!("local -xT {name} {tied} '{sep}'; ")
+                format!("local -xT {name} {tied} {sep}; ")
             };
             self.map_local(name, &tied);
             return format!("{{ _fish_x=({items}); {decl}{tied}=(\"${{_fish_x[@]}}\"); }}");
         }
         super::emit::note_exported(name);
         format!(
-            "{{ _fish_x=({items}); if (( ! ${{+{tied}}} )); then unset {name} 2>/dev/null; typeset -gxT {name} {tied} '{sep}'; fi; {tied}=(\"${{_fish_x[@]}}\"); }}"
+            "{{ _fish_x=({items}); if {tie_when}; then unset {name} 2>/dev/null; typeset -gxT {name} {tied} {sep}; fi; {tied}=(\"${{_fish_x[@]}}\"); }}"
         )
     }
 

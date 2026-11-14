@@ -27,6 +27,10 @@ __fish_echo() {
   return 0
 }
 __fish_ret() { return $1 }
+# `CMD || __fish_st VAR`: the status of CMD into VAR (where the text cannot say `$?`)
+__fish_st() { local __s=$?; typeset -g $1=$__s; return $__s }
+# `__fish_lm[NAME]=PARAM` that keeps the status (emit.rs `register`)
+__fish_reg() { local __s=$?; __fish_lm[$1]=$2; return $__s }
 _() { print -r -- "$*" }
 __fish_builtin_q() { local n; for n; do [[ -n ${(M)${(f)"$(__fish_builtin_names)"}:#$n} ]] || return 1; done }
 __fish_command_query() {
@@ -154,7 +158,7 @@ __fish_set_list() {
       __fx_*) continue ;;
       # this function's own locals and the shell's scratch variables
       __sc|__nm|__ex|__lg|__n|__k|__line|__v|__t|__vals|__out|__in|__hasin|__virtual|__fn|__fv) continue ;;
-      __fx_*|__fc<->|__fa<->|__fi<->_<->|__fish_(cs|ps|rc|nrc|nq|av|nav|srcfile|argv|argv_opts|argflags|ipf|ips|fs|fl|es|nr)) continue ;;
+      __fx_*|__fc<->|__fa<->|__fi<->_<->|__fish_(cs|ps|rc|nrc|nq|av|nav|srcfile|argv|argv_opts|argflags|ipf|ips|io|iv|tw|en|erc|ix|w|qe|qc|csv|rv|lm|ss|bs|fs|fl|es|nr)) continue ;;
       # every other `__` name is a user's (fish's own scripts set many), bar what this file made
       __fish_uvar_*|__fish_(bin|cache|config|data|help|man|sysconf|user_data)_dir) continue ;;
       __*) (( ${+__fish_internal[$__n]} )) && continue; [[ $__sc == l ]] && continue ;;
@@ -239,14 +243,14 @@ __fish_set_show() {
   if [[ $t == array* ]]; then vals=("${(@P)z}")
   elif [[ $exp == exported ]]; then
     # an exported list is one joined string in the environment
-    if [[ $n == *PATH ]] || (( ${+__fish_pathvars[$n]} )); then vals=("${(@s.:.)${(P)z}}"); else vals=(${=${(P)z}}); fi
+    if __fish_is_pathvar $n; then vals=("${(@s.:.)${(P)z}}"); else vals=(${=${(P)z}}); fi
   else vals=("${(P)z}"); fi
   local what="with ${#vals} elements" orig
   case $n in
     PATH|CDPATH|MANPATH)
       [[ ${(Pt)n} == *export* || ${(t)PATH} == *export* ]] && exp=exported
       what="a path variable with ${#vals} elements" ;;
-    *) (( ${+__fish_pathvars[$n]} )) && what="a path variable with ${#vals} elements" ;;
+    *) __fish_is_pathvar $n && what="a path variable with ${#vals} elements" ;;
   esac
   print -r -- "\$${n}: set in $kind scope, $exp, $what"
   local i
@@ -317,15 +321,50 @@ __fish_abbr() {
   esac
   return 0
 }
-# `set NAME[idx…] value…` (MODE `set`; `slice` for -a/-p, which fish refuses) and
-# `set -e NAME[idx…]` (MODE `erase`), as fish's builtins/set.rs does them:
+# Is the fish variable NAME a path variable? `set --path` / `--unpath` record it (`:` /
+# ` `); otherwise the name decides (variable_should_auto_pathvar,
+# env/impl/environment.rs:46).
+__fish_is_pathvar() {
+  (( ${+__fish_pathvars[$1]} )) && { [[ ${__fish_pathvars[$1]} == : ]]; return }
+  [[ $1 == *PATH || $1 == LANGUAGE ]]
+}
+# fish's colon_split (env/impl/environment.rs:37): every value split on `:`, an empty
+# value staying one empty element, into __fish_csv. __fish_pvsplit NAME VALUE… splits
+# only for a path variable. Both keep the status they were called with.
+__fish_colon_split() {
+  local __s=$? __e
+  __fish_csv=()
+  for __e; do __fish_csv+=("${(@s.:.)__e}"); done
+  return $__s
+}
+__fish_pvsplit() {
+  local __s=$? __n=$1
+  shift
+  if __fish_is_pathvar $__n; then __fish_colon_split "$@"; else __fish_csv=("$@"); fi
+  return $__s
+}
+# Is NAME in the universal variable file?
+__fish_uvar_has() {
+  [[ -r $__fish_uvar_file ]] || return 1
+  local __l
+  for __l in "${(@f)$(<$__fish_uvar_file)}"; do
+    [[ $__l == SETUVAR\ * ]] || continue
+    __l=${__l#SETUVAR }
+    while [[ $__l == --* ]]; do __l=${__l#* }; done
+    [[ ${__l%%:*} == $1 ]] && return 0
+  done
+  return 1
+}
+# `set NAME[idx…] value…` (MODE `set`; `slice` for -a/-p, which fish refuses),
+# `set -e NAME[idx…]` (MODE `erase`) and `set -q NAME[idx…]` (MODE `query`, which adds
+# the indexes out of range to __fish_nq), as fish's builtins/set.rs does them:
 # split_var_and_indexes reads the index list against the current length (negative
 # counts from the end, `a..b` runs either way, `..b` / `a..` are open only as the
 # first index), new_var_values_by_index pads with empty elements, erased_at_indexes
 # drops the indexes in range. The values to store are in __fish_iv; HAD is ${+NAME},
 # then come the current elements; the new list is left in __fish_io.
 __fish_set_idx() {
-  local __m=$1 __s="${2//:/ }]" __had=$3 __p=1 __n __l __r __k __bad=
+  local __m=$1 __s="$2]" __had=$3 __p=1 __n __l __r __k __bad=
   shift 3
   local -a __cur=("$@") __ix=()
   local __len=${#__cur}
@@ -357,8 +396,13 @@ __fish_set_idx() {
   done
   if [[ -n $__bad ]]; then
     print -u2 -r -- "set: Invalid index starting at '$__bad'"
-    [[ $__m == erase ]] && return 1
+    [[ $__m == (erase|query) ]] && return 1
     return 2
+  fi
+  # (`query`, builtins/set.rs:603: one more unset for every index out of range)
+  if [[ $__m == query ]]; then
+    for __k in $__ix; do (( __k >= 1 && __k <= __len )) || (( ++__fish_nq )); done
+    return 0
   fi
   if [[ $__m == erase ]]; then
     (( __had )) || return 1
@@ -397,7 +441,7 @@ __fish_set_idx_int() {
   return 0
 }
 __fish_set_dynamic() {
-  local exp= erase= query= app= pre= n sep=' '
+  local exp= erase= query= app= pre= n sep=' ' glob= mapped= g
   local o ch
   while [[ ${1-} == -* ]]; do
     o=$1
@@ -407,16 +451,18 @@ __fish_set_dynamic() {
       --query) query=1 ;;
       --append) app=1 ;;
       --prepend) pre=1 ;;
+      --global|--universal) glob=1 ;;
       --) shift; break ;;
       --*) ;;
       *) for ch in ${(s::)o#-}; do
-           case $ch in x) exp=1 ;; e) erase=1 ;; q) query=1 ;; a) app=1 ;; p) pre=1 ;; esac
+           case $ch in x) exp=1 ;; e) erase=1 ;; q) query=1 ;; a) app=1 ;; p) pre=1 ;; g|U) glob=1 ;; esac
          done ;;
     esac
     shift
   done
   n=$1; shift
   [[ -n $n ]] || return 1
+  local fname=$n
   # the variables fish always has, bar `_` and the terminal colour theme
   if [[ -n $query ]]; then
     case $n in
@@ -428,17 +474,34 @@ __fish_set_dynamic() {
     PATH) n=path ;; CDPATH) n=cdpath ;; MANPATH) n=manpath ;; hostname) n=HOST ;;
     path|cdpath|fpath|manpath|mailpath|module_path|signals|options|commands|functions|aliases|parameters|history|widgets|keymaps|modules|nameddirs|userdirs|galiases|saliases|funcstack|jobtexts|builtins|reswords|status|prompt|psvar|watch) n=_fish_v_$n ;;
   esac
-  [[ $n == *PATH ]] && sep=:
-  if [[ -n $query ]]; then (( ${+parameters[$n]} )); return; fi
-  if [[ -n $erase ]]; then unset "$n"; return 0; fi
+  # a local in view (`__fish_lm`, emit.rs `dynamic_names`), unless the global is asked for;
+  # erasing it leaves a reference to the global, which `$x` then reads
+  g=$n
+  [[ -n ${parameters[__fx_$fname]} ]] && g=__fx_$fname
+  if [[ -z $glob ]] && (( ${+__fish_lm[$fname]} )); then n=${__fish_lm[$fname]}; mapped=1; fi
+  if [[ -n $query ]]; then builtin eval "(( \${+$n} ))"; return; fi
+  if [[ -n $erase ]]; then
+    builtin eval "(( \${+$n} ))" || return 4
+    unset "$n"
+    [[ -n $mapped ]] && typeset -gn "$n=$g"
+    return 0
+  fi
+  # a path variable's values are split on `:` and exported joined with it
+  if __fish_is_pathvar $fname; then
+    sep=:
+    __fish_colon_split "$@"
+    set -- "${__fish_csv[@]}"
+  fi
   if [[ -n $exp ]]; then
     local -a __v=("$@")
     [[ ${(Pt)n} == array* ]] && unset "$n"
     typeset -gx "$n=${(pj:$sep:)__v}"
     return 0
   fi
-  [[ -n ${parameters[$n]} && ${(Pt)n} != array* ]] && unset "$n"
-  typeset -ga "$n"
+  if [[ -z $mapped ]]; then
+    [[ -n ${parameters[$n]} && ${(Pt)n} != array* ]] && unset "$n"
+    typeset -ga "$n"
+  fi
   if [[ -n $app ]]; then builtin eval "$n+=(\"\$@\")"
   elif [[ -n $pre ]]; then builtin eval "$n=(\"\$@\" \"\${(@)$n}\")"
   else builtin eval "$n=(\"\$@\")"; fi
@@ -1041,6 +1104,8 @@ __fish_commandline() {
   __fish_cmdline_read "${BUFFER-}" "${CURSOR-0}" "${(@)reads}"
 }
 typeset -gA __fish_events __fish_pathvars __fish_gset
+# fish local name -> zsh parameter, for code that names variables at run time (emit.rs `dynamic_names`)
+typeset -gA __fish_lm
 __fish_on_event() {
   case $1 in
     fish_preexec) preexec_functions+=($2) ;;
@@ -1244,7 +1309,8 @@ source() {
 }
 __fish_eval() {
   local __t
-  __t=$(print -r -- "$*" | '@ZSHRS@' --fish-translate -) || return
+  # (the locals in view, which the code may name: emit.rs `dynamic_names`)
+  __t=$(print -r -- "$*" | ZSHRS_FISH_LOCALS="${(kv)__fish_lm}" '@ZSHRS@' --fish-translate -) || return
   builtin eval "$__t"
 }
 eval() { __fish_eval "$@" }
