@@ -63,6 +63,8 @@ pub struct Emitter {
     /// The command about to be emitted reads a pipe: it is not the first of its job. fish
     /// gives `string` its stdin only then or under a stdin redirection of its own.
     piped_in: bool,
+    /// The names `function_auto_local` gave out: they may refer to the global itself.
+    pub(super) auto_locals: std::collections::HashSet<String>,
 }
 
 /// One lexical scope. fish scopes `set -l` to the enclosing block (`if`, `while`,
@@ -77,6 +79,11 @@ struct Frame {
     /// The scope names variables at run time (`set $name`, `$$name`), which only plain
     /// names can follow; its locals are not renamed.
     plain: bool,
+    /// A function body: fish's function scope, where `set -f` and a `set` of a name
+    /// that is neither local nor global put the variable.
+    func: bool,
+    /// Declarations the function body starts with (see `function_auto_local`).
+    entry: Vec<String>,
 }
 
 thread_local! {
@@ -166,22 +173,100 @@ fn dq_escape(s: &str) -> String {
 impl Emitter {
     /// The zsh parameter a fish name currently refers to, block-locals included.
     pub(super) fn zn(&self, name: &str) -> String {
+        self.local_of(name).unwrap_or_else(|| Self::global_of(name))
+    }
+
+    /// The zsh parameter of the fish local `name` visible here, if there is one.
+    /// fish reads a variable from the innermost local scope that has it, then from the
+    /// global scope (`EnvStackImpl::getf`, env/impl/environment.rs:366).
+    pub(super) fn local_of(&self, name: &str) -> Option<String> {
         for f in self.scopes.iter().rev() {
             if let Some(m) = f.vars.get(name) {
-                return m.clone();
+                return Some(m.clone());
             }
             if f.barrier {
                 // a function does not see the locals of the script that defines it
-                return zname(name);
+                return None;
             }
         }
-        if TOP_LOCALS.with(|t| t.borrow().contains(name)) {
-            return format!("_fl_top_{name}");
-        }
+        TOP_LOCALS
+            .with(|t| t.borrow().contains(name))
+            .then(|| format!("_fl_top_{name}"))
+    }
+
+    /// The zsh parameter of the fish global `name`.
+    pub(super) fn global_of(name: &str) -> String {
         if TOP_EXPORTED.with(|t| t.borrow().contains(name)) {
             return format!("__fx_{name}");
         }
         zname(name)
+    }
+
+    /// `set -e x` removed the local `x`: from here on `$x` is the global again. Only
+    /// when the erase runs whenever the declaration did (same block, not behind
+    /// `and`/`or`); an erase in a nested block leaves the name mapped.
+    pub(super) fn unmap_local(&mut self, name: &str) {
+        if self.guarded {
+            return;
+        }
+        if let Some(f) = self.scopes.last_mut() {
+            if f.vars.remove(name).is_some() {
+                return;
+            }
+        }
+        if self.fn_depth == 0 && self.scopes.is_empty() {
+            TOP_LOCALS.with(|t| t.borrow_mut().remove(name));
+        }
+    }
+
+    /// Declare `name` in fish's function scope (`set -f`): the outermost scope of the
+    /// enclosing function, or the script's top-level locals outside any function
+    /// (`EnvStackImpl::set`, env/impl/environment.rs:665-678).
+    pub(super) fn declare_function_local(&mut self, name: &str) -> String {
+        let Some(at) = self.scopes.iter().rposition(|f| f.func) else {
+            if self.fn_depth > 0 || self.plain_top {
+                return self.declare_local(name);
+            }
+            TOP_LOCALS.with(|t| t.borrow_mut().insert(name.to_string()));
+            return format!("_fl_top_{name}");
+        };
+        if self.scopes[at..].iter().any(|f| f.plain) {
+            return zname(name);
+        }
+        if let Some(m) = self.scopes[at].vars.get(name) {
+            return m.clone();
+        }
+        self.local_id += 1;
+        let m = format!("_fl{}_{name}", self.local_id);
+        self.scopes[at].vars.insert(name.to_string(), m.clone());
+        m
+    }
+
+    /// `set x …` (no scope) in a function, where `x` is not local: fish assigns the
+    /// global if one exists, and otherwise makes `x` local to the function
+    /// (`resolve_unspecified_scope`, env/impl/environment.rs:957). Which one is known
+    /// only at run time, so the function gets a name for `x` that is declared unset on
+    /// entry and, at the first assignment, becomes either a reference to the global or
+    /// the function's own list. Returns that name and the text that settles it, or
+    /// `None` where the plain name must stay (no function, names chosen at run time,
+    /// fish's special variables).
+    pub(super) fn function_auto_local(&mut self, name: &str) -> Option<(String, String)> {
+        let at = self.scopes.iter().rposition(|f| f.func)?;
+        if !self.scopes[at].barrier || self.scopes[at..].iter().any(|f| f.plain) || zname(name) != name || Self::global_of(name) != name {
+            return None;
+        }
+        if matches!(name, "argv" | "PWD" | "SHLVL" | "umask" | "version" | "FISH_VERSION" | "fish_pid" | "_") {
+            return None;
+        }
+        self.local_id += 1;
+        let m = format!("_fl{}_{name}", self.local_id);
+        self.auto_locals.insert(m.clone());
+        let f = &mut self.scopes[at];
+        f.vars.insert(name.to_string(), m.clone());
+        // (a global that exists when the function starts is what `$x` shows until then)
+        f.entry.push(format!("if (( ${{+{name}}} )); then local -n {m}={name}; else local -a {m}; unset {m}; fi"));
+        let settle = format!("(( ${{+{m}}} )) || {{ if (( ${{+{name}}} )); then local -n {m}={name}; else local -a {m}; fi; }}");
+        Some((m, settle))
     }
 
     /// Declare `name` local to the innermost scope, whatever that is, and return the zsh
@@ -562,6 +647,7 @@ impl Emitter {
         self.scopes.push(Frame {
             barrier: !no_shadow,
             plain: uses_dynamic_names(body),
+            func: true,
             ..Frame::default()
         });
         let mut inner = String::new();
@@ -570,7 +656,11 @@ impl Emitter {
             inner.push_str(&format!("local -a {m}=(\"${{(@)argv[{},{}]}}\")\n", k + 1, k + 1));
         }
         let text = self.script(body);
-        self.scopes.pop();
+        if let Some(f) = self.scopes.pop() {
+            for d in f.entry {
+                inner.insert_str(0, &format!("{d}\n"));
+            }
+        }
         inner.push_str(if text.trim().is_empty() { ":" } else { &text });
         self.fn_depth -= 1;
         let mut out = format!("function {} {{\n{inner}\n}}", quote_lit(&name));

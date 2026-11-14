@@ -317,20 +317,84 @@ __fish_abbr() {
   esac
   return 0
 }
-# `set -e name[1 3 5..6 -1]`: drop every element named, highest first
-__fish_erase_idx() {
-  local n=$1 t a b k len
-  local -a arr=("${(@P)n}") drop=()
-  len=${#arr}
-  for t in ${=2}; do
-    a=${t%%..*} b=${t##*..}
-    (( a < 0 )) && a=$(( len + a + 1 ))
-    (( b < 0 )) && b=$(( len + b + 1 ))
-    (( a > b )) && { k=$a; a=$b; b=$k }
-    for (( k = a; k <= b; k++ )); do (( k >= 1 && k <= len )) && drop+=($k); done
+# `set NAME[idx…] value…` (MODE `set`; `slice` for -a/-p, which fish refuses) and
+# `set -e NAME[idx…]` (MODE `erase`), as fish's builtins/set.rs does them:
+# split_var_and_indexes reads the index list against the current length (negative
+# counts from the end, `a..b` runs either way, `..b` / `a..` are open only as the
+# first index), new_var_values_by_index pads with empty elements, erased_at_indexes
+# drops the indexes in range. The values to store are in __fish_iv; HAD is ${+NAME},
+# then come the current elements; the new list is left in __fish_io.
+__fish_set_idx() {
+  local __m=$1 __s="${2//:/ }]" __had=$3 __p=1 __n __l __r __k __bad=
+  shift 3
+  local -a __cur=("$@") __ix=()
+  local __len=${#__cur}
+  while [[ ${__s[__p]} != ']' ]]; do
+    if (( ! ${#__ix} )) && [[ ${__s[__p,__p+1]} == .. ]]; then
+      __l=1
+    else
+      __fish_set_idx_int || { __bad=${__s[__p,-1]}; break; }
+      __l=$__n
+    fi
+    (( __l < 0 )) && (( __l += __len + 1 ))
+    if [[ ${__s[__p,__p+1]} == .. ]]; then
+      (( __p += 2 ))
+      if (( ! ${#__ix} )) && [[ ${__s[__p]} == ']' ]]; then
+        __r=$__len
+      else
+        __fish_set_idx_int || { __bad=${__s[__p,-1]}; break; }
+        __r=$__n
+        (( __r < 0 )) && (( __r += __len + 1 ))
+      fi
+      if (( __l < __r )); then
+        for (( __k = __l; __k <= __r; __k++ )); do __ix+=($__k); done
+      else
+        for (( __k = __l; __k >= __r; __k-- )); do __ix+=($__k); done
+      fi
+    else
+      __ix+=($__l)
+    fi
   done
-  for k in ${(Onu)drop}; do arr[$k]=(); done
-  builtin eval "$n=(\"\${(@)arr}\")"
+  if [[ -n $__bad ]]; then
+    print -u2 -r -- "set: Invalid index starting at '$__bad'"
+    [[ $__m == erase ]] && return 1
+    return 2
+  fi
+  if [[ $__m == erase ]]; then
+    (( __had )) || return 1
+    for __k in ${(Onu)__ix}; do (( __k >= 1 && __k <= __len )) && __cur[__k]=(); done
+    __fish_io=("${__cur[@]}")
+    return 0
+  fi
+  for __k in $__ix; do
+    (( __k > 0 )) || { print -u2 -r -- 'set: array index out of bounds'; return 2; }
+  done
+  [[ $__m == slice ]] && { print -u2 -r -- 'set: Cannot use --append or --prepend when assigning to a slice'; return 2; }
+  if (( ${#__ix} != ${#__fish_iv} )); then
+    print -u2 -r -- "set: given ${#__ix} indexes but ${#__fish_iv} values"
+    return 2
+  fi
+  for (( __k = 1; __k <= ${#__ix}; __k++ )); do
+    __l=${__ix[__k]}
+    while (( ${#__cur} < __l )); do __cur+=(''); done
+    __cur[__l]=${__fish_iv[__k]}
+  done
+  __fish_io=("${__cur[@]}")
+}
+# One integer of an index list at __s[__p] into __n (fish's wcstoi_partial: blanks,
+# a sign, digits), then the blanks after it; status 1 when there is none.
+__fish_set_idx_int() {
+  local __st __d __sg=
+  while [[ ${__s[__p]} == [[:space:]] ]]; do (( __p++ )); done
+  __st=$__p
+  [[ ${__s[__p]} == [-+] ]] && { __sg=${__s[__p]}; (( __p++ )); }
+  __d=$__p
+  while [[ ${__s[__p]} == [0-9] ]]; do (( __p++ )); done
+  (( __p > __d )) || { __p=$__st; return 1; }
+  __n=$(( 10#${__s[__d,__p-1]} ))
+  [[ $__sg == - ]] && __n=$(( -__n ))
+  while [[ ${__s[__p]} == [[:space:]] ]]; do (( __p++ )); done
+  return 0
 }
 __fish_set_dynamic() {
   local exp= erase= query= app= pre= n sep=' '

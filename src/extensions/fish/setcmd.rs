@@ -9,6 +9,8 @@ use super::parse::{Part, Word};
 #[derive(Default)]
 struct SetFlags {
     local: bool,
+    /// `-f`: the function scope (`local` is set too).
+    function: bool,
     global: bool,
     universal: bool,
     export: bool,
@@ -64,7 +66,11 @@ impl Emitter {
             };
             for c in letters {
                 match c {
-                    'l' | 'f' => f.local = true,
+                    'l' => f.local = true,
+                    'f' => {
+                        f.local = true;
+                        f.function = true;
+                    }
                     'g' => f.global = true,
                     'U' => {
                         f.global = true;
@@ -125,15 +131,6 @@ impl Emitter {
             idx.push_str(tail);
         }
         Some((name.to_string(), Some(idx)))
-    }
-
-    /// A fish index token as the zsh subscript it names (first token of the list).
-    fn subscript(idx: &str) -> String {
-        let first = idx.split_whitespace().next().unwrap_or("1");
-        match first.split_once("..") {
-            Some((a, b)) => format!("{a},{b}"),
-            None => first.to_string(),
-        }
     }
 
     /// `set -U` also writes the variable to the universal store; `set -U -e` removes it.
@@ -231,7 +228,16 @@ impl Emitter {
                     .iter()
                     .filter_map(|w| self.set_target(w))
                     .filter(|(n, _)| n != "_")
-                    .map(|(n, _)| format!("__fish_set_show {} {}", self.zn(&n), crate::fish::emit::squote(&n)))
+                    .map(|(n, _)| {
+                        let global = Self::global_of(&n);
+                        let show = |z: &str| format!("__fish_set_show {z} {}", squote(&n));
+                        // a local and the global it hides are both described, local first
+                        // (`show`, builtins/set.rs:683)
+                        match self.local_of(&n).filter(|l| *l != global && !self.auto_locals.contains(l)) {
+                            Some(l) => format!("{{ {}; __fish_rc=$?; {} && __fish_rc=0; (exit $__fish_rc); }}", show(&l), show(&global)),
+                            None => show(&self.zn(&n)),
+                        }
+                    })
                     .collect();
                 return calls.join("; ");
             }
@@ -239,19 +245,10 @@ impl Emitter {
             return self.set_list_call(flags);
         }
         if f.erase {
-            return operands
-                .iter()
-                .filter_map(|w| self.set_target(w))
-                .map(|(n, i)| match i {
-                    // (several indices go through a helper, which cannot reach `argv`)
-                    Some(i) if i.contains(' ') && n != "argv" => format!("__fish_erase_idx {} {}", self.zn(&n), squote(&i)),
-                    Some(i) => format!("{}[{}]=()", self.zn(&n), Self::subscript(&i)),
-                    // erasing a variable that is not set is status 4
-                    None => {
-                        let z = self.zn(&n);
-                        format!("if (( ${{+{z}}} )); then unset {z}; else (exit 4); fi")
-                    }
-                })
+            let targets: Vec<(String, Option<String>)> = operands.iter().filter_map(|w| self.set_target(w)).collect();
+            return targets
+                .into_iter()
+                .map(|(n, i)| self.erase_one(&f, &n, i))
                 .collect::<Vec<_>>()
                 .join("; ");
         }
@@ -295,16 +292,16 @@ impl Emitter {
             return format!("{{ __fish_nq=0; {}; (exit $__fish_nq); }}", checks.join("; "));
         }
 
-        // `set x[2] value`: one element
+        // `set x[2 4..5] a b c`: one value per index, through `__fish_set_idx`
         if let Some(i) = idx {
-            let sub = Self::subscript(&i);
-            // several indices take several values, one each
-            if sub.contains(',') && values.len() > 1 {
-                let list: Vec<String> = values.iter().map(|w| self.word_list(w)).collect();
-                return format!("{z}[{sub}]=({})", list.join(" "));
-            }
-            let v = values.first().map(|w| self.word_scalar(w)).unwrap_or_else(|| "''".into());
-            return format!("{z}[{sub}]={v}");
+            let list: Vec<String> = values.iter().map(|w| self.word_list(w)).collect();
+            let mode = if f.append || f.prepend { "slice" } else { "set" };
+            let (pre, z) = self.set_scope_target(&f, &name);
+            return format!(
+                "{{ {pre}__fish_iv=({}); __fish_set_idx {mode} {} ${{+{z}}} ${{{z}+\"${{{z}[@]}}\"}} && {z}=(\"${{__fish_io[@]}}\"); }}",
+                list.join(" "),
+                Self::index_spec(&i)
+            );
         }
 
         let words: Vec<String> = values.iter().map(|w| self.word_list(w)).collect();
@@ -313,29 +310,33 @@ impl Emitter {
         if f.unexport {
             return format!("typeset -g +x {z}");
         }
+        // `-g` (and `-U`) write the global even where a local of that name is in view,
+        // which keeps hiding it (`EnvStackImpl::set`, env/impl/environment.rs:660)
+        let global_only = f.global && !f.local;
+        if global_only {
+            z = Self::global_of(&name);
+        }
         if f.export {
             return self.set_export(&name, &z, values, &list, (f.local, f.append, f.prepend), f.path);
         }
-        // `set -l -a x v` on a name not yet local makes the local first
-        let mut pre = String::new();
-        if f.local && (f.append || f.prepend) && z == zname(&name) {
-            z = self.declare_local(&name);
-            if z != zname(&name) {
-                let decl = if self.in_local_scope() { "local -a" } else { "typeset -ga" };
-                pre = format!("{decl} {z}=(); ");
-            }
-        }
-        if f.append {
-            return format!("{pre}{z}+=({list})");
-        }
-        if f.prepend {
-            return format!("{pre}{z}=({list} \"${{{z}[@]}}\")");
+        // `-a` / `-p` start from the value `$x` shows, whatever scope it is in, and store
+        // the result in the scope asked for (`new_var_values`, builtins/set.rs:852)
+        let shown = self.zn(&name);
+        let old = format!("${{{shown}+\"${{{shown}[@]}}\"}}");
+        let items = match (f.append, f.prepend) {
+            (true, _) => format!("{old} {list}"),
+            (_, true) => format!("{list} {old}"),
+            _ => list.clone(),
+        };
+        if global_only {
+            let decl = if self.fn_depth > 0 { "typeset -ga " } else { "" };
+            return format!("{decl}{z}=({items})");
         }
         // A fish local is invisible to the functions it calls, which zsh's dynamically
         // scoped `local` is not, so it lives under a name no other code refers to.
         if f.local {
-            let outer = self.zn(&name);
-            z = self.declare_local(&name);
+            let outer = shown;
+            z = if f.function { self.declare_function_local(&name) } else { self.declare_local(&name) };
             let decl = if self.in_local_scope() { "local -a" } else { "typeset -ga" };
             // `set -q x; or set -l x 1`: when the declaration is skipped the later reads of
             // `$x` must still find the variable that is visible, so the local starts as a
@@ -343,12 +344,95 @@ impl Emitter {
             if self.guarded && z != outer {
                 self.pre_chain.push(format!("(( ${{+{outer}}} )) && {decl} {z}=(${{{outer}+\"${{{outer}[@]}}\"}})"));
             }
-            return format!("{decl} {z}=({list})");
+            return format!("{decl} {z}=({items})");
         }
-        if f.global && self.fn_depth > 0 {
-            return format!("typeset -ga {z}=({list})");
+        // no scope: the visible local, else the global, else (in a function) a new
+        // function local
+        if self.local_of(&name).is_none() {
+            if let Some((m, settle)) = self.function_auto_local(&name) {
+                // (the old value is read through the new name once it is settled)
+                let old = format!("${{{m}+\"${{{m}[@]}}\"}}");
+                let items = match (f.append, f.prepend) {
+                    (true, _) => format!("{old} {list}"),
+                    (_, true) => format!("{list} {old}"),
+                    _ => list,
+                };
+                return format!("{{ {settle}; {m}=({items}); }}");
+            }
+        }
+        if f.append {
+            return format!("{z}+=({list})");
+        }
+        if f.prepend {
+            return format!("{z}=({list} \"${{{z}[@]}}\")");
         }
         format!("{z}=({list})")
+    }
+
+    /// The index list of `name[…]` as one word for `__fish_set_idx`: literal text
+    /// quoted, an index built from variables left for the shell to expand.
+    fn index_spec(i: &str) -> String {
+        if i.contains('$') {
+            format!("\"{i}\"")
+        } else {
+            squote(i)
+        }
+    }
+
+    /// The zsh parameter `set NAME[…] …` writes, and any declaration it needs first.
+    /// fish reads the list being changed from the scope it writes (`new_var_values_by_index`,
+    /// builtins/set.rs:886), so a new local starts empty.
+    fn set_scope_target(&mut self, f: &SetFlags, name: &str) -> (String, String) {
+        if f.global && !f.local {
+            return (String::new(), Self::global_of(name));
+        }
+        if f.local {
+            let before = self.local_of(name);
+            let z = if f.function { self.declare_function_local(name) } else { self.declare_local(name) };
+            if before.as_deref() == Some(z.as_str()) || z == zname(name) {
+                return (String::new(), z);
+            }
+            let decl = if self.in_local_scope() { "local -a" } else { "typeset -ga" };
+            return (format!("{decl} {z}; unset {z}; "), z);
+        }
+        if let Some(z) = self.local_of(name) {
+            return (String::new(), z);
+        }
+        match self.function_auto_local(name) {
+            Some((m, settle)) => (format!("{settle}; "), m),
+            None => (String::new(), Self::global_of(name)),
+        }
+    }
+
+    /// `set -e NAME` / `set -e NAME[…]` with the scope flags given. fish erases from
+    /// the innermost local that has the name, else the global (`EnvStackImpl::remove`,
+    /// env/impl/environment.rs:708); `-l` looks only at locals, `-g` only at the global.
+    /// A missing variable is status 4, a missing list with indexes status 1
+    /// (builtins/set.rs:783-799).
+    fn erase_one(&mut self, f: &SetFlags, name: &str, idx: Option<String>) -> String {
+        let local = self.local_of(name);
+        let target = if f.global && !f.local {
+            Some(Self::global_of(name))
+        } else if f.local {
+            local.clone()
+        } else {
+            Some(self.zn(name))
+        };
+        let Some(z) = target else {
+            return if idx.is_some() { "(exit 1)" } else { "(exit 4)" }.into();
+        };
+        match idx {
+            Some(i) => format!(
+                "{{ __fish_set_idx erase {} ${{+{z}}} ${{{z}+\"${{{z}[@]}}\"}} && {z}=(\"${{__fish_io[@]}}\"); }}",
+                Self::index_spec(&i)
+            ),
+            None => {
+                if local.as_deref() == Some(z.as_str()) {
+                    self.unmap_local(name);
+                }
+                format!("if (( ${{+{z}}} )); then unset {z}; else (exit 4); fi")
+            }
+        }
     }
 
     /// `set -x NAME value…`: zsh exports scalars, so the list is joined the way fish
