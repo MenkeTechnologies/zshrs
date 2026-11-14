@@ -261,7 +261,11 @@ impl TermEntry {
         };
 
         // The first `ext_str` offsets are values; everything after is the
-        // name list, ordered bools, then numbers, then strings.
+        // name list, ordered bools, then numbers, then strings. Name offsets
+        // are relative to the END of the value strings, not to the start of
+        // the table: ncurses' read_entry.c sums `strlen + 1` over the present
+        // values into `base` and converts the names against
+        // `ext_str_table + base`.
         let values: Vec<Option<Vec<u8>>> = offsets
             .iter()
             .take(ext_str)
@@ -273,6 +277,8 @@ impl TermEntry {
                 }
             })
             .collect();
+        let names_base: usize = values.iter().flatten().map(|v| v.len() + 1).sum();
+        let name_table = table.get(names_base..).unwrap_or(&[]);
         let names: Vec<String> = offsets
             .iter()
             .skip(ext_str)
@@ -280,7 +286,7 @@ impl TermEntry {
                 if o < 0 {
                     String::new()
                 } else {
-                    cstr_at(table, o as usize)
+                    cstr_at(name_table, o as usize)
                         .map(|v| String::from_utf8_lossy(&v).into_owned())
                         .unwrap_or_default()
                 }
@@ -897,5 +903,231 @@ mod tests {
         assert_eq!(NUM_CODES[2], "li");
         assert_eq!(STR_NAMES.iter().position(|&n| n == "cup"), Some(10));
         assert_eq!(STR_CODES[10], "cm");
+    }
+
+    /// Append an ncurses extended section to a standard-section entry. The
+    /// shapes mirror what `tic -x` writes: value offsets index the table from
+    /// its start, name offsets index it from the end of the value strings.
+    fn with_extended(mut v: Vec<u8>, wide: bool) -> Vec<u8> {
+        // Two bools (AX set, XT clear), one number (U8=1), two strings
+        // (E3 present, Ms absent).
+        let bools: [u8; 2] = [1, 0];
+        let nums: [i32; 1] = [1];
+        let values = b"\x1b[3J\0";
+        let value_offsets: [i16; 2] = [0, -1];
+        let names = b"AX\0XT\0U8\0E3\0Ms\0";
+        let name_offsets: [i16; 5] = [0, 3, 6, 9, 12];
+        if v.len() % 2 != 0 {
+            v.push(0);
+        }
+        let table_len = values.len() + names.len();
+        for x in [
+            bools.len() as i16,
+            nums.len() as i16,
+            value_offsets.len() as i16,
+            (value_offsets.len() + name_offsets.len()) as i16,
+            table_len as i16,
+        ] {
+            v.extend_from_slice(&x.to_le_bytes());
+        }
+        v.extend_from_slice(&bools);
+        if v.len() % 2 != 0 {
+            v.push(0);
+        }
+        for n in nums {
+            if wide {
+                v.extend_from_slice(&n.to_le_bytes());
+            } else {
+                v.extend_from_slice(&(n as i16).to_le_bytes());
+            }
+        }
+        for o in value_offsets.iter().chain(name_offsets.iter()) {
+            v.extend_from_slice(&o.to_le_bytes());
+        }
+        v.extend_from_slice(values);
+        v.extend_from_slice(names);
+        v
+    }
+
+    fn entry_with(strs: &[(&str, &[u8])]) -> TermEntry {
+        let mut e = TermEntry::default();
+        for (name, val) in strs {
+            e.set_string(name, Some(val.to_vec()));
+        }
+        e
+    }
+
+    /// Name offsets are relative to the end of the value strings
+    /// (ncurses read_entry.c converts them against `ext_str_table + base`).
+    /// Resolving them from the start of the table read `AX` as the bytes of
+    /// the `E3` value, so `$terminfo[AX]`, `[E3]`, `[kDC5]` came out empty
+    /// on xterm-256color where zsh reports them.
+    #[test]
+    fn extended_names_resolve_after_the_value_strings() {
+        for wide in [false, true] {
+            let e = TermEntry::parse(&with_extended(synth(wide), wide)).expect("parses");
+            assert_eq!(e.ext_bools.get("AX"), Some(&true));
+            assert_eq!(e.ext_bools.get("XT"), Some(&false));
+            assert_eq!(e.ext_nums.get("U8"), Some(&1));
+            assert_eq!(e.ext_strs.get("E3").map(|v| v.as_slice()), Some(&b"\x1b[3J"[..]));
+            assert!(!e.ext_strs.contains_key("Ms"), "absent value is not stored");
+            assert_eq!(e.ext_strs.len(), 1);
+            // The lookups fall through to the extended maps.
+            assert_eq!(e.flag("AX"), 1);
+            assert_eq!(e.flag("XT"), 0);
+            assert_eq!(e.num("U8"), 1);
+            assert_eq!(e.string("E3"), Some(&b"\x1b[3J"[..]));
+            assert!(!e.str_is_wrong_type("E3"));
+        }
+    }
+
+    #[test]
+    fn truncated_extended_section_keeps_the_standard_entry() {
+        let full = with_extended(synth(false), false);
+        let std_len = synth(false).len();
+        for cut in [std_len + 3, std_len + 12, full.len() - 1] {
+            let e = TermEntry::parse(&full[..cut]).expect("standard section intact");
+            assert_eq!(e.names[0], "zz-test");
+            assert!(e.ext_bools.is_empty() && e.ext_nums.is_empty() && e.ext_strs.is_empty());
+        }
+    }
+
+    /// tigetflag(3): 1 set, 0 absent or cancelled, -1 not a boolean.
+    /// tigetnum(3): -1 absent or cancelled, -2 not a numeric capability.
+    #[test]
+    fn terminfo_lookups_follow_the_ncurses_return_conventions() {
+        let am = BOOL_NAMES.iter().position(|&n| n == "am").unwrap();
+        let cols = NUM_NAMES.iter().position(|&n| n == "cols").unwrap();
+        let lines = NUM_NAMES.iter().position(|&n| n == "lines").unwrap();
+        let mut e = TermEntry::default();
+        e.bools = vec![2; am + 1];
+        e.bools[am] = 1;
+        e.nums = vec![ABSENT; lines.max(cols) + 1];
+        e.nums[cols] = 132;
+        e.nums[lines] = CANCELLED;
+
+        assert_eq!(e.flag("am"), 1);
+        assert_eq!(e.flag("bw"), 0, "cancelled boolean reads as unset");
+        assert_eq!(e.flag("xenl"), 0, "slot past the stored array reads as unset");
+        assert_eq!(e.flag("cols"), -1, "numeric name is not a boolean");
+        assert_eq!(e.flag("no-such-cap"), -1);
+
+        assert_eq!(e.num("cols"), 132);
+        assert_eq!(e.num("lines"), ABSENT, "cancelled number reads as absent");
+        assert_eq!(e.num("colors"), ABSENT, "slot past the stored array");
+        assert_eq!(e.num("am"), CANCELLED, "boolean name is not numeric");
+        assert_eq!(e.num("no-such-cap"), CANCELLED);
+
+        assert!(e.str_is_wrong_type("cols"));
+        assert!(e.str_is_wrong_type("no-such-cap"));
+        assert!(!e.str_is_wrong_type("cup"), "absent string is not wrong-type");
+        assert_eq!(e.string("cup"), None);
+    }
+
+    /// tgetnum/tgetflag have one failure value each: -1 and 0.
+    #[test]
+    fn termcap_lookups_collapse_failures() {
+        let li = NUM_CODES.iter().position(|&c| c == "li").unwrap();
+        let co = NUM_CODES.iter().position(|&c| c == "co").unwrap();
+        let mut e = TermEntry::default();
+        e.nums = vec![ABSENT; li.max(co) + 1];
+        e.nums[co] = 80;
+        e.nums[li] = CANCELLED;
+        assert_eq!(e.tc_num("co"), 80);
+        assert_eq!(e.tc_num("li"), ABSENT);
+        assert_eq!(e.tc_num("zz"), ABSENT);
+        assert_eq!(e.tc_flag("zz"), 0);
+        assert_eq!(e.tc_flag("am"), 0, "absent bool array");
+    }
+
+    /// `ML` names both `smgl` and `smglr`; ncurses resolves it to the later
+    /// slot (`smglr`), so a termcap lookup must not answer with `smgl`.
+    #[test]
+    fn duplicated_termcap_code_resolves_to_the_later_slot() {
+        let e = entry_with(&[("smglr", b"\x1b[%i%p1%d;%p2%ds")]);
+        assert_eq!(e.tc_string("ML"), Some(&b"\x1b[%i%p1%d;%p2%ds"[..]));
+        let e = entry_with(&[("smgl", b"\x1b[%i%p1%ds")]);
+        assert_eq!(e.tc_string("ML"), None, "smgl alone does not answer ML");
+        assert_eq!(e.tc_string("cm"), None);
+        let e = entry_with(&[("cup", b"\x1b[%i%p1%d;%p2%dH")]);
+        assert_eq!(e.tc_string("cm"), e.string("cup"));
+    }
+
+    /// Reference values: zsh 5.9 on ncurses, `TERM=<t> zsh -f -c 'zmodload
+    /// zsh/termcap zsh/terminfo; print -r -- ${(qqqq)termcap[me]}
+    /// $terminfo[OTbs]'` — `me` is `$'\033[0m'` for all three, and OTbs is
+    /// yes/no/yes for xterm/ansi/vt100 from their `cub1` alone.
+    #[test]
+    fn termcap_fixups_match_ncurses_for_reference_terminals() {
+        let otbs = BOOL_NAMES.iter().position(|&n| n == "OTbs").unwrap();
+        let cases: [(&str, &[u8], &[u8], &[u8], i8, i8); 3] = [
+            (
+                "xterm",
+                b"\x1b(B\x1b[m",
+                b"%?%p9%t\x1b(0%e\x1b(B%;\x1b[0%?%p6%t;1%;%?%p5%t;2%;%?%p2%t;4%;%?%p1%p3%|%t;7%;%?%p4%t;5%;%?%p7%t;8%;m",
+                b"\x08",
+                0,
+                1,
+            ),
+            (
+                "ansi",
+                b"\x1b[0;10m",
+                b"\x1b[0;10%?%p1%t;7%;%?%p2%t;4%;%?%p3%t;7%;%?%p4%t;5%;%?%p6%t;1%;%?%p7%t;8%;%?%p9%t;11%;m",
+                b"\x1b[D",
+                1,
+                0,
+            ),
+            (
+                "vt100",
+                b"\x1b[m\x0f$<2>",
+                b"\x1b[0%?%p1%p6%|%t;1%;%?%p2%t;4%;%?%p1%p3%|%t;7%;%?%p4%t;5%;m%?%p9%t\x0e%e\x0f%;$<2>",
+                b"\x08",
+                1,
+                1,
+            ),
+        ];
+        for (term, sgr0, sgr, cub1, stored_otbs, want_otbs) in cases {
+            let mut e = entry_with(&[("sgr0", sgr0), ("sgr", sgr), ("cub1", cub1)]);
+            e.bools = vec![0; otbs + 1];
+            e.bools[otbs] = stored_otbs;
+            apply_termcap_fixups(&mut e);
+            assert_eq!(e.tc_string("me"), Some(&b"\x1b[0m"[..]), "{term} me");
+            assert_eq!(e.string("sgr0"), Some(sgr0), "{term}: terminfo sgr0 untouched");
+            assert_eq!(e.bools[otbs], want_otbs, "{term} OTbs");
+        }
+    }
+
+    #[test]
+    fn fix_sgr0_is_dropped_when_trimming_changes_nothing() {
+        let mut e = entry_with(&[("sgr0", b"\x1b[m")]);
+        apply_termcap_fixups(&mut e);
+        assert_eq!(e.fix_sgr0, None);
+        assert_eq!(e.tc_string("me"), Some(&b"\x1b[m"[..]));
+        // No cub1: the stored OTbs is left alone and the array not grown.
+        assert!(e.bools.is_empty());
+    }
+
+    #[test]
+    fn trim_sgr0_strips_charset_shift_and_padding_without_sgr() {
+        let e = entry_with(&[("sgr0", b"\x1b(B\x1b[m")]);
+        assert_eq!(trim_sgr0(&e).as_deref(), Some(&b"\x1b[m"[..]));
+        let e = entry_with(&[("sgr0", b"\x0f$<5>")]);
+        assert_eq!(trim_sgr0(&e), None, "nothing left after trimming");
+        // `\E(` at the very end has no designator byte and is kept.
+        let e = entry_with(&[("sgr0", b"\x1b[m\x1b(")]);
+        assert_eq!(trim_sgr0(&e).as_deref(), Some(&b"\x1b[m\x1b("[..]));
+        assert_eq!(trim_sgr0(&TermEntry::default()), None);
+    }
+
+    #[test]
+    fn drop_sgr_font_param_removes_only_a_whole_10_from_sgr() {
+        let d = |s: &[u8]| drop_sgr_font_param(s);
+        assert_eq!(d(b"\x1b[0;10m"), b"\x1b[0m");
+        assert_eq!(d(b"\x1b[10;1m"), b"\x1b[1m");
+        assert_eq!(d(b"\x1b[10m"), b"\x1b[m");
+        assert_eq!(d(b"\x1b[110;100m"), b"\x1b[110;100m", "10 must match a whole parameter");
+        assert_eq!(d(b"\x1b[10H"), b"\x1b[10H", "non-SGR CSI untouched");
+        assert_eq!(d(b"\x1b[0;10m\x1b[10;7m"), b"\x1b[0m\x1b[7m");
+        assert_eq!(d(b"\x1b[10"), b"\x1b[10", "unterminated sequence untouched");
     }
 }
