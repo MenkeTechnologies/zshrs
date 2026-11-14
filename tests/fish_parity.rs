@@ -299,6 +299,12 @@ set -g zqVb 2
 complete -C 'echo $zqv'
 complete -C 'echo $__fish_ls'
 complete -C 'echo $_'
+complete -C 'echo --f=zqf'
+complete -C "echo --f='zqf"
+complete -C 'echo a\=zqf'
+complete -C 'echo a:zqf'
+function zqfd -d 'zq desc'; end
+complete -C zqfd
 function zqp; end
 complete -c zqp -f -xa plain
 complete -p '*zqp*' -f -xa wild

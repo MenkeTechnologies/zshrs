@@ -1524,6 +1524,8 @@ struct Line {
     cur: String,
     /// `cur` with its unquoted `*`s as [`ANY_STRING`], for file completion
     cur_wild: String,
+    /// the word as typed: where it splits at `=`/`:` is decided on it
+    cur_raw: String,
     had_ddash: bool,
     in_redirection: bool,
 }
@@ -1661,6 +1663,7 @@ fn locate(text: &str) -> Position {
         prev,
         cur: unescape(&cur_raw),
         cur_wild: unescape_wild(&cur_raw),
+        cur_raw,
         had_ddash,
         in_redirection,
     })
@@ -2172,7 +2175,7 @@ fn complete_dash_c(text: &str) -> Vec<Comp> {
             let ans_cd = ans.as_ref().is_some_and(|a| a.cd);
             let mut comps = ans.map(|a| a.comps).unwrap_or_default();
             if do_file {
-                comps.extend(param_files(&line.cur_wild, ans_cd, false));
+                comps.extend(param_complete(&line.cur_raw, ans_cd, false));
             }
             (line.cur.clone(), line.cur, comps)
         }
@@ -2484,8 +2487,12 @@ fn command_names(prefix: &str) -> Vec<Comp> {
             }
         }
     }
+    // fish `complete_function_desc`: a defined function's `--description`
+    // (an autoloadable one not loaded yet has none)
+    let descs = crate::ported::subst::assoc_get("__fish_fndesc").unwrap_or_default();
     for f in function_names(prefix.starts_with('_')) {
-        out.push(comp(f, "", false));
+        let desc = descs.get(&f).map_or("", String::as_str);
+        out.push(comp(f, desc, false));
     }
     out.extend(
         FISH_BUILTINS
@@ -2864,14 +2871,30 @@ fn param_files_expanded(s: &str, cd: bool) -> Vec<Comp> {
             .filter(|c| seen.insert(c.word.clone()))
             .collect()
     };
-    let sep = s.rfind(['=', ':']);
+    files(s)
+}
+
+/// fish `complete_param_expand`: the files for the word `raw` (as typed).
+/// A `--foo=bar` / `-foo=bar` word completes just `bar`; `foo=bar` the whole
+/// word and also just `bar`. The split is at the last `=` or `:` that is not
+/// backslashed, decided on the word as typed, and there is none while a
+/// quote is open (`--f='sp`).
+fn param_complete(raw: &str, cd: bool, reader: bool) -> Vec<Comp> {
+    let sep = if open_quote(raw).is_some() {
+        None
+    } else {
+        raw.char_indices()
+            .filter(|&(i, c)| matches!(c, '=' | ':') && raw[..i].chars().rev().take_while(|&b| b == '\\').count() % 2 == 0)
+            .last()
+            .map(|(i, _)| i)
+    };
     let mut out = Vec::new();
-    if sep.is_none() || !s.starts_with('-') {
-        out.extend(files(s));
+    if sep.is_none() || !raw.starts_with('-') {
+        out.extend(param_files(&unescape_wild(raw), cd, reader));
     }
     if let Some(i) = sep {
-        let before = &s[..=i];
-        out.extend(files(&s[i + 1..]).into_iter().map(|mut c| {
+        let before = unescape(&raw[..=i]);
+        out.extend(param_files(&unescape_wild(&raw[i + 1..]), cd, reader).into_iter().map(|mut c| {
             c.word = format!("{before}{}", c.word);
             c.matched_as = c.matched_as.map(|m| format!("{before}{m}"));
             c.from_separator = true;
@@ -3322,12 +3345,14 @@ pub fn commandline_read(args: &[String], buffer: &str, cursor: usize) -> i32 {
 fn query_cmd(argv: &[String]) -> i32 {
     let text = argv.iter().skip(1).find(|a| *a != "--").cloned().unwrap_or_default();
     // (what is ranked, the whole word as typed, the completions)
+    let mut raw = String::new();
     let (typed, whole, mut ans) = match locate(&text) {
         Position::Argument(line) => {
             let Some(ans) = complete_argument(&line, &mut ShellEval) else {
                 return 1;
             };
-            (line.cur.clone(), line.cur_wild, ans)
+            raw = line.cur_raw;
+            (line.cur, line.cur_wild, ans)
         }
         Position::Command(prefix) => {
             let typed = unescape(&prefix);
@@ -3355,7 +3380,7 @@ fn query_cmd(argv: &[String]) -> i32 {
     // `foo:` separators, `cd`'s directories through $CDPATH, or keeping a
     // `$HOME` in the word
     if ans.do_file {
-        ans.comps.extend(param_files(&whole_wild, ans.cd, true));
+        ans.comps.extend(param_complete(&raw, ans.cd, true));
         ans.do_file = false;
     }
     let ranks: Vec<Option<u32>> = ans.comps.iter().map(|c| rank_of(&typed, c)).collect();
