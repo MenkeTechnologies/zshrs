@@ -140,3 +140,104 @@ pub fn compact(name: &str, dense: Vec<String>) -> Vec<String> {
         .map(|(_, v)| v)
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dense(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// Each test runs on its own thread, so the thread-local table starts
+    /// empty; the expected values are bash 3.2+/5.x output for the same ops.
+    #[test]
+    fn subscript_past_end_leaves_padding_holes() {
+        // a=(x y z); a[5]=q  →  ${#a[@]}=4  ${!a[@]}=0 1 2 5
+        note_subscript_set("a", 3, 5);
+        assert_eq!(holes("a"), BTreeSet::from([3, 4]));
+        assert_eq!(live_len("a", 6), 4);
+        assert_eq!(live_indices("a", 6), vec![0, 1, 2, 5]);
+        assert_eq!(
+            compact("a", dense(&["x", "y", "z", "", "", "q"])),
+            dense(&["x", "y", "z", "q"])
+        );
+    }
+
+    #[test]
+    fn unset_then_reassign_fills_the_hole() {
+        // a=(x y z); a[5]=q; unset 'a[1]'  →  3 / 0 2 5 / x z q
+        note_subscript_set("a", 3, 5);
+        note_unset("a", 1);
+        assert_eq!(live_len("a", 6), 3);
+        assert_eq!(live_indices("a", 6), vec![0, 2, 5]);
+        assert_eq!(
+            compact("a", dense(&["x", "", "z", "", "", "q"])),
+            dense(&["x", "z", "q"])
+        );
+        // a[1]=r inside the dense length: only index 1 becomes live.
+        note_subscript_set("a", 6, 1);
+        assert_eq!(live_indices("a", 6), vec![0, 1, 2, 5]);
+        // a[3]=s and a[4]=t fill the remaining padding, so the side table
+        // entry disappears and the array is dense again.
+        note_subscript_set("a", 6, 3);
+        note_subscript_set("a", 6, 4);
+        assert!(!has_holes("a"));
+        assert_eq!(live_len("a", 6), 6);
+    }
+
+    #[test]
+    fn appending_at_the_end_records_no_hole() {
+        note_subscript_set("a", 3, 3);
+        assert!(!has_holes("a"));
+        assert_eq!(live_indices("a", 4), vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn explicit_index_literal_is_sparse() {
+        // b=([2]=x [5]=y)  →  ${#b[@]}=2  ${!b[@]}=2 5
+        note_holes_outside("b", &BTreeSet::from([2, 5]), 6);
+        assert_eq!(live_len("b", 6), 2);
+        assert_eq!(live_indices("b", 6), vec![2, 5]);
+        assert_eq!(
+            compact("b", dense(&["", "", "x", "", "", "y"])),
+            dense(&["x", "y"])
+        );
+    }
+
+    #[test]
+    fn unset_past_the_end_does_not_change_the_count() {
+        // unset 'a[9]' on a 6-slot array: bash still reports 4 elements.
+        note_subscript_set("a", 3, 5);
+        note_unset("a", 9);
+        assert_eq!(live_len("a", 6), 4);
+        assert_eq!(live_indices("a", 6), vec![0, 1, 2, 5]);
+        // A later a[9]=v pads 6..8 and makes 9 live again.
+        note_subscript_set("a", 6, 9);
+        assert_eq!(live_indices("a", 10), vec![0, 1, 2, 5, 9]);
+    }
+
+    #[test]
+    fn truncate_drops_trailing_holes_and_clears_when_empty() {
+        note_subscript_set("a", 0, 6);
+        assert_eq!(holes("a"), (0..6).collect::<BTreeSet<usize>>());
+        truncate("a", 3);
+        assert_eq!(holes("a"), BTreeSet::from([0, 1, 2]));
+        truncate("a", 0);
+        assert!(!has_holes("a"));
+        truncate("never-tracked", 0);
+        assert!(!has_holes("never-tracked"));
+    }
+
+    #[test]
+    fn tracking_is_per_name_and_clear_resets_one_array() {
+        note_unset("a", 0);
+        note_unset("b", 1);
+        clear("a");
+        assert!(!has_holes("a"));
+        assert_eq!(holes("b"), BTreeSet::from([1]));
+        // Untracked names are dense passthroughs.
+        assert_eq!(live_len("c", 3), 3);
+        assert_eq!(compact("c", dense(&["p", "q"])), dense(&["p", "q"]));
+    }
+}
