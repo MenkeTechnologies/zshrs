@@ -16,7 +16,7 @@
 //! export arrays; a list is joined with `:` for names ending in `PATH` and
 //! with a space otherwise, which is also what fish puts in the environment.
 
-use super::parse::{Cmd, Conn, DPart, Job, Part, Pipe, Redir, Script, Stmt, VarRef, Word};
+use super::parse::{index_has_brace_space, Cmd, Conn, DPart, Job, Part, Pipe, Redir, Script, Stmt, VarRef, Word};
 
 /// Lowercase fish variable names that collide with zsh special parameters. A fish
 /// `for path in $list` must not rewrite `$PATH`, so these live under a prefix.
@@ -374,6 +374,15 @@ impl Emitter {
     }
 
     fn job(&mut self, j: &Job) -> String {
+        // an expansion error in any command of a pipeline keeps the whole job from starting
+        // (populate_job_from_job_node, src/parse_execution.rs, expands every process before
+        // exec_job), and a `not` in front does not invert its 121
+        if let Some(err) = j.cmds.iter().find_map(|(c, _)| match c {
+            Cmd::Simple { words, .. } => Self::index_error(words),
+            _ => None,
+        }) {
+            return err;
+        }
         let mut out = String::new();
         // `not` inverts a status, but 127 (command not found) stays 127 in fish
         let wrap_not = j.negate && !j.bg;
@@ -504,6 +513,9 @@ impl Emitter {
                 body,
                 redirs,
             } => {
+                if let Some(err) = Self::index_error(list) {
+                    return err;
+                }
                 let v = var.text().map(|t| self.zn(&t)).unwrap_or_else(|| "_fish_v".into());
                 let items: Vec<String> = list.iter().map(|w| self.word_list(w)).collect();
                 // a loop variable is local to the function, even when a global of that name
@@ -528,6 +540,9 @@ impl Emitter {
                 cases,
                 redirs,
             } => {
+                if let Some(err) = Self::index_error(std::slice::from_ref(subject)) {
+                    return err;
+                }
                 let mut out = format!("case {} in\n", self.word_scalar(subject));
                 for (pats, body) in cases {
                     let pats: Vec<String> = pats.iter().map(|p| self.case_pattern(p)).collect();
@@ -710,25 +725,35 @@ impl Emitter {
 
     // ---- simple commands --------------------------------------------------------
 
-    /// True when a word indexes a variable with a literal 0 (`$x[0]`, `$x[-0]`, `$x[1..0]`).
-    fn zero_index(w: &Word) -> bool {
+    /// The expansion error fish's `expand_variables` (src/expand.rs) reports for an index
+    /// in the words, which keeps the command from running (status 121): a literal 0
+    /// (`$x[0]`, `$x[-0]`, `$x[1..0]`), or an unquoted space in an index inside a live
+    /// brace group (`{$x[1 2],z}`), which reaches `parse_slice` as a BRACE_SPACE.
+    fn index_error(words: &[Word]) -> Option<String> {
         let zero = |ix: &Option<Vec<String>>| {
             ix.as_ref().is_some_and(|toks| {
                 toks.iter().any(|t| t.split("..").any(|e| matches!(e, "0" | "-0")))
             })
         };
-        w.parts.iter().any(|p| match p {
+        let parts = || words.iter().flat_map(|w| w.parts.iter());
+        let msg = if parts().any(|p| match p {
             Part::Var(v) => zero(&v.index),
             Part::Double(ds) => ds.iter().any(|d| matches!(d, DPart::Var(v) if zero(&v.index))),
             _ => false,
-        })
+        }) {
+            "array indices start at 1, not 0."
+        } else if parts().any(|p| matches!(p, Part::Var(v) if index_has_brace_space(v))) {
+            "Invalid index value"
+        } else {
+            return None;
+        };
+        Some(format!("{{ print -u2 -r -- 'fish: {msg}'; (exit 121); }}"))
     }
 
     fn simple(&mut self, words: &[Word], redirs: &[Redir]) -> String {
         let piped_in = std::mem::take(&mut self.piped_in);
-        // `$list[0]`: fish refuses to run the command (status 121)
-        if words.iter().any(Self::zero_index) {
-            return "{ print -u2 -r -- 'fish: array indices start at 1, not 0.'; (exit 121); }".to_string();
+        if let Some(err) = Self::index_error(words) {
+            return err;
         }
         // `NAME=value… cmd` is fish's `begin; set -lx NAME value…; cmd; end`: the
         // value expands to a list (`files=$dir/* cmd`) and the command's own words

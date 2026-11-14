@@ -504,8 +504,9 @@ impl Parser {
         if let Some(c) = self.env_prefixed_compound()? {
             return Ok(c);
         }
-        // fish 4.1 brace block: `{ cmd; cmd }`
-        if self.peek() == Some('{') && matches!(self.at(1), Some(' ' | '\t' | '\n')) {
+        // fish 4.1 brace block: `{ cmd; cmd }`. A `{` in command position always opens one
+        // (tokenizer.rs, `'{' if … at_command_position`), so `{echo a}` is a block too.
+        if self.peek() == Some('{') {
             self.i += 1;
             self.braces += 1;
             let body = self.script(&[]);
@@ -717,7 +718,10 @@ impl Parser {
             match self.peek() {
                 None | Some('\n' | ';' | ')') => break,
                 Some('2') if self.starts_with("2>|") => break,
-                Some('}') if self.braces > 0 && matches!(self.at(1), None | Some(' ' | '\t' | '\n' | ';' | ')')) => break,
+                // a `}` outside a word closes a `{ … }` block, or is an error (tokenizer.rs,
+                // ClosingUnopenedBrace)
+                Some('}') if self.braces > 0 => break,
+                Some('}') => return Err("fish: Unexpected '}' for unopened brace".to_string()),
                 Some('#') if words.is_empty() || self.at_word_start() => {
                     self.skip_comment();
                     break;
@@ -782,29 +786,30 @@ impl Parser {
     }
 
     /// One word, or `None` at a delimiter.
-    /// At a `[`: where its `]` is when what lies between looks like an index list that has
-    /// a space in it (digits, `..`, `-`, spaces), so the whole `[1 2]` belongs to the word.
-    fn index_list_end(&self) -> Option<usize> {
-        let mut j = self.i + 1;
-        let mut spaced = false;
-        while let Some(&ch) = self.s.get(j) {
-            match ch {
-                ']' => return spaced.then_some(j),
-                ' ' => spaced = true,
-                '0'..='9' | '.' | '-' => {}
-                _ => return None,
-            }
-            j += 1;
-        }
-        None
-    }
-
+    ///
+    /// The extent of a word is the one fish's tokenizer gives it (`read_string`,
+    /// src/tokenizer.rs): while a `{`, or a `[` that does not start the word, is open,
+    /// blanks, `;`, `|`, `&`, `<` and `>` belong to the word; a `}` that closes nothing ends
+    /// it, and a `)` inside an open one is an error.
+    ///
+    /// Brace groups are read as `unescape_string_internal` (crates/common/src/lib.rs) reads
+    /// them: a group with no `,` or `$` directly in it is literal text (`{a}`, `{}`, `{a b}`),
+    /// its spaces kept; in a live group an unquoted space is a BRACE_SPACE, trimmed from the
+    /// ends of each alternative (`expand_braces`, src/expand.rs) and a plain space inside
+    /// one. Inside a variable's index a BRACE_SPACE is not whitespace to fish's
+    /// `parse_slice`, so `{$x[1 2],z}` is the expansion error "Invalid index value"; the
+    /// index keeps the marker for the emitter to report it.
     fn word(&mut self) -> PResult<Option<Word>> {
         let mut parts: Vec<Part> = Vec::new();
         let start = self.i;
         let mut lit = String::new();
-        // nesting depth of live brace expansions in this word
-        let mut braces: Vec<bool> = Vec::new();
+        // what the tokenizer waits for: `}` for an open `{`, `]` for an open `[`
+        let mut expecting: Vec<char> = Vec::new();
+        // unescape_string_internal's bookkeeping, as indices into `parts`: the open `{`s,
+        // the variables and `,`s that make a group live, the parts holding a BRACE_SPACE
+        let mut open: Vec<usize> = Vec::new();
+        let mut vars_or_seps: Vec<usize> = Vec::new();
+        let mut spaced: Vec<usize> = Vec::new();
         macro_rules! flush {
             () => {
                 if !lit.is_empty() {
@@ -813,19 +818,32 @@ impl Parser {
             };
         }
         while let Some(c) = self.peek() {
-            if WORD_END.contains(&c) {
+            if expecting.is_empty() && WORD_END.contains(&c) {
                 break;
             }
             match c {
-                // `name[1 2]`: an index list keeps its spaces inside the word (`set -e l[1 2]`)
-                '[' if parts.is_empty()
-                    && !lit.is_empty()
-                    && lit.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-                    && self.index_list_end().is_some() =>
-                {
-                    let end = self.index_list_end().unwrap_or(self.i);
-                    lit.extend(self.s[self.i..=end].iter());
-                    self.i = end + 1;
+                ')' => {
+                    let want = expecting.last().copied().unwrap_or('}');
+                    return Err(format!("fish: Unexpected ')' found, expecting '{want}'"));
+                }
+                ' ' if !open.is_empty() => {
+                    flush!();
+                    spaced.push(parts.len());
+                    parts.push(Part::Raw(BRACE_SPACE.to_string()));
+                    self.i += 1;
+                }
+                // `name[1 2]`: a `[` after the start of a word holds its spaces in the word
+                '[' => {
+                    if self.i != start {
+                        expecting.push(']');
+                    }
+                    lit.push('[');
+                    self.i += 1;
+                }
+                ']' if expecting.last() == Some(&']') => {
+                    expecting.pop();
+                    lit.push(']');
+                    self.i += 1;
                 }
                 '\\' => {
                     self.i += 1;
@@ -841,11 +859,21 @@ impl Parser {
                 '"' => {
                     flush!();
                     self.i += 1;
-                    parts.push(Part::Double(self.double_quoted()?));
+                    let d = self.double_quoted()?;
+                    if d.iter().any(|p| matches!(p, DPart::Var(_))) {
+                        vars_or_seps.push(parts.len());
+                    }
+                    parts.push(Part::Double(d));
                 }
                 '$' => {
-                    if let Some(p) = self.dollar(false)? {
+                    if let Some(p) = self.dollar(!open.is_empty())? {
                         flush!();
+                        if let Part::Var(v) = &p {
+                            vars_or_seps.push(parts.len());
+                            if index_has_brace_space(v) {
+                                spaced.push(parts.len());
+                            }
+                        }
                         parts.push(p);
                     } else {
                         lit.push('$');
@@ -888,36 +916,43 @@ impl Parser {
                 '{' if self.brace_unclosed() => {
                     return Err("fish: Unexpected end of string, incomplete parameter expansion".to_string());
                 }
-                // `{a;b}`: a `;` inside closed literal braces does not end the command
-                '{' if self.brace_expansion_ahead().is_none()
-                    && self.brace_close().is_some_and(|e| self.s[self.i..e].contains(&';')) =>
-                {
-                    let e = self.brace_close().unwrap_or(self.i);
-                    lit.extend(self.s[self.i..=e].iter());
-                    self.i = e + 1;
-                }
-                '{' if self.brace_expansion_ahead().is_some() => {
+                '{' => {
                     flush!();
-                    // `{a,b}` expands; `{$x}` (no comma) just yields its contents
-                    let real = self.brace_expansion_ahead() == Some(true);
-                    braces.push(real);
+                    open.push(parts.len());
+                    expecting.push('}');
+                    parts.push(Part::Raw("{".to_string()));
                     self.i += 1;
-                    if real {
-                        parts.push(Part::Raw("{".to_string()));
-                    }
                 }
-                ',' | '}' if !braces.is_empty() => {
+                '}' => match expecting.last() {
+                    None => break,
+                    Some(']') => return Err("fish: Unexpected '}' found, expecting ']'".to_string()),
+                    Some(_) => {
+                        expecting.pop();
+                        flush!();
+                        let b = open.pop().unwrap_or(0);
+                        // a group with nothing to vary is literal, its spaces plain again
+                        // (lib.rs, the `}` arm: "treat a brace with zero or one items as
+                        // literal input")
+                        if vars_or_seps.last().is_none_or(|&k| k < b) {
+                            parts[b] = Part::Lit("{".to_string());
+                            for &k in spaced.iter().filter(|&&k| k > b) {
+                                restore_brace_space(&mut parts[k]);
+                            }
+                            spaced.retain(|&k| k < b);
+                            lit.push('}');
+                        } else {
+                            parts.push(Part::Raw("}".to_string()));
+                        }
+                        // the `,`s and variables inside count for this group only
+                        vars_or_seps.retain(|&k| k < b);
+                        self.i += 1;
+                    }
+                },
+                ',' if !open.is_empty() => {
                     flush!();
-                    let real = *braces.last().unwrap_or(&true);
-                    if c == '}' {
-                        braces.pop();
-                    }
+                    vars_or_seps.push(parts.len());
+                    parts.push(Part::Raw(",".to_string()));
                     self.i += 1;
-                    if real {
-                        parts.push(Part::Raw(c.to_string()));
-                    } else if c == ',' {
-                        lit.push(',');
-                    }
                 }
                 _ => {
                     lit.push(c);
@@ -925,8 +960,13 @@ impl Parser {
                 }
             }
         }
+        if expecting.last() == Some(&']') {
+            return Err("fish: Unexpected end of string, square brackets do not match".to_string());
+        }
         flush!();
-        Ok((!parts.is_empty() || self.i > start).then_some(Word { parts }))
+        Ok((!parts.is_empty() || self.i > start).then_some(Word {
+            parts: trim_brace_spaces(parts),
+        }))
     }
 
     /// At `{`: true when no `}` closes it anywhere in the rest of the input (the braces of
@@ -960,51 +1000,6 @@ impl Parser {
                         return Some(j);
                     }
                 }
-                _ => {}
-            }
-            j += 1;
-        }
-        None
-    }
-
-    /// At `{`: `Some(true)` for a brace expansion (matching `}` with a top-level comma),
-    /// `Some(false)` for braces around a variable (`{$x}`), `None` for literal braces.
-    fn brace_expansion_ahead(&self) -> Option<bool> {
-        let mut depth = 0i32;
-        let mut comma = false;
-        let mut var = false;
-        let mut j = self.i;
-        while let Some(&c) = self.s.get(j) {
-            match c {
-                '\\' => j += 1,
-                // a quoted part may hold spaces and commas that are not the group's
-                '\'' | '"' => {
-                    j += 1;
-                    while let Some(&q) = self.s.get(j) {
-                        if q == '\\' {
-                            j += 1;
-                        } else if q == c {
-                            break;
-                        }
-                        j += 1;
-                    }
-                }
-                '{' => depth += 1,
-                '}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        return if comma {
-                            Some(true)
-                        } else if var {
-                            Some(false)
-                        } else {
-                            None
-                        };
-                    }
-                }
-                ',' if depth == 1 => comma = true,
-                '$' if depth == 1 => var = true,
-                ' ' | '\t' | '\n' | ';' | '|' | '&' | '<' | '>' => return None,
                 _ => {}
             }
             j += 1;
@@ -1122,7 +1117,7 @@ impl Parser {
                         self.i += 1;
                     }
                 },
-                Some('$') => match self.dollar(true)? {
+                Some('$') => match self.dollar(false)? {
                     Some(Part::Var(v)) => {
                         if !lit.is_empty() {
                             out.push(DPart::Lit(std::mem::take(&mut lit)));
@@ -1153,7 +1148,9 @@ impl Parser {
     }
 
     /// At `$`: a variable reference or `$(…)`; `None` when the `$` is a plain character.
-    fn dollar(&mut self, quoted: bool) -> PResult<Option<Part>> {
+    /// `in_brace`: the `$` is unquoted inside an open brace group, where a space in its
+    /// index is a BRACE_SPACE.
+    fn dollar(&mut self, in_brace: bool) -> PResult<Option<Part>> {
         let mut j = self.i + 1;
         if self.s.get(j) == Some(&'(') {
             self.i = j + 1;
@@ -1177,12 +1174,14 @@ impl Parser {
             return Ok(None);
         }
         self.i = j;
-        let index = self.index_suffix(quoted)?;
+        let index = self.index_suffix(in_brace)?;
         Ok(Some(Part::Var(VarRef { name, deref, index })))
     }
 
-    /// `[…]` directly after a variable name or a command substitution.
-    fn index_suffix(&mut self, _quoted: bool) -> PResult<Option<Vec<String>>> {
+    /// `[…]` directly after a variable name or a command substitution. With `brace_space`,
+    /// a space outside any `(cmd)` in it is stored as BRACE_SPACE (the substitution's own
+    /// text is replaced by its escaped output before fish unescapes the word).
+    fn index_suffix(&mut self, brace_space: bool) -> PResult<Option<Vec<String>>> {
         if self.peek() != Some('[') {
             return Ok(None);
         }
@@ -1201,6 +1200,9 @@ impl Parser {
                     depth -= 1;
                     if depth == 0 {
                         self.i = j + 1;
+                        if brace_space {
+                            body = mark_brace_spaces(&body);
+                        }
                         let toks = split_index_tokens(&body);
                         return Ok(Some(toks));
                     }
@@ -1284,6 +1286,76 @@ impl Parser {
     }
 }
 
+/// fish's BRACE_SPACE (widestring/src/lib.rs): an unquoted space inside a brace group, kept
+/// apart from whitespace until brace expansion. A private-use character, as fish's is.
+pub const BRACE_SPACE: char = '\u{F707}';
+
+/// An index body with its spaces outside any `(cmd)` turned into BRACE_SPACE.
+fn mark_brace_spaces(body: &str) -> String {
+    let mut depth = 0i32;
+    body.chars()
+        .map(|c| {
+            match c {
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                ' ' if depth == 0 => return BRACE_SPACE,
+                _ => {}
+            }
+            c
+        })
+        .collect()
+}
+
+/// True when a variable's index still holds a BRACE_SPACE: fish's `parse_slice` reads it as
+/// neither whitespace nor a number, the expansion error "Invalid index value".
+pub fn index_has_brace_space(v: &VarRef) -> bool {
+    v.index.as_ref().is_some_and(|ix| ix.iter().any(|t| t.contains(BRACE_SPACE)))
+}
+
+/// A part inside a literal brace group gets its spaces back.
+fn restore_brace_space(p: &mut Part) {
+    match p {
+        Part::Raw(r) if r.starts_with(BRACE_SPACE) => *p = Part::Lit(" ".to_string()),
+        Part::Var(v) => {
+            if let Some(ix) = &mut v.index {
+                *ix = split_index_tokens(&ix.join(" ").replace(BRACE_SPACE, " "));
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The BRACE_SPACEs left in a word stand in live brace groups: those at either end of an
+/// alternative are dropped (`expand_braces` trims them), the rest are spaces. Adjacent
+/// literal parts are joined again.
+fn trim_brace_spaces(parts: Vec<Part>) -> Vec<Part> {
+    let is_space = |p: &Part| matches!(p, Part::Raw(r) if r.starts_with(BRACE_SPACE));
+    let is_edge = |p: Option<&Part>| matches!(p, Some(Part::Raw(r)) if matches!(r.as_str(), "{" | "," | "}"));
+    let mut out: Vec<Part> = Vec::with_capacity(parts.len());
+    let mut i = 0;
+    while i < parts.len() {
+        if !is_space(&parts[i]) {
+            match (out.last_mut(), &parts[i]) {
+                (Some(Part::Lit(a)), Part::Lit(b)) => a.push_str(b),
+                _ => out.push(parts[i].clone()),
+            }
+            i += 1;
+            continue;
+        }
+        let run = parts[i..].iter().take_while(|p| is_space(p)).count();
+        let at_edge = is_edge(i.checked_sub(1).and_then(|k| parts.get(k))) || is_edge(parts.get(i + run));
+        if !at_edge {
+            let spaces = " ".repeat(run);
+            match out.last_mut() {
+                Some(Part::Lit(a)) => a.push_str(&spaces),
+                _ => out.push(Part::Lit(spaces)),
+            }
+        }
+        i += run;
+    }
+    out
+}
+
 /// Whitespace-separated tokens of an index, except inside `( … )`: `$x[(count $x)]`.
 fn split_index_tokens(body: &str) -> Vec<String> {
     let mut out = Vec::new();
@@ -1353,6 +1425,34 @@ mod tests {
         let w = &simple_words("echo {a,b}{c}")[1];
         assert!(w.parts.contains(&Part::Raw("{".into())));
         assert_eq!(w.parts.iter().filter(|p| **p == Part::Raw("{".into())).count(), 1);
+    }
+
+    /// fish's tokenizer rejects a `}` that closes nothing, a `)` inside an open brace group
+    /// and an unclosed `[` after the start of a word; a brace group's word runs through its
+    /// blanks and separators.
+    #[test]
+    fn brace_and_bracket_balance() {
+        for bad in ["echo a}b", "echo {a,b}}", "echo }", "echo {a,b)}", "echo a[b", "echo $x["] {
+            assert!(parse(bad).is_err(), "{bad}");
+        }
+        assert_eq!(simple_words("echo {a, b;c|d} x").len(), 3);
+        assert_eq!(simple_words("echo a[1 2] x").len(), 3);
+        assert!(parse("{ echo a}").is_ok());
+    }
+
+    /// A space in a variable's index inside a live brace group stays fish's BRACE_SPACE
+    /// (the "Invalid index value" error); a literal group gives the space back.
+    #[test]
+    fn brace_space_in_an_index() {
+        let var = |src: &str| match &simple_words(src)[1].parts[..] {
+            [Part::Raw(_), Part::Var(v), ..] | [Part::Lit(_), Part::Var(v), ..] => v.clone(),
+            other => panic!("{other:?}"),
+        };
+        assert!(index_has_brace_space(&var("echo {$x[1 2],z}")));
+        assert!(!index_has_brace_space(&var("echo {$x[1\t2],z}")));
+        assert!(!index_has_brace_space(&var("echo {$x[(echo 1 2)],z}")));
+        let inner = &simple_words("echo {{$x[1 2]}}")[1].parts;
+        assert!(inner.iter().any(|p| matches!(p, Part::Var(v) if v.index == Some(vec!["1".into(), "2".into()]))));
     }
 
     #[test]
