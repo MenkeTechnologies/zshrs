@@ -33,13 +33,16 @@
 //!   if another host thread held that lock for writing at fork time (while
 //!   registering a dispatcher), the child hangs.
 //! - The environment: read in the parent, before `fork()`, and handed to the
-//!   child, which still reads single variables with `std::env::var` while
-//!   starting up. Rust's environment functions share one process-wide
-//!   `RwLock` that `std::env::set_var` holds for writing: a fork taken while
-//!   another host thread is inside `set_var` leaves it locked and the child
-//!   hangs in `std::env::var`, and the parent's snapshot races the same
-//!   write. A host must not call `std::env::set_var` concurrently with
-//!   `run_program`.
+//!   child, which reads single variables with `std::env::var` and publishes
+//!   variables with `std::env::set_var` while starting up. Rust's environment
+//!   functions share one process-wide `RwLock`. The parent's snapshot holds it
+//!   for reading, so a fork taken while a concurrent call was snapshotting
+//!   would leave it read-locked in the child, whose first `set_var` then
+//!   waits forever; `FORK_LOCK` keeps every snapshot and every fork apart. A
+//!   fork taken while another host thread is inside `set_var` leaves it
+//!   write-locked and the child hangs in `std::env::var`, and the parent's
+//!   snapshot races the same write. A host must not call `std::env::set_var`
+//!   concurrently with `run_program`.
 //! - The panic hook: the child installs its own with `std::panic::set_hook`,
 //!   which takes the hook lock for writing. A host thread that was panicking
 //!   at fork time held it for reading, and the child hangs.
@@ -64,6 +67,11 @@ use std::os::fd::AsRawFd;
 /// covers parsing and compiling, which do not.
 const CHILD_STACK_BYTES: usize = 16 * 1024 * 1024;
 
+/// Held across the environment snapshot and `fork()` in every call, so no
+/// child is forked while another call holds the environment lock for reading
+/// (see the module's fork-safety notes).
+static FORK_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Run `src` as a complete program with `input` as its stdin and return
 /// everything it wrote to stdout.
 ///
@@ -84,29 +92,26 @@ const CHILD_STACK_BYTES: usize = 16 * 1024 * 1024;
 pub fn run_program(src: &str, input: &str) -> Result<String, String> {
     let src = src.to_owned();
     let input = input.as_bytes().to_vec();
-    let env: Vec<(String, String)> = std::env::vars_os()
-        .filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?)))
-        .collect();
     std::thread::Builder::new()
         .name("zshrs-embed".into())
         .stack_size(CHILD_STACK_BYTES)
-        .spawn(move || fork_and_collect(&src, input, env))
+        .spawn(move || fork_and_collect(&src, input))
         .map_err(|e| format!("zshrs: cannot spawn thread: {e}"))?
         .join()
         .map_err(|_| "zshrs: run_program thread panicked".to_string())?
 }
 
-fn fork_and_collect(
-    src: &str,
-    input: Vec<u8>,
-    env: Vec<(String, String)>,
-) -> Result<String, String> {
+fn fork_and_collect(src: &str, input: Vec<u8>) -> Result<String, String> {
     let pipes = || io::pipe().map_err(|e| format!("zshrs: pipe: {e}"));
     let (stdin_r, mut stdin_w) = pipes()?;
     let (mut stdout_r, stdout_w) = pipes()?;
     let (mut stderr_r, stderr_w) = pipes()?;
 
     let pid = {
+        let fork_guard = FORK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let env: Vec<(String, String)> = std::env::vars_os()
+            .filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?)))
+            .collect();
         let mut out = io::stdout().lock();
         let _ = out.flush();
         let err = io::stderr().lock();
@@ -115,6 +120,7 @@ fn fork_and_collect(
         if pid == 0 {
             std::mem::forget(out);
             std::mem::forget(err);
+            std::mem::forget(fork_guard);
             run_child(
                 src,
                 [
