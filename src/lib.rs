@@ -251,6 +251,10 @@ pub mod overlay_snapshot;
 /// `pat_cache` submodule — global compiled-pattern cache (Rust-only opt).
 #[path = "extensions/pat_cache.rs"]
 pub mod pat_cache;
+/// `pat_alt_index` submodule — literal-alternation index for compiled
+/// patterns (Rust-only opt).
+#[path = "extensions/pat_alt_index.rs"]
+pub mod pat_alt_index;
 /// `provenance` submodule — value-lineage ledger over bytecode
 /// execution (zshrs-original; ported from stryke's `provenance.rs`).
 #[path = "extensions/provenance.rs"]

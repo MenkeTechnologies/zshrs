@@ -562,3 +562,31 @@ case $x in [$x]) print -n y;; *) print -n n;; esac
         );
     }
 }
+
+/// A long alternation is tried through its literal index
+/// (src/extensions/pat_alt_index.rs); the FIRST alternative that matches
+/// must still win, so `(#b)` shows the same split as zsh — with literals
+/// overlapping in prefix, with a non-literal alternative ahead of the
+/// literals, and with case folding, which keeps the ordinary walk.
+mod long_alternation_first_match_wins {
+    use super::*;
+
+    #[test]
+    fn long_alternation_first_match_wins() {
+        assert_parity(
+            r#"setopt EXTENDED_GLOB
+a=(lit{0..39})
+p1="(#b)x(${(j.|.)a}|lit3z)(*)"
+p2="(#b)x(lit3z|${(j.|.)a})(*)"
+p3="(#b)x(li[t]3?|${(j.|.)a})(*)"
+p4="(#b)(#i)x(${(j.|.)a}|lit3z)(*)"
+for p in $p1 $p2 $p3 $p4; do
+  for w in xlit3zq xLIT3zq xlit39 xlit40 xli; do
+    [[ $w == ${~p} ]] && print -r -- "$w ${match[1]} ${match[2]}" || print -r -- "$w no"
+  done
+done
+f=(/a/lit3 /b/lit40 /c/lit7x /d/lit39)
+print -r -- ${${(M)f:#*/(${(~j.|.)a})}:t}"#,
+        );
+    }
+}

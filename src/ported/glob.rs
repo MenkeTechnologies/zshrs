@@ -8200,6 +8200,7 @@ mod tests {
                 patstartch: 0,
             },
             Vec::new(),
+            crate::pat_alt_index::AltIndexes::default(),
         ))
     }
 

@@ -1149,6 +1149,7 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
                     patstartch: patstartch_lead, // c:1610
                 },
                 literal,
+                crate::pat_alt_index::AltIndexes::default(),
             ));
             if cacheable {
                 crate::pat_cache::put(&exp_orig, inflags, &prog);
@@ -1195,6 +1196,7 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
             patstartch: patstartch_lead, // c:1610
         },
         code,
+        crate::pat_alt_index::AltIndexes::default(),
     ));
     if cacheable {
         crate::pat_cache::put(&exp_orig, inflags, &prog);
@@ -3839,6 +3841,9 @@ pub struct rpat {
     /// at the top of each pattry, incremented on P_EXACTLY mismatches
     /// when `glob_flags & 0xff > 0` (the substitution-budget byte).
     pub errsfound: i32, // c:2046
+    /// !!! RUST-ONLY !!! The program's literal-alternation indexes, set by
+    /// `pattryrefs`; `None` for a caller that drives `patmatch` directly.
+    pub alt_index: Option<crate::pat_alt_index::AltIndexes>,
 }
 
 /// Port of `charref()` from `Src/pattern.c:1909`.
@@ -4270,6 +4275,7 @@ pub fn pattryrefs(
         }
     }
     let mut state = rpat::new();
+    state.alt_index = Some(prog.2.clone());
     // c:Src/pattern.c:2334 — `patflags = prog->flags;` C copies the
     // prog's flags into the file-static `patflags` so subsequent
     // patmatch calls can read PAT_NOTSTART / PAT_NOTEND inside the
@@ -5424,7 +5430,10 @@ pub fn haswilds(str: &str) -> bool {
 /// members, so this typedef pairs the C-exact `patprog` header
 /// (zsh_h.rs:768) with an owned bytecode `Vec<u8>` — header at
 /// `.0`, bytecode at `.1`. `startoff`/`size` index into `.1`.
-pub type Patprog = Box<(patprog, Vec<u8>)>;
+///
+/// !!! RUST-ONLY !!! `.2` holds the literal-alternation indexes
+/// (src/extensions/pat_alt_index.rs) the matcher builds for this bytecode.
+pub type Patprog = Box<(patprog, Vec<u8>, crate::pat_alt_index::AltIndexes)>;
 // =====================================================================
 // Bytecode field offsets within each instruction.
 //
@@ -5449,6 +5458,7 @@ impl rpat {
             patendp: [0; NSUBEXP],
             captures_set: 0,
             errsfound: 0, // c:2066 — errsfound = 0 at pattry init
+            alt_index: None,
         }
     }
 }
@@ -6969,6 +6979,27 @@ pub fn patmatch(
                 if !next_is_branch {
                     scan = scan + I_BODY + operand_off_extra;
                     continue;
+                }
+                // !!! RUST-ONLY DETAIL !!! A long alternation of plain
+                // P_BRANCH nodes is tried through its literal index
+                // (src/extensions/pat_alt_index.rs): only the alternatives
+                // the loop below would not reject at their first P_EXACTLY
+                // node, in the same order, under the same flag condition.
+                if (glob_flags & (0xff | GF_IGNCASE | GF_LCMATCHUC)) == 0 {
+                    if let Some(index) = state.alt_index.as_ref().and_then(|a| a.get(code, scan)) {
+                        let input = string.as_bytes().get(s_off..).unwrap_or_default();
+                        for br in index.candidates(input) {
+                            let mut sub_state = state.clone();
+                            // c:3258 — `ret = patmatch(opnd)`.
+                            if let Some(end) =
+                                patmatch(code, br + I_BODY, string, s_off, &mut sub_state, glob_flags)
+                            {
+                                *state = sub_state;
+                                return Some(end);
+                            }
+                        }
+                        return None;
+                    }
                 }
                 // Alt-loop: try each branch's operand; on success
                 // return; on failure walk to the next BRANCH via .next.
