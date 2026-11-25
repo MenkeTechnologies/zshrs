@@ -66,6 +66,8 @@ pub struct Emitter {
     piped_in: bool,
     /// The names `function_auto_local` gave out: they may refer to the global itself.
     pub(super) auto_locals: std::collections::HashSet<String>,
+    /// The loop variables of the `for` bodies being emitted: local to the scope they are in.
+    pub(super) for_vars: Vec<String>,
     /// Emitting the body of a function that may run no command: a body that does run one
     /// clears the function's `__fish_nr` as it starts (see [`Emitter::function`]).
     track_ran: bool,
@@ -681,6 +683,8 @@ impl Emitter {
                 // list is tested before the body can run another loop over the same name.
                 // A list of literal words alone cannot be empty and needs no test (unless a
                 // `local` ahead of the loop would reset the status first).
+                // (the variable stays local to the scope after the loop)
+                self.for_vars.push(var.text().unwrap_or_default());
                 let body = self.body(body);
                 let body = if body == ":" { "__fish_ret $?".to_string() } else { body };
                 let literal = pre.is_empty() && !list.is_empty() && list.iter().all(|w| w.text().is_some());
@@ -829,6 +833,7 @@ impl Emitter {
         }
         let name = name.unwrap_or_default();
         self.fn_depth += 1;
+        let saved_for_vars = std::mem::take(&mut self.for_vars);
         // the body is the function's own scope: its locals are `local`, under names no
         // function it calls can see
         // (`--no-scope-shadowing` keeps the locals of where it is defined in view)
@@ -875,6 +880,7 @@ impl Emitter {
             inner.push_str(if text.trim().is_empty() { ":" } else { &text });
         }
         self.fn_depth -= 1;
+        self.for_vars = saved_for_vars;
         let mut out = format!("function {} {{\n{inner}\n}}", quote_lit(&name));
         // what `functions NAME`, `type` and `funcsave` show: the definition as written, with
         // the header line in fish's canonical spelling

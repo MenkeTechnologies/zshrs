@@ -148,6 +148,7 @@ status() {
     is-block|is-breakpoint|is-event|-b) return 1 ;;
     job-control|-j) (( $# > 1 )) && return 0; return 1 ;;
     features) __fish_features ;;
+    get-file|list-files) __fish_status_file "$@" ;;
     test-feature) [[ -n ${__fish_feature_flags[$2]-} ]] || return 2; [[ ${__fish_feature_flags[$2]} == on ]] ;;
     filename|-f|--current-filename) print -r -- ${ZSH_ARGZERO:-Standard input} ;;
     current-command) print -r -- $__fish_status_command ;;
@@ -1070,7 +1071,7 @@ typeset -gA __fish_widgets=(
   up-or-search up-line-or-search down-or-search down-line-or-search complete complete-word
   execute accept-line clear-screen clear-screen yank yank kill-whole-line kill-whole-line
   transpose-chars transpose-chars upcase-word up-case-word downcase-word down-case-word
-  undo undo redo redo repaint redisplay cancel send-break beginning-of-history beginning-of-history
+  undo undo redo redo repaint redisplay cancel __fish_cancel beginning-of-history beginning-of-history
   end-of-history end-of-history
 )
 __fish_keyname() {
@@ -1093,6 +1094,7 @@ __fish_bind() {
   while (( $# )); do
     case $1 in
       -M|--mode|-m|--sets-mode) shift 2 ;;
+      -L|--list-modes) print -r -- default; return 0 ;;
       -e|--erase) erase=1; shift ;;
       -k|--key) pos+=("$(__fish_keyname $2)"); shift 2 ;;
       --) shift; break ;;
@@ -1449,6 +1451,16 @@ if [[ -o interactive ]]; then
   # (Homebrew leaves /opt/homebrew/share/zsh group-writable)
   autoload -Uz compinit && compinit -u -d ${ZSHRS_HOME:-$HOME/.zshrs}/fish.zcompdump
   zstyle ':completion:*' completer _fish_complete _complete _ignored
+  # fish's pager: the TAB after a list selects in it, and Enter takes the
+  # selection without running the line (complist menu selection)
+  zmodload zsh/complist
+  zstyle ':completion:*' menu select
+  bindkey -M menuselect '^[[Z' reverse-menu-complete
+  bindkey -M menuselect '^[' send-break
+  # fish's escape is `cancel`: it closes the pager and drops the suggestion, and the line stays
+  __fish_cancel() { POSTDISPLAY=; zle -R }
+  zle -N __fish_cancel
+  bindkey -M emacs '^[' __fish_cancel
   # fish's TAB completes; it never expands a variable or a wildcard in place
   bindkey -M emacs '^I' complete-word
   bindkey -M viins '^I' complete-word

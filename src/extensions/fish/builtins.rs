@@ -17,8 +17,19 @@ pub fn register_all() {
     }
 }
 
+/// Set when a command's output could not be written (its reader is gone).
+thread_local! {
+    static WRITE_FAILED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// Entry point: `argv[0]` names the command.
 pub fn run(argv: &[String]) -> i32 {
+    WRITE_FAILED.set(false);
+    let rc = run_command(argv);
+    if rc == 0 && WRITE_FAILED.replace(false) { 1 } else { rc }
+}
+
+fn run_command(argv: &[String]) -> i32 {
     let args = &argv[1..];
     match argv[0].as_str() {
         "string" => string(args),
@@ -240,9 +251,13 @@ impl Out {
         }
     }
     fn flush(self) {
+        // a reader that has gone is an error of this command (status 1), not a SIGPIPE death
+        let old = unsafe { libc::signal(libc::SIGPIPE, libc::SIG_IGN) };
         let mut so = std::io::stdout().lock();
-        let _ = so.write_all(&self.buf);
-        let _ = so.flush();
+        if so.write_all(&self.buf).and_then(|_| so.flush()).is_err() {
+            WRITE_FAILED.set(true);
+        }
+        unsafe { libc::signal(libc::SIGPIPE, old) };
     }
 }
 

@@ -301,6 +301,7 @@ impl Emitter {
                         "1".to_string()
                     }
                     // `-l` asks for a local: a name that resolves to the plain global is local only when a function declared it
+                    _ if f.local && !f.global && self.for_vars.contains(&n) => "1".to_string(),
                     _ if f.local && !f.global && zn == global_name => format!("${{+{zn}}} && ${{#${{(M)${{(t){zn}}}:#*local*}}}}"),
                     _ => format!("${{+{zn}}}"),
                 };
