@@ -522,6 +522,8 @@ type() {
          fi
          k=$(whence -w -- $n 2>/dev/null); k=${k##*: }
          [[ $k == reserved || $n == "begin" ]] && k=builtin
+         # a function fish autoloads (its own `ls`, ...) comes before a file of the same name
+         [[ $k == command || $k == none ]] && __fish_autoload_ok $n 2>/dev/null && k=function
          [[ -n $k && $k != none ]] || { r=1; [[ -n $q ]] || print -u2 -r -- "type: Could not find '$n'"; continue }
          [[ -n $q ]] && continue
          case $k in
@@ -770,7 +772,7 @@ funced() {
   return $st
 }
 __fish_defined_in() {
-  if [[ -n ${__fish_fnline[$1]-} && ! -f ${__fish_fnfile[$1]-} ]]; then
+  if [[ -n ${__fish_fnline[$1]-} && ! -f ${__fish_fnfile[$1]-} && ${__fish_fnfile[$1]-} != embedded:* ]]; then
     # defined by `-c` or at the prompt: no file to name
     print -r -- '# Defined interactively'
   elif [[ -n ${__fish_fnline[$1]-} ]]; then

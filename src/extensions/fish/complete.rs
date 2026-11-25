@@ -1848,7 +1848,7 @@ fn source_fish(text: &str, origin: &str) -> bool {
     crate::fish::set_source_mode(false);
     match translated {
         Ok(z) => {
-            crate::ported::exec::execstring(&format!("() {{\n{z}\n}}"), 0, 0, origin);
+            crate::ported::exec::execstring(&format!("() {{\nlocal __fish_srcfile='{}'\n{z}\n}}", origin.replace('\'', "'\\''")), 0, 0, origin);
             true
         }
         Err(e) => {
