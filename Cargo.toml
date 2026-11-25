@@ -97,6 +97,17 @@ exclude = [
     "/src/compsys/ported/**/*",
     "!/src/compsys/ported/**/*.rs",
     "!/src/compsys/ported/**/*/",
+    # Dropped from the PUBLISHED crate only -- 0.13.82 packaged at
+    # 10,488,533 bytes against crates.io's 10,485,760 ceiling (413 on
+    # upload). Documentation and tool config that no build step or
+    # `include_str!` reads; LICENSE, NOTICE.md and the crates.io README stay.
+    # Git and Homebrew builds keep all six.
+    "/src/compsys/README.md",
+    "/src/ported/modules/README.md",
+    "/Cross.toml",
+    "/CREATORS.md",
+    "/MAINTAINERS.md",
+    "/.gitignore",
 ]
 
 
