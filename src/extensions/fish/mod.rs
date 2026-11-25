@@ -20,6 +20,7 @@ pub mod complete;
 pub mod emit;
 pub mod pager;
 pub mod parse;
+pub mod report;
 pub mod setcmd;
 pub mod term;
 
@@ -237,7 +238,10 @@ mod tests {
     #[test]
     fn scopes_map_to_typeset() {
         assert_eq!(t("set -g y a"), kept("y=(a)"));
-        assert_eq!(t("function f\nset -l z 1\nset -g w 2\nend"), "function f {\n{ __fish_ss=$?; local -a _fl1_z=(1) && __fish_ret $__fish_ss; }\n{ __fish_ss=$?; typeset -ga w=(2) && __fish_ret $__fish_ss; }\n}\n__fish_gset[f]=1\n__fish_fnsrc[f]='function f\nset -l z 1\nset -g w 2\nend'; __fish_fnline[f]=1; __fish_fnfile[f]=\"${__fish_srcfile:-${(%):-%x}}\"\n__fish_fndesc[f]=''\n__fish_fnshadow[f]=''");
+        // (a function's first lines open the block fish's error messages list and keep
+        // the caller's `$status`; fish/report.rs)
+        let entry = "__fish_frame function f \"$@\"; local __fish_fs=$? __fish_bt=$__fish_nf __fish_file=$__fish_nfile __fish_srcfn=f __fish_xerr=0; __fish_ret $__fish_fs\n";
+        assert_eq!(t("function f\nset -l z 1\nset -g w 2\nend"), format!("function f {{\n{entry}{{ __fish_ss=$?; local -a _fl1_z=(1) && __fish_ret $__fish_ss; }}\n{{ __fish_ss=$?; typeset -ga w=(2) && __fish_ret $__fish_ss; }}\n}}\n__fish_gset[f]=1\n__fish_fnsrc[f]='function f\nset -l z 1\nset -g w 2\nend'; __fish_fnline[f]=1; __fish_fnfile[f]=\"${{__fish_srcfile:-$__fish_file}}\"\n__fish_fndesc[f]=''\n__fish_fnshadow[f]=''"));
         // an exported list stays a list: the exported scalar is tied to the array __fx_NAME
         assert_eq!(t("set -gx E vim"), kept(&format!("{{ {}; }}", "{ _fish_x=(vim); if (( ! ${+__fx_E} )); then unset E 2>/dev/null; typeset -gxT E __fx_E ' '; fi; __fx_E=(\"${_fish_x[@]}\"); }")));
         assert_eq!(t("set -x GOPATH a b"), kept(&format!("{{ {}; }}", "{ _fish_x=(a b); if (( ! ${+__fx_GOPATH} )); then unset GOPATH 2>/dev/null; typeset -gxT GOPATH __fx_GOPATH ':'; fi; __fx_GOPATH=(\"${_fish_x[@]}\"); }")));
@@ -253,21 +257,35 @@ mod tests {
     fn control_flow() {
         assert_eq!(t("if test -f a\necho y\nelse if true\necho z\nelse\necho n\nend"),
                    "if __fish_test -f a\nthen\necho y\nelif true\nthen\necho z\nelse\necho n\nfi");
-        assert_eq!(t("a; and b; or c"), "a && b || c");
-        assert_eq!(t("not a"), "{ a; __fish_nrc=$?; if (( __fish_nrc == 127 )); then __fish_ret 127; else (( __fish_nrc != 0 )); fi; }");
+        // a command that may be a function or unknown carries its place in the source
+        // (`__fish_at`, a word that expands to nothing; fish/report.rs)
+        let at = |l: usize, c: usize, n: usize| format!("${{${{__fish_at::={l} {c} {n}}}:+}}");
+        assert_eq!(t("a; and b; or c"), format!("a {} && b {} || c {}", at(1, 0, 1), at(1, 7, 1), at(1, 13, 1)));
+        assert_eq!(t("not a"), format!("{{ a {}; __fish_nrc=$?; if (( __fish_nrc == 127 )); then __fish_ret 127; else (( __fish_nrc != 0 )); fi; }}", at(1, 4, 1)));
         assert_eq!(t("while true\nbreak\nend"), "while true\ndo\nbreak\ndone");
     }
 
     #[test]
     fn command_substitution_splits_on_newlines() {
-        // fish runs a substitution in this shell: `${ … }`, with the scoped marker
-        // `status is-command-substitution` reads
-        let run = "__fc1=${ local __fish_incs=$?; __fish_ret $__fish_incs\nls\n__fish_cs=$?; print -rn x; __fish_ret $__fish_cs }";
-        assert_eq!(t("echo (ls)"), format!("{{ {run}; echo ${{${{__fc1%x}}:+\"${{(@f)${{${{__fc1%x}}%$'\\n'}}}}\"}}; }}"));
+        // fish runs a substitution in this shell: `${ … }`, in a block of its own (the
+        // marker `status is-command-substitution` reads, the block fish's errors list,
+        // its source); a failed last command is carried out to the command around it,
+        // which reports it and does not run
+        let run = "__fc1=${ local __fish_incs=$? __fish_bt=\"subst\"$'\\x1e'\"$__fish_file\"$'\\x1e'1${__fish_bt:+$'\\x1d'$__fish_bt} __fish_srcfn= __fish_src='ls' __fish_xerr=0; __fish_ret $__fish_incs\nls ${${__fish_at::=1 0 2}:+}\n__fish_cs=$?; (( __fish_xerr && __fish_cs == __fish_xerr )) && { __fish_xe=$__fish_cs; __fish_xa='1 COL 4'; __fish_xt='TEXT'; }; print -rn x; __fish_ret $__fish_cs }";
+        let run = |col: usize, text: &str| run.replace("COL", &col.to_string()).replace("TEXT", text);
+        let gated = |cmd: &str| format!("{{ __fish_hs=$?; if (( __fish_xe )); then __fish_error cmdsub $__fish_xe ${{=__fish_xa}} \"$__fish_xt\"; __fish_hs=$__fish_xe; __fish_xe=0; __fish_ret $__fish_hs; else __fish_ret $__fish_hs; {cmd}\nfi; }}");
+        assert_eq!(
+            t("echo (ls)"),
+            format!("{{ {}; {}; }}", run(5, "echo (ls)"), gated("echo ${${__fc1%x}:+\"${(@f)${${__fc1%x}%$'\\n'}}\"}"))
+        );
         // quoted: one word, every trailing newline dropped
         assert_eq!(
             t("echo \"$(ls)\""),
-            format!("{{ {run}; {{ __fish_cs=$?; __fc1=${{__fc1%x}}; while [[ $__fc1 == *$'\\n' ]]; do __fc1=${{__fc1%$'\\n'}}; done; __fish_ret $__fish_cs; }}; echo \"${{__fc1}}\"; }}")
+            format!(
+                "{{ {}; {{ __fish_cs=$?; __fc1=${{__fc1%x}}; while [[ $__fc1 == *$'\\n' ]]; do __fc1=${{__fc1%$'\\n'}}; done; __fish_ret $__fish_cs; }}; {}; }}",
+                run(7, "echo \"$(ls)\""),
+                gated("echo \"${__fc1}\"")
+            )
         );
     }
 
@@ -282,9 +300,13 @@ mod tests {
 
     #[test]
     fn a_wildcard_command_is_isolated_so_no_match_ends_only_that_command() {
+        // each wildcard word is tried with no-match-is-empty first; one that matches
+        // nothing is fish's error (status 124) and the command does not run
         let out = t("echo *.txt ?x");
-        assert!(out.starts_with("{ __fish_g=; builtin eval 'echo *.txt '\\''?x'\\''; __fish_cs=$?; __fish_g=1'"), "{out}");
-        assert!(out.contains("|| __fish_cs=124"), "{out}");
+        assert_eq!(
+            out,
+            "{ __fish_gs=$?; if ! () { setopt localoptions nullglob; set -- *.txt; (( $# )) } \"$@\"; then __fish_xerr=124; __fish_error wildcard 1 5 5 'echo *.txt ?x'; __fish_ret 124; else __fish_ret $__fish_gs; echo *.txt '?x'\nfi; }"
+        );
     }
 
     #[test]

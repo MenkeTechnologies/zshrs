@@ -21,7 +21,7 @@ pub struct VarRef {
 pub enum DPart {
     Lit(String),
     Var(VarRef),
-    Cmd(Script),
+    Cmd(Script, Box<Subst>),
 }
 
 /// One piece of a word; a word is the concatenation of its parts.
@@ -38,12 +38,34 @@ pub enum Part {
     /// Unquoted `$name`.
     Var(VarRef),
     /// `(cmd)` or `$(cmd)`, optionally indexed: `(cmd)[1]`.
-    Cmd(Script, Option<Vec<String>>),
+    Cmd(Script, Option<Vec<String>>, Box<Subst>),
+}
+
+/// Where something is in the source it was parsed from (a file, an `eval` string, or
+/// a command substitution's own text, whose lines fish numbers from 1), for fish's
+/// error messages: the line, the column and width in characters, the line's text.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Loc {
+    pub line: usize,
+    pub col: usize,
+    pub len: usize,
+    pub text: String,
+}
+
+/// A command substitution's place in the text around it (from `(` to `)`) and its
+/// own text, which is the source an error inside it is shown in.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Subst {
+    pub at: Loc,
+    pub src: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Word {
     pub parts: Vec<Part>,
+    /// Where the word is, kept for a command name and a word with a wildcard: the
+    /// words fish's errors point at.
+    pub loc: Option<Box<Loc>>,
 }
 
 impl Word {
@@ -216,6 +238,20 @@ const WORD_END: &[char] = &[' ', '\t', '\n', ';', '|', '&', '<', '>', ')'];
 impl Parser {
     fn line_at(&self, i: usize) -> usize {
         self.base + self.nl.partition_point(|&p| p < i) + 1
+    }
+
+    /// Where `start..end` is: its line, column and width (cut off at the end of the line)
+    /// and the text of the line.
+    fn loc(&self, start: usize, end: usize) -> Loc {
+        let n = self.nl.partition_point(|&p| p < start);
+        let from = if n == 0 { 0 } else { self.nl[n - 1] + 1 };
+        let to = self.nl.get(n).copied().unwrap_or(self.s.len());
+        Loc {
+            line: self.base + n + 1,
+            col: start - from,
+            len: end.min(to).saturating_sub(start),
+            text: self.s[from..to].iter().collect(),
+        }
     }
 
     fn peek(&self) -> Option<char> {
@@ -734,8 +770,17 @@ impl Parser {
                 redirs.push(r);
                 continue;
             }
+            let at = self.i;
             match self.word()? {
-                Some(w) => words.push(w),
+                Some(mut w) => {
+                    // (the command name, after any `NAME=value` words: an unknown
+                    // command's error points at it)
+                    let assigns = words.iter().all(|p: &Word| matches!(p.parts.first(), Some(Part::Lit(s)) if s.contains('=')));
+                    if assigns && w.loc.is_none() {
+                        w.loc = Some(Box::new(self.loc(at, self.i)));
+                    }
+                    words.push(w)
+                }
                 None => break,
             }
         }
@@ -964,9 +1009,12 @@ impl Parser {
             return Err("fish: Unexpected end of string, square brackets do not match".to_string());
         }
         flush!();
-        Ok((!parts.is_empty() || self.i > start).then_some(Word {
-            parts: trim_brace_spaces(parts),
-        }))
+        let parts = trim_brace_spaces(parts);
+        let loc = parts
+            .iter()
+            .any(|p| matches!(p, Part::Raw(r) if r.starts_with('*')))
+            .then(|| Box::new(self.loc(start, self.i)));
+        Ok((!parts.is_empty() || self.i > start).then_some(Word { parts, loc }))
     }
 
     /// At `{`: true when no `}` closes it anywhere in the rest of the input (the braces of
@@ -1124,11 +1172,11 @@ impl Parser {
                         }
                         out.push(DPart::Var(v));
                     }
-                    Some(Part::Cmd(s, _)) => {
+                    Some(Part::Cmd(s, _, sub)) => {
                         if !lit.is_empty() {
                             out.push(DPart::Lit(std::mem::take(&mut lit)));
                         }
-                        out.push(DPart::Cmd(s));
+                        out.push(DPart::Cmd(s, sub));
                     }
                     _ => {
                         lit.push('$');
@@ -1279,10 +1327,11 @@ impl Parser {
         self.i -= 1; // back onto the `)`
         let inner: String = self.s[start..self.i].iter().collect();
         self.i += 1;
+        let at = self.loc(start - 1, self.i);
         // (fish numbers the lines of a substitution from 1)
         let script = parse(&inner)?;
         let index = self.index_suffix(false)?;
-        Ok(Part::Cmd(script, index))
+        Ok(Part::Cmd(script, index, Box::new(Subst { at, src: inner })))
     }
 }
 
@@ -1412,7 +1461,7 @@ mod tests {
     fn command_substitution_nests_and_indexes() {
         let w = &simple_words("echo (string split , (echo a,b))[2]")[1];
         match &w.parts[0] {
-            Part::Cmd(inner, Some(idx)) => {
+            Part::Cmd(inner, Some(idx), _) => {
                 assert_eq!(idx, &vec!["2".to_string()]);
                 assert_eq!(inner.len(), 1);
             }

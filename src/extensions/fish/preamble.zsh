@@ -26,7 +26,11 @@ __fish_echo() {
   [[ -n $nl ]] && print
   return 0
 }
-__fish_ret() { return $1 }
+# where the running code is, for fish's error messages (fish/report.rs): the blocks it is
+# in, its file (the script's, a sourced file's, a function's own), the command being
+# run, the source a function or substitution came from, and the last expansion error
+typeset -g __fish_file=${ZSH_SCRIPT-} __fish_at= __fish_srcfn= __fish_src= __fish_xe=0 __fish_xerr=0 __fish_xa= __fish_xt= __fish_nf= __fish_nfile=
+typeset -g __fish_bt=
 # `CMD || __fish_st VAR`: the status of CMD into VAR (where the text cannot say `$?`)
 __fish_st() { local __s=$?; typeset -g $1=$__s; return $__s }
 # `__fish_lm[NAME]=PARAM` that keeps the status (emit.rs `register`)
@@ -158,7 +162,8 @@ status() {
     current-line-number|line-number|-n) print -r -- $LINENO ;;
     basename) print -r -- ${ZSH_ARGZERO:t} ;;
     dirname) print -r -- ${ZSH_ARGZERO:A:h} ;;
-    stack-trace|print-stack-trace|buildinfo|terminal-os) return 0 ;;
+    stack-trace|print-stack-trace) __fish_error trace ;;
+    buildinfo|terminal-os) return 0 ;;
     '') [[ -o interactive ]] && print -r -- 'This is an interactive session' || print -r -- 'This is a non-interactive session' ;;
     *) print -u2 -r -- "status $1: invalid subcommand"; return 2 ;;
   esac
@@ -191,7 +196,7 @@ __fish_set_list() {
       __fx_*) continue ;;
       # this function's own locals and the shell's scratch variables
       __sc|__nm|__ex|__lg|__n|__k|__line|__v|__t|__vals|__out|__in|__hasin|__virtual|__fn|__fv) continue ;;
-      __fx_*|__fc<->|__fa<->|__fi<->_<->|__fish_(cs|ps|rc|nrc|nq|av|nav|srcfile|argv|argv_opts|argflags|ipf|ipf<->|ips|rrc|ipp|iph|hist_app|io|iv|tw|en|erc|ix|w|qe|qc|csv|rv|lm|ss|bs|fs|fl|es|nr|incs)) continue ;;
+      __fx_*|__fc<->|__fa<->|__fi<->_<->|__fish_(cs|ps|rc|nrc|nq|av|nav|srcfile|argv|argv_opts|argflags|ipf|ipf<->|ips|rrc|ipp|iph|hist_app|io|iv|tw|en|erc|ix|w|qe|qc|csv|rv|lm|ss|bs|fs|fl|es|nr|incs|hs)) continue ;;
       # every other `__` name is a user's (fish's own scripts set many), bar what this file made
       __fish_uvar_*|__fish_(bin|cache|config|data|help|man|sysconf|user_data)_dir) continue ;;
       __*) (( ${+__fish_internal[$__n]} )) && continue; [[ $__sc == l ]] && continue ;;
@@ -1388,7 +1393,7 @@ complete() { __fish_complete "$@" }
 command_not_found_handler() {
   # fish autoloads a function from NAME.fish on $fish_function_path (and its own functions)
   if __fish_autoload_ok "$1"; then "$@"; return; fi
-  print -u2 -r -- "fish: Unknown command: $1"; return 127
+  __fish_error unknown "$1"; __fish_xerr=127; return 127
 }
 __fish_cl_words() { (( $# )) && print -rl -- "$@"; return 0 }
 source() {
@@ -1397,10 +1402,13 @@ source() {
   (( $# )) && shift
   local __fish_srcfile=$__f
   __t=$('@ZSHRS@' --fish-translate --source -- "$__f") || return
+  # the block fish's error messages list, and the file the code comes from
+  local __fish_bt="source"$'\x1e'"$__fish_file"$'\x1e'"${__fish_at%% *}"$'\x1e'"$__f"${__fish_bt:+$'\x1d'$__fish_bt} __fish_file=$__f __fish_srcfn= __fish_src= __fish_xerr=0
   () { builtin eval "$__t" } "$@"
 }
 __fish_eval() {
-  local __t
+  # (an error in it is shown in its own text)
+  local __t __fish_srcfn= __fish_src="$*"
   # (the locals in view, which the code may name: emit.rs `dynamic_names`)
   __t=$(print -r -- "$*" | ZSHRS_FISH_LOCALS="${(kv)__fish_lm}" '@ZSHRS@' --fish-translate -) || return
   builtin eval "$__t"

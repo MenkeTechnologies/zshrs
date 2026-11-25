@@ -16,7 +16,7 @@
 //! export arrays; a list is joined with `:` for names ending in `PATH` and
 //! with a space otherwise, which is also what fish puts in the environment.
 
-use super::parse::{index_has_brace_space, Cmd, Conn, DPart, Job, Part, Pipe, Redir, Script, Stmt, VarRef, Word};
+use super::parse::{index_has_brace_space, Cmd, Conn, DPart, Job, Loc, Part, Pipe, Redir, Script, Stmt, VarRef, Word};
 
 /// Lowercase fish variable names that collide with zsh special parameters. A fish
 /// `for path in $list` must not rewrite `$PATH`, so these live under a prefix.
@@ -42,6 +42,9 @@ pub struct Emitter {
     /// `__fcN="$(…)"` assignments the command being emitted needs ahead of it.
     pub(super) hoists: Vec<String>,
     hoist_id: usize,
+    /// A substitution in the command being emitted reports its own failure, and the
+    /// command does not run after one (see [`Emitter::capture`]).
+    gate_job: bool,
     /// Lexical scopes, innermost last; see [`Frame`].
     scopes: Vec<Frame>,
     local_id: usize,
@@ -589,7 +592,7 @@ impl Emitter {
         }
         if j.bg {
             // (the registry is what `jobs` lists: zsh's own table is not visible in a pipeline)
-            let text = squote(out.trim_start_matches("! "));
+            let text = squote(&without_markers(out.trim_start_matches("! ")));
             out.push_str(&format!(" & __fish_jobreg $! {text}"));
         }
         if wrap_not {
@@ -609,11 +612,20 @@ impl Emitter {
         // (a compound command takes the pipe itself: the commands inside it do not)
         self.piped_in = std::mem::take(&mut self.piped_in) && matches!(c, Cmd::Simple { .. });
         let outer = std::mem::take(&mut self.hoists);
+        let outer_gate = std::mem::take(&mut self.gate_job);
         let text = self.cmd_inner(c);
         let mine = std::mem::replace(&mut self.hoists, outer);
+        let gate = std::mem::replace(&mut self.gate_job, outer_gate);
         if mine.is_empty() {
             return text;
         }
+        // a substitution that failed (see `capture`) has reported it: the command does not
+        // run and its status is the substitution's
+        let text = if gate {
+            format!("{{ __fish_hs=$?; if (( __fish_xe )); then __fish_error cmdsub $__fish_xe ${{=__fish_xa}} \"$__fish_xt\"; __fish_hs=$__fish_xe; __fish_xe=0; __fish_ret $__fish_hs; else __fish_ret $__fish_hs; {text}\nfi; }}")
+        } else {
+            text
+        };
         // (only an assignment: `set -q`, `-e` and `-S` report their own status)
         let sets_variable = matches!(c, Cmd::Simple { words, .. }
             if words.first().and_then(Word::bare) == Some("set")
@@ -876,6 +888,17 @@ impl Emitter {
         if dynamic && !no_shadow {
             inner.insert_str(0, "local -A __fish_lm\n");
         }
+        // the block fish's error messages list (fish/report.rs): the call, where it was
+        // made (`__fish_at`, set by the calling command) and its arguments; the
+        // function's own file and source and `__fish_xerr` (see `capture`). `$status`
+        // starts as the caller's, as in fish.
+        let q = quote_lit(&name);
+        inner.insert_str(
+            0,
+            &format!(
+                "__fish_frame function {q} \"$@\"; local __fish_fs=$? __fish_bt=$__fish_nf __fish_file=$__fish_nfile __fish_srcfn={q} __fish_xerr=0; __fish_ret $__fish_fs\n"
+            ),
+        );
         if tracked {
             inner.push_str(&format!(
                 "{{ __fish_es=$?; local __fish_nr=1; __fish_ret $__fish_es; }}\n{text}\n__fish_ret $(( __fish_nr ? 0 : $? ))"
@@ -903,7 +926,7 @@ impl Emitter {
             out.push_str(&format!("\n__fish_gset[{}]=1", quote_lit(&name)));
         }
         out.push_str(&format!(
-            "\n__fish_fnsrc[{q}]={}; __fish_fnline[{q}]={line}; __fish_fnfile[{q}]=\"${{__fish_srcfile:-${{(%):-%x}}}}\"",
+            "\n__fish_fnsrc[{q}]={}; __fish_fnline[{q}]={line}; __fish_fnfile[{q}]=\"${{__fish_srcfile:-$__fish_file}}\"",
             squote(&shown),
             q = quote_lit(&name)
         ));
@@ -957,6 +980,35 @@ impl Emitter {
         Some(format!("{{ print -u2 -r -- 'fish: {msg}'; __fish_ret 121; }}"))
     }
 
+    /// Run `text`, the command, as fish runs a command with wildcards: when one of
+    /// them matches nothing the command does not run, its status is 124 and fish's
+    /// error names the first such word (parse_execution.rs `report_wildcard_error`);
+    /// zsh would end the whole script. Each wildcard word is expanded first with
+    /// no-match-is-empty. A word holding a substitution would run it again, so a
+    /// command with one goes through [`isolate_glob`] instead.
+    fn guard_globs(&mut self, text: &str, globs: &[&Word]) -> String {
+        let report = |at: &Loc| format!("__fish_error wildcard {} {} {} {}", at.line, at.col, at.len, squote(&at.text));
+        let first = globs.iter().find_map(|w| w.loc.as_deref());
+        if globs.iter().any(|w| w.parts.iter().any(|p| matches!(p, Part::Cmd(..)))) {
+            return isolate_glob(text, &first.map(report).unwrap_or_default());
+        }
+        let mut out = String::from("{ __fish_gs=$?; ");
+        for w in globs {
+            let Some(at) = w.loc.as_deref() else { continue };
+            let word = self.word_list(w);
+            out.push_str(&format!(
+                "if ! () {{ setopt localoptions nullglob; set -- {word}; (( $# )) }} \"$@\"; then __fish_xerr=124; {}; __fish_ret 124; el",
+                report(at)
+            ));
+        }
+        let ifs = globs.iter().filter(|w| w.loc.is_some()).count();
+        if ifs == 0 {
+            return isolate_glob(text, "");
+        }
+        out.push_str(&format!("se __fish_ret $__fish_gs; {text}\nfi; }}"));
+        out
+    }
+
     fn simple(&mut self, words: &[Word], redirs: &[Redir]) -> String {
         let piped_in = std::mem::take(&mut self.piped_in);
         if let Some(err) = Self::index_error(words) {
@@ -970,6 +1022,7 @@ impl Emitter {
         if n > 0 && n < words.len() {
             let lit = |s: &str| Word {
                 parts: vec![Part::Lit(s.to_string())],
+                loc: None,
             };
             self.fn_depth += 1;
             self.scopes.push(Frame::default());
@@ -978,7 +1031,7 @@ impl Emitter {
                 .filter_map(Self::assignment_parts)
                 .map(|(name, value)| {
                     // `NAME= cmd` is the empty string
-                    let value = if value.parts.is_empty() { Word { parts: vec![Part::Single(String::new())] } } else { value };
+                    let value = if value.parts.is_empty() { Word { parts: vec![Part::Single(String::new())], loc: None } } else { value };
                     self.set_cmd(&[lit("-lx"), lit(&name), value])
                 })
                 .collect();
@@ -1080,6 +1133,19 @@ impl Emitter {
                 if let Some(n @ ("bind" | "commandline" | "complete" | "eval")) = name.as_deref() {
                     all[0] = format!("__fish_{n}");
                 }
+                // where the command is, for an unknown command's error and for the block a
+                // function call opens (fish/report.rs): a word that sets `__fish_at` as the
+                // words expand and is itself no word, so `$?` and `$pipestatus` stay
+                // (only for a name that can be a function or an unknown command: a builtin
+                // is neither, and zsh's `continue` and the like take no such word; `source`
+                // is the preamble's function, whose block records where it was called)
+                let builtin = name.as_deref().is_some_and(|n| n != "source" && {
+                    super::complete::FISH_BUILTINS.iter().any(|(b, _)| *b == n)
+                        || crate::ported::builtin::BUILTINS.iter().any(|b| b.node.nam == n)
+                });
+                if let (Some(at), false) = (rest.first().and_then(|w| w.loc.as_deref()), builtin) {
+                    all.insert(1, format!("${{${{__fish_at::={} {} {}}}:+}}", at.line, at.col, at.len));
+                }
                 all.join(" ")
             }
         };
@@ -1109,7 +1175,8 @@ impl Emitter {
         // A wildcard with no match is an error in both shells, but zsh ends the whole
         // script on it and fish only skips the command. `eval` confines the abort.
         if !lenient_glob && has_glob(&rest[1.min(rest.len())..]) {
-            out = isolate_glob(&out);
+            let globs: Vec<&Word> = rest[1..].iter().filter(|w| has_glob(std::slice::from_ref(*w))).collect();
+            out = self.guard_globs(&out, &globs);
         }
         out
     }
@@ -1175,6 +1242,7 @@ impl Emitter {
         }
         let mut tail = Word {
             parts: w.parts[1..].to_vec(),
+            loc: None,
         };
         if !value.is_empty() {
             tail.parts.insert(0, Part::Lit(value.to_string()));
@@ -1235,7 +1303,7 @@ impl Emitter {
         match w.parts.as_slice() {
             [] => "''".into(),
             [Part::Var(v)] => self.var_list(v),
-            [Part::Cmd(s, idx)] => self.cmd_list(s, idx.as_deref()),
+            [Part::Cmd(s, idx, sub)] => self.cmd_list(s, idx.as_deref(), sub),
             // a list part makes the word as many words as it has elements: none for an
             // unset variable, which only a loop can express
             parts if parts.iter().any(|p| is_list_part(p) && !always_set(p)) => self.cartesian(parts),
@@ -1243,7 +1311,7 @@ impl Emitter {
             // slowest (`{+,-}{a,b}` is `+a -a +b -b`), zsh the first.
             parts if has_brace => expand_braces(parts)
                 .into_iter()
-                .map(|parts| self.word_list_inner(&Word { parts }))
+                .map(|parts| self.word_list_inner(&Word { parts, loc: None }))
                 .collect::<Vec<_>>()
                 .join(" "),
             parts => parts.iter().map(|p| self.part(p, false)).collect(),
@@ -1265,7 +1333,7 @@ impl Emitter {
         for p in parts {
             let (list, loops) = match p {
                 Part::Var(v) if is_list_part(p) => (self.var_list(v), &mut var_loops),
-                Part::Cmd(s, idx) => (self.cmd_list(s, idx.as_deref()), &mut cmd_loops),
+                Part::Cmd(s, idx, sub) => (self.cmd_list(s, idx.as_deref(), sub), &mut cmd_loops),
                 _ => {
                     body.push(p.clone());
                     continue;
@@ -1331,14 +1399,14 @@ impl Emitter {
             Part::Double(ds) => self.double(ds),
             Part::Var(v) if scalar => format!("\"{}\"", self.var_join(v)),
             Part::Var(v) => self.var_rc(v),
-            Part::Cmd(s, idx) if scalar => {
+            Part::Cmd(s, idx, sub) if scalar => {
                 let inner = self.script(s);
                 match idx {
                     None => format!("\"$( {inner} )\""),
-                    Some(_) => self.cmd_list(s, idx.as_deref()),
+                    Some(_) => self.cmd_list(s, idx.as_deref(), sub),
                 }
             }
-            Part::Cmd(s, idx) => format!("${{^{}}}", self.cmd_list(s, idx.as_deref())),
+            Part::Cmd(s, idx, sub) => format!("${{^{}}}", self.cmd_list(s, idx.as_deref(), sub)),
         }
     }
 
@@ -1351,7 +1419,7 @@ impl Emitter {
             match d {
                 DPart::Lit(s) => out.push_str(&dq_escape(s)),
                 DPart::Var(v) => out.push_str(&self.var_join(v)),
-                DPart::Cmd(s) => out.push_str(&format!("${{{}}}", self.capture_trimmed(s))),
+                DPart::Cmd(s, sub) => out.push_str(&format!("${{{}}}", self.capture_trimmed(s, &sub.src, Some(&sub.at)))),
             }
         }
         out.push('"');
@@ -1363,7 +1431,14 @@ impl Emitter {
     /// defines all stay, while its `set -l` names do not (`body` gives it a scope frame).
     /// Returns the variable that holds the output with an `x` after it, so no trailing
     /// newline is lost; the status is the substitution's.
-    fn capture(&mut self, s: &Script) -> String {
+    ///
+    /// `src` is the substitution's own text, which an error inside it is shown in, and
+    /// `at` where it is in the text around it: when its last command fails the way an
+    /// expansion fails (an unmatched wildcard, an unknown command), fish reports the
+    /// substitution as failing and does not run the command around it (expand.rs
+    /// `expand_cmdsubst`, `break_expand`).
+    fn capture(&mut self, s: &Script, src: &str, at: Option<&Loc>) -> String {
+        let line = self.cur_line;
         let inner = self.body(s);
         self.hoist_id += 1;
         let v = format!("__fc{}", self.hoist_id);
@@ -1374,18 +1449,38 @@ impl Emitter {
                 "__fish_ipf{id}=$(mktemp \"${{TMPDIR:-/tmp}}/.zrcs.XXXXXX\"); {{ {inner}\n}} >$__fish_ipf{id}; __fish_ips=$?; IFS= read -rd '' {v} <$__fish_ipf{id}; {v}+=x; command rm -f $__fish_ipf{id}; (exit $__fish_ips)",
                 id = self.hoist_id
             ));
-        } else {
-            // `${ … }` captures without a subshell; its scope holds `__fish_incs`, which
-            // `status is-command-substitution` looks for (set from `$?`, which it keeps)
-            self.hoists.push(format!("{v}=${{ local __fish_incs=$?; __fish_ret $__fish_incs\n{inner}\n__fish_cs=$?; print -rn x; __fish_ret $__fish_cs }}"));
+            return v;
         }
+        // `${ … }` captures without a subshell. its scope holds
+        // `__fish_incs`, which `status is-command-substitution` looks for, the block
+        // fish's error messages list, its source, and `__fish_xerr`, which an expansion
+        // error in it sets: when that is how its last command ended, `__fish_xe` and
+        // `__fish_xa`/`__fish_xt` (where the substitution is) carry it out to the
+        // command around it, which reports it and does not run
+        let fail = match at {
+            Some(at) => {
+                self.gate_job = true;
+                format!(
+                    "(( __fish_xerr && __fish_cs == __fish_xerr )) && {{ __fish_xe=$__fish_cs; __fish_xa='{} {} {}'; __fish_xt={}; }}; ",
+                    at.line,
+                    at.col,
+                    at.len,
+                    squote(&at.text)
+                )
+            }
+            None => String::new(),
+        };
+        self.hoists.push(format!(
+            "{v}=${{ local __fish_incs=$? __fish_bt=\"subst\"$'\\x1e'\"$__fish_file\"$'\\x1e'{line}${{__fish_bt:+$'\\x1d'$__fish_bt}} __fish_srcfn= __fish_src={} __fish_xerr=0; __fish_ret $__fish_incs\n{inner}\n__fish_cs=$?; {fail}print -rn x; __fish_ret $__fish_cs }}",
+            squote(src)
+        ));
         v
     }
 
     /// [`capture`](Self::capture) for `"$(cmd)"` and an index `[(cmd)]`: one word, every
     /// trailing newline dropped (fish `"[$(printf 'a\n\n')]"` is `[a]`).
-    fn capture_trimmed(&mut self, s: &Script) -> String {
-        let v = self.capture(s);
+    fn capture_trimmed(&mut self, s: &Script, src: &str, at: Option<&Loc>) -> String {
+        let v = self.capture(s, src, at);
         self.hoists.push(format!(
             "{{ __fish_cs=$?; {v}=${{{v}%x}}; while [[ ${v} == *$'\\n' ]]; do {v}=${{{v}%$'\\n'}}; done; __fish_ret $__fish_cs; }}"
         ));
@@ -1395,8 +1490,8 @@ impl Emitter {
     /// `(cmd)` as a word list: one word per output line, none for empty output. fish
     /// drops only ONE trailing newline and keeps empty lines, so `(echo)` is one empty
     /// element and `(printf '')` is none.
-    fn cmd_list(&mut self, s: &Script, idx: Option<&[String]>) -> String {
-        let v = self.capture(s);
+    fn cmd_list(&mut self, s: &Script, idx: Option<&[String]>, sub: &super::parse::Subst) -> String {
+        let v = self.capture(s, &sub.src, Some(&sub.at));
         let out = format!("${{{v}%x}}");
         // `(… | string collect)` is one word, newlines and all, even when empty
         if idx.is_none() && ends_in_string_collect(s) {
@@ -1437,8 +1532,8 @@ impl Emitter {
 
     fn index_operand(&mut self, t: &str) -> String {
         let inner = t.strip_prefix('(').and_then(|r| r.strip_suffix(')'));
-        match inner.and_then(|i| super::parse::parse(i).ok()) {
-            Some(script) => format!("${{{}}}", self.capture_trimmed(&script)),
+        match inner.and_then(|i| Some((i, super::parse::parse(i).ok()?))) {
+            Some((src, script)) => format!("${{{}}}", self.capture_trimmed(&script, src, None)),
             None => self.map_index_vars(t),
         }
     }
@@ -1601,7 +1696,7 @@ fn may_run_nothing(s: &Script) -> bool {
     fn has_cmdsub(w: &Word) -> bool {
         w.parts.iter().any(|p| match p {
             Part::Cmd(..) => true,
-            Part::Double(ds) => ds.iter().any(|d| matches!(d, DPart::Cmd(_))),
+            Part::Double(ds) => ds.iter().any(|d| matches!(d, DPart::Cmd(..))),
             _ => false,
         })
     }
@@ -1632,9 +1727,11 @@ fn has_glob(words: &[Word]) -> bool {
 /// Run `text` so that a wildcard with no match ends only this command, with status
 /// 124 as in fish; zsh would end the whole script. The marker is set after the command
 /// ran, so a failed expansion (which skips it) is told from a command that failed.
-fn isolate_glob(text: &str) -> String {
+/// `report` prints fish's error for the word that matched nothing, and `__fish_xerr`
+/// records the expansion error (see `Emitter::capture`).
+fn isolate_glob(text: &str, report: &str) -> String {
     format!(
-        "{{ __fish_g=; builtin eval {}; [[ -n $__fish_g ]] || __fish_cs=124; __fish_ret $__fish_cs; }}",
+        "{{ __fish_g=; builtin eval {}; [[ -n $__fish_g ]] || {{ __fish_cs=124; __fish_xerr=124; {report}\n}}; __fish_ret $__fish_cs; }}",
         squote(&format!("{text}; __fish_cs=$?; __fish_g=1"))
     )
 }
@@ -1664,7 +1761,7 @@ pub(super) fn uses_dynamic_names(script: &Script) -> bool {
         w.parts.iter().any(|p| match p {
             Part::Var(v) => v.deref,
             Part::Double(ds) => ds.iter().any(|d| matches!(d, DPart::Var(v) if v.deref)),
-            Part::Cmd(s, _) => uses_dynamic_names(s),
+            Part::Cmd(s, _, _) => uses_dynamic_names(s),
             _ => false,
         })
     }
@@ -1887,3 +1984,24 @@ const PLAIN_PIPE_HEADS: &[&str] = &[
     "grep", "sed", "awk", "seq", "sort", "uniq", "head", "tail", "wc", "tr", "cut", "find", "xargs",
     "yes", "env", "command", "builtin", "git", "curl", "sleep", "random", "path", "contains",
 ];
+
+/// `text` without the `__fish_at` location words the simple-command emitter puts in
+/// (`${${__fish_at::=L C N}:+} `), as the text a job is listed under.
+fn without_markers(text: &str) -> String {
+    const OPEN: &str = "${${__fish_at::=";
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(OPEN) {
+        out.push_str(&rest[..at]);
+        let after = &rest[at + OPEN.len()..];
+        match after.find("}:+}") {
+            Some(end) => rest = after[end + 4..].strip_prefix(' ').unwrap_or(&after[end + 4..]),
+            None => {
+                out.push_str(OPEN);
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}

@@ -256,6 +256,13 @@ pub fn zerr(msg: &str) {
         return; // c:177
     }
     errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed); // c:194
+    // !!! RUST-ONLY: under `--fish` an unmatched wildcard is reported in fish's
+    // words, with its place in the fish source, by the translated code
+    // (fish/emit.rs `isolate_glob`, fish/report.rs); zsh's own message would be a
+    // second one.
+    if crate::extensions::emulation_startup::fish_mode() && msg.starts_with("no matches found: ") {
+        return;
+    }
     zwarning(None, msg); // c:194
 }
 

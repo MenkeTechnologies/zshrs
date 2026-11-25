@@ -187,7 +187,7 @@ fn wrap_targets(cmd: &str) -> Vec<String> {
 /// backslash form of [`escape_for_insert`], but a string that needs escaping
 /// and has no control character goes in quotes instead, `"` when it holds
 /// more `'` than `"` and `$` together, else `'`; the empty string is `''`.
-fn escape(s: &str) -> String {
+pub(crate) fn escape(s: &str) -> String {
     if s.is_empty() {
         return "''".to_string();
     }
@@ -219,7 +219,7 @@ fn escape(s: &str) -> String {
 /// completion, `completion_apply_to_command_line`): backslashes only, control
 /// characters as `\n` `\t` `\cX` `\xHH`. A `#` after an alphanumeric and a
 /// `?` (fish 4's qmark-noglob) stay bare; `~` is escaped.
-fn escape_for_insert(s: &str) -> String {
+pub(crate) fn escape_for_insert(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut prev_alnum = false;
     for c in s.chars() {
@@ -2393,7 +2393,7 @@ fn wcsfilecmp(a: &str, b: &str) -> std::cmp::Ordering {
 
 /// fish `builtin_get_names` / `builtin_get_desc` (fish 4.9
 /// `src/builtins/shared/misc.rs`): the builtins and their one-line descriptions.
-const FISH_BUILTINS: &[(&str, &str)] = &[
+pub(crate) const FISH_BUILTINS: &[(&str, &str)] = &[
     ("!", "Negate exit status of job"),
     (".", "Evaluate contents of file"),
     (":", "Return a successful result"),

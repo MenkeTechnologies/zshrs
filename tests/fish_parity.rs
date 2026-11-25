@@ -584,3 +584,43 @@ fn function_definitions_are_shown_as_written() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// fish's located errors, compared on stderr: an unmatched wildcard and an unknown
+/// command, with the source line, the caret under the word and the blocks around it
+/// (a function call with its arguments, a command substitution, a sourced file and
+/// the line each was entered on), and a substitution whose last command failed that
+/// way failing the command around it.
+#[test]
+fn errors_are_reported_as_fish_reports_them() {
+    let Some(reference) = fish() else { return };
+    let dir = scratch("errors");
+    let lib = dir.join("lib.fish");
+    std::fs::write(&lib, "function g\n    ls nomatch*here $argv\nend\ng a 'b c' ''\n").unwrap();
+    let main = dir.join("main.fish");
+    std::fs::write(
+        &main,
+        format!(
+            "echo a*b zz*q\necho after $status\nfunction f\n    echo (ls q*z)\nend\nf\nsource {}\nnosuchcmd foo\necho (nosuchcmd x) st=$status\necho (false; ls q*z; true)\n",
+            lib.display()
+        ),
+    )
+    .unwrap();
+    let stderr = |bin: &Path, args: &[&str]| {
+        let out = Command::new(bin)
+            .args(args)
+            .arg(&main)
+            .env_clear()
+            .env("HOME", &dir)
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("TERM", "dumb")
+            .current_dir(&dir)
+            .stdin(Stdio::null())
+            .output()
+            .expect("spawn shell");
+        (String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned())
+    };
+    let want = stderr(&reference, &["--no-config"]);
+    let got = stderr(Path::new(env!("CARGO_BIN_EXE_zshrs")), &["--fish", "-f"]);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(got, want, "stdout and stderr differ from fish");
+}
