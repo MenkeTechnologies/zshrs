@@ -1340,6 +1340,9 @@ fn escape(s: &str, style: &str) -> String {
                         c => format!("\\{c}"),
                     })
                     .collect()
+            } else if s.contains('\'') && !s.contains(['"', '$']) {
+                // a quote and nothing that double quotes would expand: fish prefers them
+                format!("\"{}\"", s.replace('\\', "\\\\"))
             } else {
                 format!("'{}'", s.replace('\\', "\\\\").replace('\'', "\\'"))
             }
