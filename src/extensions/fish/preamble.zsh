@@ -558,6 +558,7 @@ type() {
          # a function fish autoloads (its own `ls`, ...) comes before a file of the same name
          [[ $k == command || $k == none ]] && __fish_autoload_ok $n 2>/dev/null && k=function
          [[ -n $k && $k != none ]] || { r=1; [[ -n $q ]] || print -u2 -r -- "type: Could not find '$n'"; continue }
+         [[ $k == function ]] && __fish_standin_meta $n
          [[ -n $q ]] && continue
          case $k in
            function)
@@ -596,6 +597,21 @@ __fish_gsets() {
   return 1
 }
 __fish_autoload_ok() { [[ -z ${__fish_erased[$1]+x} ]] && __fish_autoload "$1" }
+# a preamble stand-in for a fish function answers `functions -D`, `type` and the like from the fish
+# file it stands for: the file is sourced once for its metadata and the stand-in is put back
+typeset -gA __fish_standin_done
+__fish_standin_meta() {
+  local n=$1 saved
+  [[ -n ${__fish_fnsrc[$n]+x} || -n ${__fish_standin_done[$n]+x} ]] && return 0
+  (( ${+functions[$n]} )) || return 1
+  __fish_standin_done[$n]=1
+  __fish_status_file get-file functions/$n.fish >/dev/null 2>&1 || return 1
+  saved=$(builtin functions -- $n)
+  unfunction -- $n
+  __fish_autoload $n 2>/dev/null
+  unfunction -- $n 2>/dev/null
+  eval "$saved"
+}
 # fish's `which` finds files only; `umask` prints four octal digits
 which() {
   local n p r=0
@@ -685,10 +701,11 @@ functions() {
       continue
     fi
     (( $+functions[$a] )) || __fish_autoload_ok $a || { print -u2 -r -- "functions: Unknown function '$a'"; return 1 }
+    __fish_standin_meta $a
     if [[ -n ${__fish_fnsrc[$a]+x} ]]; then
       if [[ -n $details ]]; then
         if [[ -n $verbose ]]; then
-          print -r -- ${__fish_fnfile[$a]:-stdin}$'\nnot-autoloaded\n'${__fish_fnline[$a]:-0}
+          print -r -- ${__fish_fnfile[$a]:-stdin}$'\n'$(__fish_autoloaded $a)$'\n'${__fish_fnline[$a]:-0}
           print -r -- ${${__fish_fnshadow[$a]:+no-scope-shadowing}:-scope-shadowing}$'\n'${__fish_fndesc[$a]}
         else print -r -- ${__fish_fnfile[$a]:-stdin}; fi
         continue
@@ -813,6 +830,11 @@ __fish_defined_in() {
   else
     print -r -- '# Defined via `source`'
   fi
+}
+# `functions -Dv` line 2: a function whose file is NAME.fish in a function dir was autoloaded
+__fish_autoloaded() {
+  local f=${__fish_fnfile[$1]-}
+  if [[ $f:t == $1.fish && ( $f == embedded:* || ${f:h} == ${(~j:|:)fish_function_path} ) ]]; then print -r -- autoloaded; else print -r -- not-autoloaded; fi
 }
 __fish_alias_list() {
   local k
