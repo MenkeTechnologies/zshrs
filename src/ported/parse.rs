@@ -209,18 +209,21 @@ pub fn parse_context_save(ps: &mut parse_stack) {
     // enclosing wordcode parse (`zcompile` reaching a `$(…)`, whose
     // skipcomm runs `parse_event(OUTPAR)`) lost everything it had emitted.
     //
-    // !!! WARNING: COPIED, NOT HANDED OVER !!! C moves the buffer into `ps`
-    // and sets `ecbuf = NULL` (c:318); every C nested parse then starts
-    // with `init_parse`. The copy leaves the thread-locals readable for a
-    // Rust nested parse that skips `init_parse`, where C would dereference
-    // NULL; `parse_context_restore` overwrites them either way.
+    // c:318 — `ecbuf = NULL`: the buffer and the string table are handed
+    // over, not copied (a copy made every `$(…)` cost the size of all the
+    // wordcode parsed before it, quadratic over a long script). Every C
+    // nested parse starts with `init_parse`; the lengths are zeroed so a
+    // Rust one that skips it grows a fresh buffer (`ecadd`) where C would
+    // dereference NULL.
     ps.eclen = ECLEN.get();
     ps.ecused = ECUSED.get();
     ps.ecnpats = ECNPATS.get();
-    ps.ecbuf = Some(ECBUF.with_borrow(|b| b.clone()));
-    ps.ecstrs = ECSTRS_TREE.with_borrow(|t| t.clone());
-    ps.ecstrs_index = ECSTRS_INDEX.with_borrow(|m| m.clone());
-    ps.ecstrs_reverse = ECSTRS_REVERSE.with_borrow(|m| m.clone());
+    ps.ecbuf = Some(ECBUF.with_borrow_mut(std::mem::take));
+    ps.ecstrs = ECSTRS_TREE.with_borrow_mut(Option::take);
+    ps.ecstrs_index = ECSTRS_INDEX.with_borrow_mut(std::mem::take);
+    ps.ecstrs_reverse = ECSTRS_REVERSE.with_borrow_mut(std::mem::take);
+    ECLEN.set(0);
+    ECUSED.set(0);
     ps.ecsoffs = ECSOFFS.get();
     ps.ecssub = ECSSUB.get();
     ps.ecnfunc = ECNFUNC.get();
@@ -238,15 +241,15 @@ pub fn parse_context_save(ps: &mut parse_stack) {
 /// pending heredocs + Rust-only counters from `ps`, then clears
 /// `errflag & ERRFLAG_ERROR` per parse.c:354.
 /// WARNING: param names don't match C — Rust=(ps) vs C=(ps, toplevel)
-pub fn parse_context_restore(ps: &parse_stack) {
+pub fn parse_context_restore(ps: &mut parse_stack) {
     // parse.c:330-331 — free any in-progress wordcode buffer: the nested
     // parse's buffer is overwritten by the saved one below.
 
     // parse.c:333-352 — restore saved state.
     // parse.c:337 — `hdocs = ps->hdocs;`
-    HDOCS.with_borrow_mut(|h| *h = ps.hdocs.clone());
+    HDOCS.with_borrow_mut(|h| *h = ps.hdocs.take());
     // zshrs-only: restore the parallel AST-glue Vec.
-    LEX_HEREDOCS.with_borrow_mut(|v| *v = ps.lex_heredocs.clone());
+    LEX_HEREDOCS.with_borrow_mut(|v| *v = std::mem::take(&mut ps.lex_heredocs));
     set_incmdpos(ps.incmdpos);
     // parse.c:334 — `aliasspaceflag = ps->aliasspaceflag;`.
     crate::ported::lex::LEX_ALIAS_SPACE_FLAG.with(|c| c.set(ps.aliasspaceflag));
@@ -261,10 +264,10 @@ pub fn parse_context_restore(ps: &parse_stack) {
     ECLEN.set(ps.eclen);
     ECUSED.set(ps.ecused);
     ECNPATS.set(ps.ecnpats);
-    ECBUF.with_borrow_mut(|b| *b = ps.ecbuf.clone().unwrap_or_default());
-    ECSTRS_TREE.with_borrow_mut(|t| *t = ps.ecstrs.clone());
-    ECSTRS_INDEX.with_borrow_mut(|m| *m = ps.ecstrs_index.clone());
-    ECSTRS_REVERSE.with_borrow_mut(|m| *m = ps.ecstrs_reverse.clone());
+    ECBUF.with_borrow_mut(|b| *b = ps.ecbuf.take().unwrap_or_default());
+    ECSTRS_TREE.with_borrow_mut(|t| *t = ps.ecstrs.take());
+    ECSTRS_INDEX.with_borrow_mut(|m| *m = std::mem::take(&mut ps.ecstrs_index));
+    ECSTRS_REVERSE.with_borrow_mut(|m| *m = std::mem::take(&mut ps.ecstrs_reverse));
     ECSOFFS.set(ps.ecsoffs);
     ECSSUB.set(ps.ecssub);
     ECNFUNC.set(ps.ecnfunc);

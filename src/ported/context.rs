@@ -114,7 +114,7 @@ pub fn zcontext_restore_partial(parts: i32) {
     }
     if (parts & ZCONTEXT_PARSE) != 0 {
         // c:117
-        parse_context_restore(&cs.parse_stack);
+        parse_context_restore(&mut cs.parse_stack);
     }
 
     drop(cs); // c:117

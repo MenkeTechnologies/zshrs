@@ -144,7 +144,7 @@ status() {
   case ${1-} in
     is-interactive|-i|--is-interactive) [[ -o interactive ]] ;;
     is-login|-l|--is-login) [[ -o login ]] ;;
-    is-command-substitution|-c) (( ZSH_SUBSHELL )) ;;
+    is-command-substitution|-c) (( ZSH_SUBSHELL || ${+__fish_incs} )) ;;
     is-block|is-breakpoint|is-event|-b) return 1 ;;
     job-control|-j) (( $# > 1 )) && return 0; return 1 ;;
     features) __fish_features ;;
@@ -191,7 +191,7 @@ __fish_set_list() {
       __fx_*) continue ;;
       # this function's own locals and the shell's scratch variables
       __sc|__nm|__ex|__lg|__n|__k|__line|__v|__t|__vals|__out|__in|__hasin|__virtual|__fn|__fv) continue ;;
-      __fx_*|__fc<->|__fa<->|__fi<->_<->|__fish_(cs|ps|rc|nrc|nq|av|nav|srcfile|argv|argv_opts|argflags|ipf|ipf<->|ips|ipp|iph|io|iv|tw|en|erc|ix|w|qe|qc|csv|rv|lm|ss|bs|fs|fl|es|nr)) continue ;;
+      __fx_*|__fc<->|__fa<->|__fi<->_<->|__fish_(cs|ps|rc|nrc|nq|av|nav|srcfile|argv|argv_opts|argflags|ipf|ipf<->|ips|ipp|iph|io|iv|tw|en|erc|ix|w|qe|qc|csv|rv|lm|ss|bs|fs|fl|es|nr|incs)) continue ;;
       # every other `__` name is a user's (fish's own scripts set many), bar what this file made
       __fish_uvar_*|__fish_(bin|cache|config|data|help|man|sysconf|user_data)_dir) continue ;;
       __*) (( ${+__fish_internal[$__n]} )) && continue; [[ $__sc == l ]] && continue ;;

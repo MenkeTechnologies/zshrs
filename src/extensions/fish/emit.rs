@@ -623,7 +623,7 @@ impl Emitter {
         // `set x (cmd)` leaves the status of `cmd`, unless `set` itself fails
         // (`set`, builtins/set.rs:1046)
         // building word lists must not change the `$status` the command reads
-        let keeps_status = text.contains("$?") && !mine.iter().any(|h| h.contains("$("));
+        let keeps_status = text.contains("$?") && !mine.iter().any(|h| h.contains("$(") || h.contains("${ "));
         if sets_variable && keeps_status {
             format!(
                 "{{ __fish_ps=$?; {}; __fish_cs=$?; {{ {}; }} || __fish_cs=$?; __fish_ret $__fish_cs; }}",
@@ -1350,49 +1350,57 @@ impl Emitter {
             match d {
                 DPart::Lit(s) => out.push_str(&dq_escape(s)),
                 DPart::Var(v) => out.push_str(&self.var_join(v)),
-                DPart::Cmd(s) => out.push_str(&format!("$( {} )", self.script(s))),
+                DPart::Cmd(s) => out.push_str(&format!("${{{}}}", self.capture_trimmed(s))),
             }
         }
         out.push('"');
         out
     }
 
-    /// `(cmd)` as a word list: one word per output line, none for empty output.
-    fn cmd_list(&mut self, s: &Script, idx: Option<&[String]>) -> String {
-        // `(… | string collect)` is one word, newlines and all, even when empty
-        if idx.is_none() && ends_in_string_collect(s) {
-            return format!("\"$( {} )\"", self.script(s));
-        }
-        let inner = self.script(s);
+    /// Run `s` before the command, as fish runs a substitution: in this shell, in a block
+    /// of its own. A `cd`, a function variable or global it sets and a function it
+    /// defines all stay, while its `set -l` names do not (`body` gives it a scope frame).
+    /// Returns the variable that holds the output with an `x` after it, so no trailing
+    /// newline is lost; the status is the substitution's.
+    fn capture(&mut self, s: &Script) -> String {
+        let inner = self.body(s);
         self.hoist_id += 1;
         let v = format!("__fc{}", self.hoist_id);
-        // The output is captured with a trailing `x` so `$(…)` cannot strip its final
-        // newlines: fish drops only ONE trailing newline and keeps empty lines, so
-        // `(echo)` is one empty element and `(printf '')` is none.
-        let captured = format!("{v}=\"$( {inner}\n__fish_cs=$?; print -rn x; exit $__fish_cs )\"");
-        // fish runs a substitution in-process, so a function that sets a global keeps it:
-        // such a function (known by name) runs here with its output sent through a file
-        let global_setter = match s.as_slice() {
-            [Stmt { job: Job { cmds, negate: false, bg: false, timed: false, .. }, .. }] => match cmds.as_slice() {
-                [(Cmd::Simple { words, redirs }, _)] if redirs.is_empty() => words.first().and_then(Word::bare),
-                _ => None,
-            },
-            _ => None,
-        };
-        match global_setter {
-            // fish runs a substitution in this shell, so an `exit` or `return` in it ends the
-            // shell or the function (the output is still collected through a file)
-            _ if leaves_shell(&inner) => self.hoists.push(format!(
+        if leaves_shell(&inner) {
+            // an `exit` or `return` in it ends the shell or the function, which `return`
+            // inside `${ … }` would not: the output is collected through a file
+            self.hoists.push(format!(
                 "__fish_ipf{id}=$(mktemp \"${{TMPDIR:-/tmp}}/.zrcs.XXXXXX\"); {{ {inner}\n}} >$__fish_ipf{id}; __fish_ips=$?; IFS= read -rd '' {v} <$__fish_ipf{id}; {v}+=x; command rm -f $__fish_ipf{id}; (exit $__fish_ips)",
                 id = self.hoist_id
-            )),
-            Some(name) => self.hoists.push(format!(
-                "if __fish_inproc {q}; then __fish_ipf=$(mktemp \"${{TMPDIR:-/tmp}}/.zrcs.XXXXXX\"); {{ {inner}\n}} >$__fish_ipf; __fish_ips=$?; IFS= read -rd '' {v} <$__fish_ipf; {v}+=x; command rm -f $__fish_ipf; (exit $__fish_ips); else {captured}; fi",
-                q = quote_lit(name)
-            )),
-            None => self.hoists.push(captured),
+            ));
+        } else {
+            // `${ … }` captures without a subshell; its scope holds `__fish_incs`, which
+            // `status is-command-substitution` looks for (set from `$?`, which it keeps)
+            self.hoists.push(format!("{v}=${{ local __fish_incs=$?; __fish_ret $__fish_incs\n{inner}\n__fish_cs=$?; print -rn x; __fish_ret $__fish_cs }}"));
         }
+        v
+    }
+
+    /// [`capture`](Self::capture) for `"$(cmd)"` and an index `[(cmd)]`: one word, every
+    /// trailing newline dropped (fish `"[$(printf 'a\n\n')]"` is `[a]`).
+    fn capture_trimmed(&mut self, s: &Script) -> String {
+        let v = self.capture(s);
+        self.hoists.push(format!(
+            "{{ __fish_cs=$?; {v}=${{{v}%x}}; while [[ ${v} == *$'\\n' ]]; do {v}=${{{v}%$'\\n'}}; done; __fish_ret $__fish_cs; }}"
+        ));
+        v
+    }
+
+    /// `(cmd)` as a word list: one word per output line, none for empty output. fish
+    /// drops only ONE trailing newline and keeps empty lines, so `(echo)` is one empty
+    /// element and `(printf '')` is none.
+    fn cmd_list(&mut self, s: &Script, idx: Option<&[String]>) -> String {
+        let v = self.capture(s);
         let out = format!("${{{v}%x}}");
+        // `(… | string collect)` is one word, newlines and all, even when empty
+        if idx.is_none() && ends_in_string_collect(s) {
+            return format!("\"{out}\"");
+        }
         let list = format!("${{{out}:+\"${{(@f)${{{out}%$'\\n'}}}}\"}}");
         let Some(toks) = idx else { return list };
         // an index counts elements, so the list is made an array first
@@ -1429,13 +1437,7 @@ impl Emitter {
     fn index_operand(&mut self, t: &str) -> String {
         let inner = t.strip_prefix('(').and_then(|r| r.strip_suffix(')'));
         match inner.and_then(|i| super::parse::parse(i).ok()) {
-            Some(script) => {
-                let text = self.script(&script);
-                self.hoist_id += 1;
-                let v = format!("__fc{}", self.hoist_id);
-                self.hoists.push(format!("{v}=\"$( {text} )\""));
-                format!("${v}")
-            }
+            Some(script) => format!("${{{}}}", self.capture_trimmed(&script)),
             None => self.map_index_vars(t),
         }
     }

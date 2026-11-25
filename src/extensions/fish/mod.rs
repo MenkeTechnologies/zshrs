@@ -258,8 +258,15 @@ mod tests {
 
     #[test]
     fn command_substitution_splits_on_newlines() {
-        assert_eq!(t("echo (ls)"), "{ if __fish_inproc ls; then __fish_ipf=$(mktemp \"${TMPDIR:-/tmp}/.zrcs.XXXXXX\"); { ls\n} >$__fish_ipf; __fish_ips=$?; IFS= read -rd '' __fc1 <$__fish_ipf; __fc1+=x; command rm -f $__fish_ipf; (exit $__fish_ips); else __fc1=\"$( ls\n__fish_cs=$?; print -rn x; exit $__fish_cs )\"; fi; echo ${${__fc1%x}:+\"${(@f)${${__fc1%x}%$'\\n'}}\"}; }");
-        assert_eq!(t("echo \"$(ls)\""), "echo \"$( ls )\"");
+        // fish runs a substitution in this shell: `${ … }`, with the scoped marker
+        // `status is-command-substitution` reads
+        let run = "__fc1=${ local __fish_incs=$?; __fish_ret $__fish_incs\nls\n__fish_cs=$?; print -rn x; __fish_ret $__fish_cs }";
+        assert_eq!(t("echo (ls)"), format!("{{ {run}; echo ${{${{__fc1%x}}:+\"${{(@f)${{${{__fc1%x}}%$'\\n'}}}}\"}}; }}"));
+        // quoted: one word, every trailing newline dropped
+        assert_eq!(
+            t("echo \"$(ls)\""),
+            format!("{{ {run}; {{ __fish_cs=$?; __fc1=${{__fc1%x}}; while [[ $__fc1 == *$'\\n' ]]; do __fc1=${{__fc1%$'\\n'}}; done; __fish_ret $__fish_cs; }}; echo \"${{__fc1}}\"; }}")
+        );
     }
 
     #[test]
