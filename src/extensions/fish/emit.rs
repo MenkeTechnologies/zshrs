@@ -188,6 +188,14 @@ pub(super) fn path_kind(name: &str, explicit: Option<bool>) -> PathKind {
     }
 }
 
+/// Does translated text hold an `exit` or `return` command word?
+fn leaves_shell(text: &str) -> bool {
+    // (the capture code of a nested substitution ends with an `exit` of its own)
+    let text = text.replace("exit $__fish_cs", "").replace("exit $__fish_ips", "");
+    text.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '-'))
+        .any(|w| w == "exit" || w == "return")
+}
+
 /// A name usable as a zsh parameter, or `None` for things like `$1`.
 fn valid_param(name: &str) -> bool {
     !name.is_empty() && !name.chars().next().is_some_and(|c| c.is_ascii_digit())
@@ -1363,6 +1371,12 @@ impl Emitter {
             _ => None,
         };
         match global_setter {
+            // fish runs a substitution in this shell, so an `exit` or `return` in it ends the
+            // shell or the function (the output is still collected through a file)
+            _ if leaves_shell(&inner) => self.hoists.push(format!(
+                "__fish_ipf{id}=$(mktemp \"${{TMPDIR:-/tmp}}/.zrcs.XXXXXX\"); {{ {inner}\n}} >$__fish_ipf{id}; __fish_ips=$?; IFS= read -rd '' {v} <$__fish_ipf{id}; {v}+=x; command rm -f $__fish_ipf{id}; (exit $__fish_ips)",
+                id = self.hoist_id
+            )),
             Some(name) => self.hoists.push(format!(
                 "if __fish_inproc {q}; then __fish_ipf=$(mktemp \"${{TMPDIR:-/tmp}}/.zrcs.XXXXXX\"); {{ {inner}\n}} >$__fish_ipf; __fish_ips=$?; IFS= read -rd '' {v} <$__fish_ipf; {v}+=x; command rm -f $__fish_ipf; (exit $__fish_ips); else {captured}; fi",
                 q = quote_lit(name)
