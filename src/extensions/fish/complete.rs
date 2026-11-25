@@ -23,6 +23,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
+use super::pager;
+
 // ---------------------------------------------------------------------------
 // The definition store (fish `COMPLETION_MAP`, `WRAPPER_MAP`, tombstones).
 // ---------------------------------------------------------------------------
@@ -2231,16 +2233,7 @@ fn complete_dash_c(text: &str) -> Vec<Comp> {
     let mut comps: Vec<Comp> = ranked.into_iter().filter(|(r, _)| Some(*r) == best).map(|(_, c)| c).collect();
     // fish `sort_and_prioritize`: unique, then `-k` results first in their
     // own order, the rest in `wcsfilecmp` order
-    let mut seen = HashSet::new();
-    comps.retain(|c| seen.insert(c.word.clone()));
-    comps.sort_by(|a, b| match (a.keep, b.keep) {
-        (true, true) => std::cmp::Ordering::Equal,
-        (true, false) => std::cmp::Ordering::Less,
-        (false, true) => std::cmp::Ordering::Greater,
-        // fish stores a same-case prefix match as the text after what was
-        // typed and any other match as the whole word, and sorts on that
-        (false, false) => wcsfilecmp(sort_key(&lead, &a.word), sort_key(&lead, &b.word)),
-    });
+    sort_comps(&mut comps, &lead);
     // builtin complete.rs: a match is printed as the token it makes, unescaped
     // (#1127); a variable's match carries the token's quotes and backslashes
     // (`"a b$HOME`), which come off (`a b$HOME`)
@@ -2250,6 +2243,22 @@ fn complete_dash_c(text: &str) -> Vec<Comp> {
         }
     }
     comps
+}
+
+/// fish `sort_and_prioritize`: unique, then `-k` results first in their own
+/// order, the rest in `wcsfilecmp` order. `lead` is what a match that keeps
+/// what was typed starts with.
+fn sort_comps(comps: &mut Vec<Comp>, lead: &str) {
+    let mut seen = HashSet::new();
+    comps.retain(|c| seen.insert(c.word.clone()));
+    comps.sort_by(|a, b| match (a.keep, b.keep) {
+        (true, true) => std::cmp::Ordering::Equal,
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        // fish stores a same-case prefix match as the text after what was
+        // typed and any other match as the whole word, and sorts on that
+        (false, false) => wcsfilecmp(sort_key(lead, &a.word), sort_key(lead, &b.word)),
+    });
 }
 
 /// What fish keeps as the completion text: the rest of the word after a
@@ -3387,22 +3396,40 @@ pub fn commandline_read(args: &[String], buffer: &str, cursor: usize) -> i32 {
 /// (descriptions), `__fish_cs` (`1` = no space after), `__fish_ce` (the
 /// word escaped as fish inserts it, set only when zsh would quote it otherwise), `__fish_cf` (`1` =
 /// files too), `__fish_ck` (`1` = keep the order), `__fish_ct` (the word as
-/// typed), `__fish_cqt` (the quote the word left open). Status 1 when no fish definition covers the command.
+/// typed), `__fish_cqt` (the quote the word left open), and for fish's pager
+/// `__fish_cdisp` (each match's cell, empty when it is not listed), `__fish_crows`
+/// (the rows shown) and `__fish_cmore` (the line under the list). `-D` / `-M`
+/// before `--`: the list after a second TAB / while selecting in it. Status 1
+/// when no fish definition covers the command.
 fn query_cmd(argv: &[String]) -> i32 {
-    let text = argv.iter().skip(1).find(|a| *a != "--").cloned().unwrap_or_default();
+    // `-D`: the TAB after a list cut short; `-M`: selecting in the list
+    let opt = |o: &str| argv.iter().skip(1).take_while(|a| *a != "--").any(|a| a == o);
+    let disclosure = if opt("-M") {
+        pager::Disclosure::Selecting
+    } else if opt("-D") {
+        pager::Disclosure::Disclosed
+    } else {
+        pager::Disclosure::First
+    };
+    let text = argv.iter().skip(1).skip_while(|a| a.starts_with('-') && *a != "--").find(|a| *a != "--").cloned().unwrap_or_default();
     // (what is ranked, the whole word as typed, the completions)
+    // `raw`: the word as it is in the line; `lead`: what a match that keeps the
+    // word starts with (see [`sort_comps`])
     let mut raw = String::new();
+    let mut lead = None;
     let (typed, whole, mut ans) = match locate(&text) {
         Position::Argument(line) => {
             let Some(ans) = complete_argument(&line, &mut ShellEval) else {
                 return 1;
             };
             raw = line.cur_raw;
+            lead = Some(line.cur.clone());
             (line.cur, line.cur_wild, ans)
         }
         Position::Command(prefix) => {
             let typed = unescape(&prefix);
             let comps = command_names(&typed);
+            raw = prefix;
             (typed.clone(), typed, Answer { comps, ..Answer::default() })
         }
         Position::Variable { before, name } => {
@@ -3421,6 +3448,10 @@ fn query_cmd(argv: &[String]) -> i32 {
     let wild = whole.contains([ANY_STRING, BRACE_BEGIN]);
     let whole_wild = whole;
     let whole = wild_text(&whole_wild);
+    if raw.is_empty() {
+        raw = whole.clone();
+    }
+    let lead = lead.unwrap_or_else(|| whole.clone());
     // the files come from here too, ranked with the rest as fish does: zsh's
     // _files knows nothing of fuzzy directories (`s/e/f`), `--opt=` and
     // `foo:` separators, `cd`'s directories through $CDPATH, or keeping a
@@ -3433,6 +3464,7 @@ fn query_cmd(argv: &[String]) -> i32 {
     let best = ranks.iter().flatten().copied().min();
     let mut keep = ranks.iter().map(|r| r.is_some() && *r == best);
     ans.comps.retain(|_| keep.next().unwrap_or(false));
+    sort_comps(&mut ans.comps, &lead);
     // fish replaces the word when the best match is weaker than a prefix
     // (`-v` finding `--verbose`) or a word does not extend it (`s/e/f`)
     // fish `handle_completions` for several matches: none is inserted unless every
@@ -3493,6 +3525,47 @@ fn query_cmd(argv: &[String]) -> i32 {
     setsparam("__fish_cf", if ans.do_file { "1" } else { "0" });
     setsparam("__fish_ck", if ans.keep_order { "1" } else { "0" });
     setsparam("__fish_clist", if list_only { "1" } else { "0" });
+    // fish's pager (reader.rs `handle_completions`): a match that keeps the word
+    // shows the word as typed (shortened when long) and the rest; a match that
+    // replaces it shows itself, and is shown alone when others keep the word
+    let replacer: Vec<bool> = ans.comps.iter().map(|c| best.is_some_and(|b| b > PREFIX) || !extends(c)).collect();
+    let will_replace = replacer.iter().all(|&r| r);
+    let completion = |i: usize| -> &str { if replacer[i] { &ans.comps[i].word } else { &ans.comps[i].word[whole.len()..] } };
+    let wants_prefix = |i: usize| will_replace || !replacer[i];
+    let common = (0..ans.comps.len())
+        .filter(|&i| wants_prefix(i))
+        .map(completion)
+        .reduce(|a, b| {
+            let n = a.chars().zip(b.chars()).take_while(|(x, y)| x == y).map(|(x, _)| x.len_utf8()).sum();
+            &a[..n]
+        })
+        .unwrap_or("");
+    let use_prefix = all_prefix && common.chars().count() > if will_replace { raw.chars().count() } else { 0 };
+    let common = if use_prefix { common } else { "" };
+    let prefix = if will_replace && !use_prefix {
+        String::new()
+    } else {
+        pager::pager_prefix(&if will_replace { common.to_string() } else { format!("{raw}{common}") })
+    };
+    let items: Vec<pager::Item> = (0..ans.comps.len())
+        .map(|i| pager::Item {
+            text: if wants_prefix(i) {
+                format!("{prefix}{}", pager::escape_symbolic(&completion(i)[common.len()..]))
+            } else {
+                pager::escape_symbolic(&ans.comps[i].word)
+            },
+            desc: ans.comps[i].desc.clone(),
+        })
+        .collect();
+    // the pager has the terminal's rows less those of the prompt and the line
+    // (fish screen.rs `pager_available_height`)
+    let columns = crate::ported::utils::adjustcolumns();
+    let line_rows = crate::ported::zle::zle_refresh::NLNCT.load(std::sync::atomic::Ordering::Relaxed).max(1) as usize;
+    let rows = crate::ported::utils::adjustlines().saturating_sub(line_rows);
+    let page = pager::render(&items, &prefix, columns, rows, disclosure);
+    setaparam("__fish_cdisp", page.cells);
+    setsparam("__fish_crows", &page.rows.to_string());
+    setsparam("__fish_cmore", &page.progress);
     0
 }
 

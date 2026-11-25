@@ -2321,6 +2321,17 @@ pub fn compprintfmt(
                         m_field = Some(s);
                     }
                 }
+                // !!! RUST-ONLY — not in complist.c. `zshrs --fish`: fish's pager
+                // says which rows a scrolled list shows (pager.rs
+                // `completion_try_print`: `rows %u to %u of %u`); the preamble's
+                // `select-prompt` is `%r`. Elsewhere `%r` stays an unknown escape.
+                Some('r') if crate::extensions::emulation_startup::fish_mode() => {
+                    if stat {
+                        let first = MLBEG.load(Ordering::SeqCst).max(0);
+                        let last = MLEND.load(Ordering::SeqCst).min(nlines);
+                        m_field = Some(format!("rows {} to {} of {}", first + 1, last, nlines));
+                    }
+                }
                 Some(_) => {
                     let _ = arg;
                 } // c:other-escape

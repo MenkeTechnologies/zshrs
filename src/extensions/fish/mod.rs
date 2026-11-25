@@ -18,6 +18,7 @@
 pub mod builtins;
 pub mod complete;
 pub mod emit;
+pub mod pager;
 pub mod parse;
 pub mod setcmd;
 pub mod term;

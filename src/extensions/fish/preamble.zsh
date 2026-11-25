@@ -1526,6 +1526,9 @@ if [[ -o interactive ]]; then
   # selection without running the line (complist menu selection)
   zmodload zsh/complist
   zstyle ':completion:*' menu select
+  # a list taller than the terminal says which of its rows are shown, as
+  # fish's pager does (`%r` is `rows A to B of N` in --fish)
+  zstyle ':completion:*' select-prompt '%r'
   bindkey -M menuselect '^[[Z' reverse-menu-complete
   bindkey -M menuselect '^[' send-break
   # fish's escape is `cancel`: it closes the pager and drops the suggestion, and the line stays

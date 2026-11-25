@@ -10,13 +10,17 @@
 #     descriptions (commands, functions, builtins, abbreviations; `Variable:
 #     value`; `Home for user`).
 
+# the rows fish's pager shows, for the list zsh draws (calclist reads it on
+# every redraw); none until this completion lists something
+typeset -g __fish_pager_rows=0 __fish_pager_cut
 # where the cursor is (command word, argument, variable, user) is decided from
 # the fish text itself: zsh strips precommands (`command`, `builtin`, `exec`)
 # from $words, fish does not
 [[ $compstate[context] == (command|parameter|tilde) ]] || return 1
 
-local -a __fish_cw __fish_cd __fish_cs __fish_ce spaced bare escaped escaped_bare group replace close
-local __fish_cf __fish_ck __fish_cu __fish_cq __fish_clist __fish_ct __fish_cqt lead i w
+local -a __fish_cw __fish_cd __fish_cs __fish_ce __fish_cdisp replace close opts run_w run_d run_opts
+local __fish_cf __fish_ck __fish_cu __fish_cq __fish_clist __fish_ct __fish_cqt __fish_crows __fish_cmore
+local lead i w key prev disclose was_cut=$__fish_pager_cut
 local line=$LBUFFER raw=$words[CURRENT] bare_word
 
 # while completing, zsh takes a word's unclosed quote out of $LBUFFER
@@ -26,7 +30,13 @@ local line=$LBUFFER raw=$words[CURRENT] bare_word
 bare_word=${raw/[\"\']/}
 [[ $raw != $bare_word && $line != *$raw && $line == *$bare_word ]] && line=${line%$bare_word}$raw
 
-__fish_complete_query -- "$line" || return 1
+# the TAB after a list: fish shows all of a list it cut short (-D), and with
+# all of it shown selects in it (-M)
+if [[ $compstate[old_list] == shown ]]; then
+  [[ $was_cut == 1 ]] && disclose=-D || disclose=-M
+fi
+__fish_pager_cut=
+__fish_complete_query $disclose -- "$line" || return 1
 
 # compsys has moved `$`, `foo$` or `~` into $IPREFIX for a variable or a user
 # name; the query answers whole words, so the whole word is matched and, when
@@ -37,30 +47,6 @@ IPREFIX=
 # completes; that part stays in the line, so it comes off the matches
 [[ $PREFIX != $__fish_ct && $__fish_ct == *$PREFIX ]] && lead=${__fish_ct%$PREFIX}
 
-for (( i = 1; i <= $#__fish_cw; i++ )); do
-  w=$__fish_cw[i]
-  [[ -n $lead ]] && w=${w#$lead}
-  # inside quotes compsys has taken the opening quote off the word already
-  [[ -n $compstate[quote] ]] && w=${w#$compstate[quote]}
-  # _describe (compdescribe's rembslash) drops every backslash and splits
-  # at the first bare `:`, in the match and in its description alike
-  w=${${w//\\/\\\\}//:/\\:}
-  [[ -n $__fish_cd[i] ]] && w+=":${__fish_cd[i]//\\/\\\\}"
-  # a control character goes in as fish writes it (`\n`), not as zsh quotes it
-  if [[ -n $__fish_ce[i] && -z $compstate[quote] ]]; then
-    w=$__fish_ce[i]
-    [[ -n $lead ]] && w=${w#$lead}
-    w=${${w//\\/\\\\}//:/\\:}
-    [[ -n $__fish_cd[i] ]] && w+=":${__fish_cd[i]//\\/\\\\}"
-    [[ $__fish_cs[i] == 1 ]] && escaped_bare+=("$w") || escaped+=("$w")
-  elif [[ $__fish_cs[i] == 1 ]]; then
-    bare+=("$w")
-  else
-    spaced+=("$w")
-  fi
-done
-
-[[ $__fish_ck == 1 ]] && group=(-V) || group=(-J)
 # fish replaces the word when the best match is not a prefix of it
 [[ $__fish_cu == 1 ]] && replace=(-U)
 # a word through a variable (`$HOME/Doc`, `$HOM`) or a `~user` goes in as
@@ -70,13 +56,63 @@ done
 # zsh does that itself only for a quote it knows of ($compstate[quote]), not
 # one it put in $IPREFIX (`"$US`)
 [[ -n $__fish_cqt && -z $compstate[quote] && $__fish_cu != 1 ]] && close=(-S "$__fish_cqt ")
-(( $#spaced )) && _describe $group -t fish-completions completion spaced $replace $close
-(( $#bare )) && _describe $group -t fish-completions completion bare -S '' $replace
-(( $#escaped )) && _describe $group -t fish-completions completion escaped -Q ${replace:#-Q} $close
-(( $#escaped_bare )) && _describe $group -t fish-completions completion escaped_bare -S '' -Q ${replace:#-Q}
+
+# the matches go in fish's order (-V), each shown as its cell in fish's
+# pager (-d); one not listed (joined into another's cell, or in a row fish
+# has not disclosed) is hidden (-n) and, once the list is all shown, left
+# out, as fish's pager cannot select it. Consecutive matches taking the same
+# options go in together.
+_fish_complete_flush() {
+  (( $#run_w )) && compadd -V fish "${run_opts[@]}" -d run_d -a run_w
+  run_w=() run_d=()
+}
+for (( i = 1; i <= $#__fish_cw; i++ )); do
+  [[ -z $__fish_cdisp[i] && $disclose == -M ]] && continue
+  w=$__fish_cw[i]
+  opts=()
+  # a control character goes in as fish writes it (`\n`), not as zsh quotes it
+  if [[ -n $__fish_ce[i] && -z $compstate[quote] ]]; then
+    w=$__fish_ce[i]
+    opts=(-Q ${replace:#-Q})
+  else
+    opts=($replace)
+  fi
+  [[ -n $lead ]] && w=${w#$lead}
+  # inside quotes compsys has taken the opening quote off the word already
+  [[ -n $compstate[quote] && -z $__fish_ce[i] ]] && w=${w#$compstate[quote]}
+  # fish's space after a match stays whatever is typed next (`README.md |`);
+  # zsh's own suffix would give way to a blank, `|` or `;`
+  if [[ $__fish_cs[i] == 1 ]]; then
+    opts+=(-S '')
+  elif (( $#close )); then
+    opts+=($close)
+  else
+    opts+=(-S ' ')
+  fi
+  [[ -z $__fish_cdisp[i] ]] && opts+=(-n)
+  key=${(j: :)${(q)opts}}
+  [[ $key != $prev ]] && _fish_complete_flush
+  prev=$key run_opts=("${opts[@]}")
+  run_w+=("$w") run_d+=("${__fish_cdisp[i]:-$w}")
+done
+_fish_complete_flush
+unfunction _fish_complete_flush
+__fish_pager_rows=$__fish_crows
+# fish's line under a list cut short
+if [[ -n $__fish_cmore ]]; then
+  compadd -J fish-more -x "${__fish_cmore//\%/%%}"
+  [[ -z $disclose ]] && __fish_pager_cut=1
+fi
+# fish lists several matches also after putting in what they share
+(( $#__fish_cw > 1 )) && compstate[list]="list ${${=compstate[list]}:#(list|autolist|ambiguous)}"
 # fish only lists several matches that replace the word unless their common
 # prefix is longer than it; a second TAB, with that list shown, selects the
-# first match in the pager (zsh AUTO_MENU starts menu completion)
-[[ $__fish_clist == 1 && $compstate[old_list] != shown ]] && compstate[insert]=''
+# first match in the pager (zsh AUTO_MENU starts menu completion), or, when
+# the list was cut short, only shows all of it
+if [[ $compstate[old_list] == shown ]]; then
+  [[ $was_cut == 1 ]] && compstate[insert]=''
+elif [[ $__fish_clist == 1 ]]; then
+  compstate[insert]=''
+fi
 [[ $__fish_cf == 1 ]] && _files
 return 0

@@ -3042,6 +3042,38 @@ pub fn calclist(showall: i32) -> i32 {
         // densest tcols whose total width still fits zterm_columns.
         // Four sub-branches: {ylist, matches} × {ROWS, !ROWS}.
         for g in groups.iter_mut() {
+            // !!! RUST-ONLY — not in compresult.c. `zshrs --fish`: fish's pager
+            // lays out its own list (at most six columns, rows decided by
+            // fish's render loop, cells already padded to their columns —
+            // src/extensions/fish/pager.rs); zsh would fill as many columns as
+            // fit. The group of fish's matches takes fish's row count and
+            // column-major widths, as the packed pass below commits them.
+            if let Some(rows) = crate::fish::pager::forced_rows(g.name.as_deref()) {
+                let mut lens = Vec::new();
+                let mut p_idx = skipnolist(&g.matches, showall);
+                while p_idx < g.matches.len() {
+                    lens.push(mlens[g.matches[p_idx].gnum as usize]);
+                    let nxt = p_idx + 1;
+                    p_idx = if nxt >= g.matches.len() { g.matches.len() } else { nxt + skipnolist(&g.matches[nxt..], showall) };
+                }
+                if !lens.is_empty() {
+                    let rows = rows.min(lens.len()) as i32;
+                    let cols = (lens.len() as i32 + rows - 1) / rows;
+                    g.widths = vec![0i32; zterm_columns.max(cols) as usize];
+                    for (i, len) in lens.iter().enumerate() {
+                        let col = i as i32 / rows;
+                        let len = len + if col == cols - 1 { 0 } else { CM_SPACE };
+                        g.widths[col as usize] = g.widths[col as usize].max(len);
+                    }
+                    let width: i32 = g.widths.iter().sum();
+                    nlines += rows - g.lins;
+                    g.lins = rows;
+                    g.cols = cols;
+                    g.totl = width;
+                    max = max.max(width - CM_SPACE);
+                    continue;
+                }
+            }
             if (g.flags & CGF_PACKED) == 0 {
                 continue;
             } // c:1717-1718
@@ -3319,6 +3351,11 @@ pub fn calclist(showall: i32) -> i32 {
         // columns narrower than zsh's and, with several groups on screen,
         // out of alignment with each other.
         for g in groups.iter_mut() {
+            // !!! RUST-ONLY — `zshrs --fish`: fish's pager columns are as wide as
+            // their widest cell and no wider (see the packed pass above).
+            if crate::fish::pager::forced_rows(g.name.as_deref()).is_some() {
+                continue;
+            }
             if !g.widths.is_empty() {
                 // c:1890-1893 — `g->cols` is `tcols` from the packed pass,
                 // which the loop guarantees is >= 1, so the division is safe.
