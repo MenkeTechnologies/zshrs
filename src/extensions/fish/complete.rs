@@ -3546,6 +3546,14 @@ pub fn register_all() {
     crate::native_cmds::register("__fish_cmdline_read", |argv| {
         // __fish_cmdline_read BUFFER CURSOR ARGS…
         let buffer = argv.get(1).cloned().unwrap_or_default();
+        // (`-1`: no line editor and no completion running, so fish has no commandline to give)
+        if argv.get(2).is_some_and(|c| c == "-1") && transient().is_empty() {
+            if argv.iter().skip(3).any(|a| a == "-L") {
+                println!("1");
+                return settle(0);
+            }
+            return settle(1);
+        }
         let cursor = argv.get(2).and_then(|c| c.parse().ok()).unwrap_or(0);
         settle(commandline_read(argv.get(3..).unwrap_or(&[]), &buffer, cursor))
     });

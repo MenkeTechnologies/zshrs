@@ -191,7 +191,7 @@ __fish_set_list() {
       __fx_*) continue ;;
       # this function's own locals and the shell's scratch variables
       __sc|__nm|__ex|__lg|__n|__k|__line|__v|__t|__vals|__out|__in|__hasin|__virtual|__fn|__fv) continue ;;
-      __fx_*|__fc<->|__fa<->|__fi<->_<->|__fish_(cs|ps|rc|nrc|nq|av|nav|srcfile|argv|argv_opts|argflags|ipf|ipf<->|ips|ipp|iph|io|iv|tw|en|erc|ix|w|qe|qc|csv|rv|lm|ss|bs|fs|fl|es|nr|incs)) continue ;;
+      __fx_*|__fc<->|__fa<->|__fi<->_<->|__fish_(cs|ps|rc|nrc|nq|av|nav|srcfile|argv|argv_opts|argflags|ipf|ipf<->|ips|ipp|iph|hist_app|io|iv|tw|en|erc|ix|w|qe|qc|csv|rv|lm|ss|bs|fs|fl|es|nr|incs)) continue ;;
       # every other `__` name is a user's (fish's own scripts set many), bar what this file made
       __fish_uvar_*|__fish_(bin|cache|config|data|help|man|sysconf|user_data)_dir) continue ;;
       __*) (( ${+__fish_internal[$__n]} )) && continue; [[ $__sc == l ]] && continue ;;
@@ -1047,10 +1047,13 @@ __fish_history_print() {
   [[ ${(t)LV} == *export* ]] || local -x LV=-c
   print -rl -- "$@" | $pager
 }
+typeset -ga __fish_hist_app
 history() {
   local sub=${1-} term limit= mode=contains a k
   local -a newest=()
   for k in ${(kOn)history}; do newest+=("${history[$k]}"); done
+  # `history append` in a shell with no history list of its own (a script)
+  newest=("${(Oa@)__fish_hist_app}" "${(@)newest}")
   case $sub in
     search) shift
       while [[ ${1-} == -* ]]; do
@@ -1069,30 +1072,34 @@ history() {
       esac
       [[ -n $limit ]] && hits=(${hits[1,limit]})
       __fish_history_print "${hits[@]}" ;;
+    append) shift; __fish_hist_app+=("$*"); print -s -r -- "$*" 2>/dev/null; return 0 ;;
     save) builtin fc -W 2>/dev/null; return 0 ;;
-    merge) builtin fc -R 2>/dev/null; return 0 ;;
+    merge) [[ -o interactive ]] || { print -u2 -r -- "history: can't merge history in private mode"; return 2; }
+      builtin fc -R 2>/dev/null; return 0 ;;
     clear)
       __fish_history_delete --all
       builtin fc -p
       return 0 ;;
     delete) shift
-      local dmode=exact dterm
+      local dmode=exact dterm cs=
       local -a all=() keep=()
       while [[ ${1-} == -* ]]; do
         case $1 in
           -e|--exact) dmode=exact ;; -p|--prefix) dmode=prefix ;; -c|--contains) dmode=contains ;;
-          -C|--case-sensitive) ;;
+          -C|--case-sensitive) cs=1 ;;
         esac
         shift
       done
       dterm=${1-}
       [[ -n $dterm ]] || return 1
+      [[ $dmode == exact && -z $cs ]] && { print -u2 -r -- "builtin history delete --exact requires --case-sensitive"; return 0; }
       for k in ${(kon)history}; do all+=("${history[$k]}"); done
       case $dmode in
         exact) keep=("${(@)all:#${(b)dterm}}") ;;
         prefix) keep=("${(@)all:#${(b)dterm}*}") ;;
         *) keep=("${(@)all:#*${(b)dterm}*}") ;;
       esac
+      __fish_hist_app=("${(@)__fish_hist_app:#${(b)dterm}}")
       __fish_history_delete --$dmode "$dterm"
       builtin fc -p
       for k in "${keep[@]}"; do print -s -r -- "$k"; done
@@ -1170,14 +1177,14 @@ __fish_commandline() {
     a=$1; shift
     case $a in
       -f|--function) t=${__fish_widgets[$1]:-$1}; shift; zle $t 2>/dev/null; return 0 ;;
-      -r|--replace) BUFFER=${1-}; CURSOR=${#BUFFER}; return 0 ;;
-      -i|--insert) LBUFFER+=${1-}; return 0 ;;
-      -a|--append) RBUFFER+=${1-}; return 0 ;;
-      -C|--cursor) if (( $# )) && [[ $1 == <-> ]]; then CURSOR=$1; return 0; fi; reads+=($a) ;;
+      -r|--replace) [[ -o zle ]] || return 1; BUFFER=${1-}; CURSOR=${#BUFFER}; return 0 ;;
+      -i|--insert) [[ -o zle ]] || return 1; LBUFFER+=${1-}; return 0 ;;
+      -a|--append) [[ -o zle ]] || return 1; RBUFFER+=${1-}; return 0 ;;
+      -C|--cursor) if (( $# )) && [[ $1 == <-> ]]; then [[ -o zle ]] || return 1; CURSOR=$1; return 0; fi; reads+=($a) ;;
       *) reads+=($a) ;;
     esac
   done
-  __fish_cmdline_read "${BUFFER-}" "${CURSOR-0}" "${(@)reads}"
+  __fish_cmdline_read "${BUFFER-}" "${CURSOR--1}" "${(@)reads}"
 }
 typeset -gA __fish_events __fish_pathvars __fish_gset
 # fish local name -> zsh parameter, for code that names variables at run time (emit.rs `dynamic_names`)
@@ -1362,9 +1369,9 @@ __fish_argparse() {
   __fish_argv_opts=("${(@)opts}")
   return 0
 }
-fish_vi_key_bindings() { bindkey -v; return 0 }
-fish_default_key_bindings() { bindkey -e; return 0 }
-fish_hybrid_key_bindings() { bindkey -e; return 0 }
+fish_vi_key_bindings() { bindkey -v; typeset -g fish_key_bindings=fish_vi_key_bindings; return 0 }
+fish_default_key_bindings() { bindkey -e; typeset -g fish_key_bindings=fish_default_key_bindings; return 0 }
+fish_hybrid_key_bindings() { bindkey -e; typeset -g fish_key_bindings=fish_hybrid_key_bindings; return 0 }
 fish_config() { return 0 }
 # `complete` reached indirectly (`set c complete …; $c …`); a literal `complete`
 # word is rewritten to __fish_complete by the translator
