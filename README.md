@@ -1300,7 +1300,9 @@ zshrs --dump-plugins         # JSON dump of the plugins the last recorded
                              # recorder shard, so it is empty until one is
                              # ingested; feeds the IDE's External Libraries view
 zshrs --docs                 # the reference book: the zshrs manual,
-                             # the language reference (docs/reference.html)
+                             # the language reference (docs/reference.html;
+                             # not in a crates.io build, which
+                             # leaves it out for the size limit)
                              # and the whole zsh manual (every
                              # builtin, option, parameter, expansion,
                              # widget, completion style, module), paged in

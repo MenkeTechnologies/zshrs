@@ -27,10 +27,12 @@ exclude = [
     "/test_data/",
     "/test_corpus/",
     "/examples/",
-    # docs/ stays out of the PUBLISHED crate except the reference page
-    # `zshrs --docs` compiles in with include_str! (src/extensions/docs_book.rs).
+    # docs/ stays out of the PUBLISHED crate, reference.html included since
+    # 0.13.85 (10,499,308 bytes against crates.io's 10,485,760 ceiling).
+    # build.rs compiles it into `zshrs --docs` only when present, so a
+    # crates.io build's book has no language-reference part; git and
+    # Homebrew builds keep it.
     "/docs/*",
-    "!/docs/reference.html",
     "/editors/",
     "/scripts/",
     "/bench/",

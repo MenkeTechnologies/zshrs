@@ -37,6 +37,16 @@ fn main() {
     println!("cargo:rerun-if-changed=../strykelang/completions");
     bundle_zsh_functions();
     bundle_zsh_docs();
+    // docs/reference.html is compiled into the `zshrs --docs` book when it is
+    // present. The published crate leaves it out (crates.io's 10 MiB ceiling,
+    // 0.13.85), so a crates.io build's book has no language-reference part;
+    // git and Homebrew builds keep it. Same contract as the optional
+    // vendor/zsh trees in bundle_zsh_docs.
+    println!("cargo:rustc-check-cfg=cfg(zshrs_reference_html)");
+    println!("cargo:rerun-if-changed=docs/reference.html");
+    if manifest_dir.join("docs/reference.html").is_file() {
+        println!("cargo:rustc-cfg=zshrs_reference_html");
+    }
     println!("cargo:rerun-if-changed=src/zsh/Config/version.mk");
 
     // Parse `src/zsh/Config/version.mk` for VERSION + VERSION_DATE

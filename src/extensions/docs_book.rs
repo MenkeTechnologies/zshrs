@@ -9,7 +9,7 @@
 //!
 //! The book is the reference, not a second copy of it: zshrs's own pages
 //! (`man/man1/zshrs.1`, `zshrsall.1`), the language reference
-//! (`docs/reference.html`, compiled in) and every page of zsh's manual
+//! (`docs/reference.html`, compiled in when the build has it) and every page of zsh's manual
 //! (`vendor/zsh/man1`, read from `bundled_docs` in `zshall.1`'s order).
 //! Each man page and each reference part is a part, each `.SH` / `.SS`
 //! section or reference chapter a chapter, and each `.TP` item or reference
@@ -111,7 +111,9 @@ pub fn entries() -> Vec<Entry> {
         let (page, text) = pages.next().unwrap();
         out.extend(parse_man(&page, &text));
     }
-    out.extend(parse_reference_html(REFERENCE_HTML));
+    if let Some(html) = REFERENCE_HTML {
+        out.extend(parse_reference_html(html));
+    }
     for (page, text) in pages {
         out.extend(parse_man(&page, &text));
     }
@@ -119,8 +121,13 @@ pub fn entries() -> Vec<Entry> {
 }
 
 /// The language reference, `docs/reference.html`, compiled in so the book
-/// always matches the build.
-const REFERENCE_HTML: &str = include_str!("../../docs/reference.html");
+/// always matches the build. Absent from the published crate (crates.io's
+/// size ceiling): build.rs sets `zshrs_reference_html` only when the file is
+/// there, and without it the book has no language-reference part.
+#[cfg(zshrs_reference_html)]
+const REFERENCE_HTML: Option<&str> = Some(include_str!("../../docs/reference.html"));
+#[cfg(not(zshrs_reference_html))]
+const REFERENCE_HTML: Option<&str> = None;
 
 /// Split the reference page into topics: each `<section id="ch-…">` is a
 /// chapter (the numbered ones form the language part, the `ch-lsp-` ones the
