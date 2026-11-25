@@ -4818,6 +4818,12 @@ impl ZshCompiler {
                 || dispatch_first_raw == "compdef" || first_clean == "compdef"
                 || dispatch_first_raw == "compinit" || first_clean == "compinit")
             && crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed)
+            // `--fish` emulates fish, which has no zsh compinit to match:
+            // its preamble's compinit takes the native parallel scan. The
+            // upstream script reads and compdefs every fpath file in turn,
+            // which took over a minute on a 49k-file fpath.
+            && !(crate::extensions::emulation_startup::fish_mode()
+                && (first_clean == "compinit" || first_clean == "compdef"))
         {
             // c:Bug #504 — bash `mapfile`/`readarray`/`compopt` map to
             // dedicated fusevm opcodes (BUILTIN_MAPFILE, BUILTIN_COMPOPT)
