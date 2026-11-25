@@ -1031,8 +1031,26 @@ dirh() {
   done
   print
 }
+# fish lists its history newest first and, on a terminal, through a pager
+# (history.fish:75-99): __fish_anypager's choice of $PAGER when it exists, else
+# less, lv, most or more, with less told to act like cat when the list fits
+__fish_history_print() {
+  (( $# )) || return 0
+  if [[ ! -t 1 ]]; then print -rl -- "$@"; return 0; fi
+  local -a pager=(${(z)PAGER-})
+  local p
+  if [[ -z ${pager[1]-} ]] || (( ! $+commands[${pager[1]}] )); then
+    pager=(cat)
+    for p in less lv most more; do (( $+commands[$p] )) && { pager=($p); break }; done
+  fi
+  [[ ${(t)LESS} == *export* ]] || local -x LESS="--quit-if-one-screen --RAW-CONTROL-CHARS"
+  [[ ${(t)LV} == *export* ]] || local -x LV=-c
+  print -rl -- "$@" | $pager
+}
 history() {
-  local sub=${1-} term limit= mode=contains a
+  local sub=${1-} term limit= mode=contains a k
+  local -a newest=()
+  for k in ${(kOn)history}; do newest+=("${history[$k]}"); done
   case $sub in
     search) shift
       while [[ ${1-} == -* ]]; do
@@ -1045,12 +1063,12 @@ history() {
       term=${1-}
       local -a hits
       case $mode in
-        exact) hits=(${(M)${(Oa)history}:#${term}}) ;;
-        prefix) hits=(${(M)${(Oa)history}:#${term}*}) ;;
-        *) hits=(${(M)${(Oa)history}:#*${term}*}) ;;
+        exact) hits=(${(M)newest:#${(b)term}}) ;;
+        prefix) hits=(${(M)newest:#${(b)term}*}) ;;
+        *) hits=(${(M)newest:#*${(b)term}*}) ;;
       esac
       [[ -n $limit ]] && hits=(${hits[1,limit]})
-      (( ${#hits} )) && print -rl -- $hits ;;
+      __fish_history_print "${hits[@]}" ;;
     save) builtin fc -W 2>/dev/null; return 0 ;;
     merge) builtin fc -R 2>/dev/null; return 0 ;;
     clear)
@@ -1058,7 +1076,7 @@ history() {
       builtin fc -p
       return 0 ;;
     delete) shift
-      local dmode=exact dterm k
+      local dmode=exact dterm
       local -a all=() keep=()
       while [[ ${1-} == -* ]]; do
         case $1 in
@@ -1079,7 +1097,7 @@ history() {
       builtin fc -p
       for k in "${keep[@]}"; do print -s -r -- "$k"; done
       return 0 ;;
-    '') (( ${#history} )) && print -rl -- ${(Oa)history} ;;
+    '') __fish_history_print "${newest[@]}" ;;
   esac
   return 0
 }
@@ -1439,8 +1457,23 @@ if [[ -o interactive ]]; then
     fi
     __fish_write_title "$1"
   }
-  # back to the program name once the line is done, then the prompt's title
+  # back to the program name once the line is done, then the prompt's title.
+  # First fish's startup queries (once; fish/term.rs) and the line fish
+  # abandons before a prompt (screen.rs:695-739): a plain CR the first time;
+  # after a command the cursor shown again (reader.rs:894), then the
+  # PROMPT_SP mark, a dim ⏎ and spaces to the width, so output that did not
+  # end in a newline keeps its line, then CR, ⏎, a space, CR and a clear.
+  typeset -g __fish_prompted=0
   __fish_prompt_title() {
+    __fish_term_init
+    if (( __fish_prompted )); then
+      print -rn -- $'\e[?25h'
+      (( COLUMNS > 1 )) && printf '\e[2m⏎\e[m%*s' $(( COLUMNS - 1 )) ''
+      print -rn -- $'\r⏎ \r\e[K'
+    else
+      print -rn -- $'\r'
+      __fish_prompted=1
+    fi
     __fish_status_command=fish
     __fish_status_commandline=
     __fish_write_title
@@ -1486,6 +1519,16 @@ if [[ -o interactive ]]; then
   # fish's TAB completes; it never expands a variable or a wildcard in place
   bindkey -M emacs '^I' complete-word
   bindkey -M viins '^I' complete-word
+  # fish draws the line before a prompt itself (__fish_prompt_title): no zsh CR
+  # or PROMPT_SP mark
+  unsetopt prompt_cr prompt_sp
+  # the keypad in application mode (`\e=`, fish/term.rs) sends SS3 codes, which
+  # fish reads as the keys they stand for (input_common.rs parse_ss3)
+  for __n __v in p 0 q 1 r 2 s 3 t 4 u 5 v 6 w 7 x 8 y 9 j '*' k + l , m - n . o / X = M '^M'; do
+    bindkey -M emacs -s "^[O$__n" "$__v"
+    bindkey -M viins -s "^[O$__n" "$__v"
+  done
+  unset __v
   compdef _precommand and or not begin
 fi
 # the `__` names above are the shell's own; `set -n` lists none of them

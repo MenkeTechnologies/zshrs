@@ -155,7 +155,7 @@ pub const T_NEXT: u8 = 0x94; // c:54
 /// ```
 /// Sequence tags: DA 0xc0, COLOR 0xc1, KITTY 0xc2, TINFO 0xc3, XTID 0xc4,
 /// XTVER 0xc5 (c:78-83); `handle_query` receives them with `SEQ` masked off.
-static QUERY_STATES: &[u8] = b"\x1b\x80]1\x84;\x80rgb:\x85\x80\x85\x82\x80\x81\x81\x80\x86\x86\x82\x80\x81\x81/\x85\x80\x85\x82\x80\x81\x81\x80\x86\x86\x82\x80\x81\x81/\x85\x80\x85\x82\x80\x81\x81\x80\x86\x86\x82\x80\x81\x81\x82#\x85\x85\x94\x85\x85\x94\x85\x85\x81\x80\xc1\x92\x1b\x91\x5c\x82\xc1\x07\x81\x82P\x80>|\x88\x80\x89\x80\xc4\x92(\x82\xc4\x92 \x81\x88\x82\x89\x80)\x82\x80\x81\x81\x1b\xc5\x5c\x82\x87\x81\x83\x82\x800+r\x80524742\x82\x80\x81\x81\x1b\x91\x5c\x821+r524742=\x80\x86\x86\x81\x83\x1b\xc3\x5c\x81\x81\x82[?\x80\x84\x80;\x82\xc2u\x82\xc0c\x81\x81\x83\x81";
+pub(crate) static QUERY_STATES: &[u8] = b"\x1b\x80]1\x84;\x80rgb:\x85\x80\x85\x82\x80\x81\x81\x80\x86\x86\x82\x80\x81\x81/\x85\x80\x85\x82\x80\x81\x81\x80\x86\x86\x82\x80\x81\x81/\x85\x80\x85\x82\x80\x81\x81\x80\x86\x86\x82\x80\x81\x81\x82#\x85\x85\x94\x85\x85\x94\x85\x85\x81\x80\xc1\x92\x1b\x91\x5c\x82\xc1\x07\x81\x82P\x80>|\x88\x80\x89\x80\xc4\x92(\x82\xc4\x92 \x81\x88\x82\x89\x80)\x82\x80\x81\x81\x1b\xc5\x5c\x82\x87\x81\x83\x82\x800+r\x80524742\x82\x80\x81\x81\x1b\x91\x5c\x821+r524742=\x80\x86\x86\x81\x83\x1b\xc3\x5c\x81\x81\x82[?\x80\x84\x80;\x82\xc2u\x82\xc0c\x81\x81\x83\x81";
 
 /// Port of the `OSC52_STATES` table from `Src/Zle/termquery.c:122-126`,
 /// the automaton for an OSC 52 clipboard reply (CLIP = 0xc6, c:84):
@@ -582,10 +582,19 @@ pub fn probe_terminal(
         ungetbytes(&buf[..current]); // c:427
     }
 
+    // !!! RUST-ONLY: whether the read ended on the final reply (the device
+    // attributes `query_terminal` asks last) rather than a timeout or EOF;
+    // `--fish` stops waiting for replies a terminal does not send (fish/term.rs).
+    PROBE_ANSWERED.store(finish, std::sync::atomic::Ordering::Relaxed);
+
     if let Some(ti) = torig {
         crate::ported::utils::settyinfo(&ti); // c:429 `settyinfo(&torig);`
     }
 }
+
+/// !!! RUST-ONLY: set by [`probe_terminal`] when its last read ended on the
+/// final reply.
+pub(crate) static PROBE_ANSWERED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Port of `static unsigned memo_cursor` at `Src/Zle/termquery.c:435`.
 /// Caches the terminal's reported default cursor color (packed
@@ -1243,6 +1252,11 @@ pub fn start_edit() -> i32 {
 pub fn end_edit() -> i32 {
     // c:724
     collate_seq(1, -1); // c:726
+    // !!! RUST-ONLY: `--fish` turns off the keyboard protocols fish turned on
+    // for the edit (fish/term.rs `after_edit`).
+    if crate::extensions::emulation_startup::fish_mode() {
+        crate::fish::term::after_edit();
+    }
     0
 }
 
@@ -1275,19 +1289,14 @@ pub fn prompt_markers() -> [String; 4] {
     // `B` after it; collate_seq writes the `B`). fish puts nothing inside
     // the prompt text.
     if crate::extensions::emulation_startup::emulating() {
-        // `--fish` asks the terminal its name once, as fish 4.9.3 does at
-        // startup (XTVERSION ended by primary DA, skipped with the
-        // `query-term` feature off): a Konsole answer keeps the marks off
-        // (terminal.rs:182-195). Here, at the first prompt, rather than in
-        // query_terminal: ZLE is set up while the preamble runs, before
-        // `$fish_features` has been applied. The reply lands in `.term.id`.
-        static FISH_PROBE: std::sync::Once = std::sync::Once::new();
-        if crate::extensions::emulation_startup::fish_mode()
-            && crate::extensions::emulation_startup::fish_feature("query-term", true)
-        {
-            FISH_PROBE.call_once(|| {
-                probe_terminal("\x1b[>0q\x1b[0c", QUERY_STATES, handle_query, &mut None);
-            });
+        // `--fish` sends fish 4.9.3's startup queries once (fish/term.rs
+        // `init`, normally already run by the preamble's first prompt): the
+        // XTVERSION reply lands in `.term.id`, and a Konsole answer keeps the
+        // marks off (terminal.rs:182-195). Here, at the first prompt, rather
+        // than in query_terminal: ZLE is set up while the preamble runs,
+        // before `$fish_features` has been applied.
+        if crate::extensions::emulation_startup::fish_mode() {
+            crate::fish::term::init();
         }
         let pre = if crate::extensions::emulation_startup::emits_fish_marks() {
             "\x1b]133;A;click_events=1\x1b\\".to_string()

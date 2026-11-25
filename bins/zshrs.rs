@@ -1582,6 +1582,7 @@ pub fn zshrs_main() {
             if p == Personality::Fish {
                 zsh::fish::builtins::register_all();
                 zsh::fish::complete::register_all();
+                zsh::fish::term::register_all();
             }
             // The drop-in's option deltas on top of the shared `emulate`
             // preset. `parseopts_setemulate` re-applies them for the

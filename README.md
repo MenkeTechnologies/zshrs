@@ -930,6 +930,26 @@ so that a Konsole answer turns them off unless `omit-term-workarounds` is on.
 `$fish_features` is read at startup with fish's rules (`no-` prefixes, version
 groups such as `4.0`, `all`).
 
+The rest of the terminal traffic around a `--fish` prompt is fish 4.9.3's too.
+At startup it sends fish's queries (the kitty keyboard flags `\e[?u`,
+XTVERSION, the background colour, the `indn` and `query-os-name` XTGETTCAP
+capabilities, primary device attributes) and waits for the device attributes
+reply; with `query-term` off, `TERM=dumb`, under Midnight Commander or with
+stdout not a terminal it sends none. Before each prompt it asks for the
+background colour and the cursor position again, and while a line is edited
+it turns on bracketed paste, colour theme reports (`\e[?2031h`) and a keyboard
+protocol: the kitty protocol (`\e[=5u`) when the terminal answered the kitty
+query, otherwise xterm's modifyOtherKeys and the application keypad
+(`\e[>4;1m\e=`), with fish's exceptions for tmux, WezTerm, old iTerm2 and
+Midnight Commander. All of it is turned off again before the command runs. A
+key report in either protocol is read as the bytes the keymaps bind (kitty's
+`\e[99;5u` is Ctrl-C and interrupts the line), a report with no such bytes and
+the replies to the queries are dropped, and a reply still on its way when a
+line is accepted is read before the command runs. In place of zsh's
+`PROMPT_CR` and `PROMPT_SP` the line before a prompt is fish's: after a command
+whose output did not end in a newline, a dim `⏎` marks it and the prompt
+starts on the next line.
+
 Every other drop-in, `--zsh` included, writes none of them, because zsh 5.9,
 bash, ksh, dash and tcsh do not. Natively, `.term.extensions` switches them off
 as in zsh: `.term.extensions=(-integration)` for all of them, or one at a time
@@ -968,7 +988,7 @@ Control flow (`if`/`else if`, `while`, `for`, `switch`/`case`, `begin`, `functio
 
 Tab completion follows fish. An interactive `--fish` shell runs compsys (zshrs's own parallel `compinit`, not the zsh script, since fish has no compinit to match; dump at `$ZSHRS_HOME/fish.zcompdump`) with the `_fish_complete` completer ahead of `_complete`, so the argument of a command is completed from fish definitions: `complete` lines in `config.fish` and `conf.d`, `<cmd>.fish` autoloaded from `$fish_complete_path`, and the completion scripts fish ships, which fish 4 keeps inside its binary and which are read from an installed `fish` with `status get-file` and cached under `$ZSHRS_HOME/fish-data`. Functions those scripts call (`__fish_seen_subcommand_from`, `__fish_git_*`, ...) and functions in `$fish_function_path` autoload on first use. The matcher (`src/extensions/fish/complete.rs`) follows fish 4.9: short, long (`-l`) and old-style (`-o`) options, `-r`/`-x`/`-f`/`-F`/`-k`, `--wraps` chains, `-n` conditions and `-a` lists run in the current shell with `commandline` reporting the line being completed, `--opt=value`, fuzzy matching with fish's ranking (`-v` offers `--verbose`), and `complete -C` printing in fish's order. A command no fish definition covers gets zsh's completer for its arguments. The command word, `$variables` and `~user` complete as in fish too: executables, directories, functions (with their `--description`), builtins and abbreviations with fish's descriptions; every variable described `Variable: VALUE` with the value escaped as fish escapes it; `Home for USER`. A path whose directories do not exist as typed is matched a directory at a time, so `s/e/f` completes to `src/extensions/fish.rs`, and a path through a variable keeps the variable (`$HOME/Doc` → `$HOME/Documents/`). `cd` completes directories, through `$CDPATH`; a word with `=` or `:` (`--file=`, `a:b`) also completes files after the last one that is not backslashed or inside an open quote, below the option's own values; executables are described from the whatis database (`__fish_describe_command`); the files are fish's own, ranked with the other candidates, not zsh's `_files`. Wildcards (`*.m`, `s*/ext`), brace expansions (`{src,doc}`) and variables in a word (`"$HOME"`, `$PATH[1]/`) are expanded first and the results completed as fish completes them; `.` and `..` are offered once a dot is typed, the word after a redirection (`>`, `2>`, `<?`) completes files, a word in an unclosed quote (`"sp a`) completes as one word and the quote is closed after a finished match (`"$US` → `"$USER" `), a match goes in escaped as fish escapes it (a control character as `\n`, `\t`, `\cg`; a tab in a file name starts its description, as in fish), and nothing completes inside a comment. Completion works inside a fish `(…)` substitution and after `and`/`or`/`not`/`begin`. When TAB only lists the matches, the next TAB selects the first one in the list, as fish's pager does: TAB and the arrow keys move, Shift-TAB moves back, Enter takes the selection without running the line, and Escape puts back the word as typed. Without a `fish` on `PATH` only the directories on the search paths are used, and `-f` (fish's `--no-config`) leaves the search paths unset, as in fish.
 
-Known differences: `bind` maps keys onto zle widgets (fish function names, `ctrl-x`/`alt-x`/`-k up` key names, or a command string run as a widget) and `commandline` works inside such a widget; `set -U` variables are stored in fish's own `fish_variables` file (shared with fish itself), and other running shells pick changes up at their next prompt (an erased variable is not removed from a shell that already has it); `history` supports `search` (`-e`, `-p`, `-c`, `-n`), `save`, `merge` and the bare listing, not `delete` or `clear`; `string`/`math` follow fish 4.9 for the subcommands and options listed in `src/extensions/fish/builtins.rs`.
+Known differences: `bind` maps keys onto zle widgets (fish function names, `ctrl-x`/`alt-x`/`-k up` key names, or a command string run as a widget) and `commandline` works inside such a widget; `set -U` variables are stored in fish's own `fish_variables` file (shared with fish itself), and other running shells pick changes up at their next prompt (an erased variable is not removed from a shell that already has it); `history` keeps each line as typed (not its zsh translation), lists newest first, through a pager on a terminal as fish does, and supports `search` (`-e`, `-p`, `-c`, `-n`), `delete`, `clear`, `save` and `merge`; `string`/`math` follow fish 4.9 for the subcommands and options listed in `src/extensions/fish/builtins.rs`.
 
 ### Test corpus parity
 

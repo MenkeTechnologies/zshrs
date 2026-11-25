@@ -2215,7 +2215,35 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {
     // Until that path keeps `hptr` honest, taking the whole buffer is the
     // strictly safer divergence: it can only ever include MORE than C
     // would, and today `hptr == chline.len()` on every non-expansion line.
-    let chline_text = chline.lock().unwrap().clone();
+    let mut chline_text = chline.lock().unwrap().clone();
+    // !!! RUST-ONLY: `--fish` keeps the line as typed, not its zsh
+    // translation, once per typed line (emulation_startup.rs
+    // `fish_history_line`); its words are the typed line's blank-separated
+    // words. A later event of the same line keeps nothing.
+    let mut fish_words: Option<Vec<i16>> = None;
+    let mut fish_skip = false;
+    if crate::extensions::emulation_startup::fish_mode() {
+        match crate::extensions::emulation_startup::fish_history_line(&chline_text) {
+            Some(Some(typed)) => {
+                let mut spans = Vec::new();
+                let mut start = None;
+                for (i, c) in typed.char_indices().chain(std::iter::once((typed.len(), ' '))) {
+                    match (start, c.is_whitespace()) {
+                        (None, false) => start = Some(i),
+                        (Some(s), true) => {
+                            spans.extend([s, i].map(|o| i16::try_from(o).unwrap_or(i16::MAX)));
+                            start = None;
+                        }
+                        _ => {}
+                    }
+                }
+                fish_words = Some(spans);
+                chline_text = format!("{typed}\n");
+            }
+            Some(None) => fish_skip = true,
+            None => {}
+        }
+    }
     if !chline_text.is_empty() {
         // c:1515
         let save_errflag = errflag // c:1517
@@ -2293,6 +2321,10 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {
             // c:1550
             save = -1; // c:1551
         }
+    }
+    // (a later event of a typed `--fish` line; see above)
+    if fish_skip {
+        save = 0;
     }
     if (flag & (HISTFLAG_DONE | HISTFLAG_RECALL)) != 0 {
         // c:1553
@@ -2380,7 +2412,8 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {
             } else {
                 drop(words);
             }
-            if isset(HISTREDUCEBLANKS) {
+            // (not on a typed `--fish` line: `chwords` index its translation)
+            if isset(HISTREDUCEBLANKS) && fish_words.is_none() {
                 // c:1593
                 // C edits `chline` in place; `text` is this port's copy of
                 // it (with the trailing newline already dropped, c:1540),
@@ -2425,8 +2458,13 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
-        let cwp = chwordpos.load(SeqCst);
-        let chwords_snapshot: Vec<i16> = chwords.lock().unwrap().clone();
+        let mut cwp = chwordpos.load(SeqCst);
+        let mut chwords_snapshot: Vec<i16> = chwords.lock().unwrap().clone();
+        // (`--fish`: the words of the line as typed; see above)
+        if let Some(w) = fish_words.take() {
+            cwp = w.len() as _;
+            chwords_snapshot = w;
+        }
         let nwords = (cwp / 2) as i32;
         if let Some(0) = he_idx {
             // c:1609 reuse top

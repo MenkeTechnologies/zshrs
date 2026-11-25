@@ -1746,6 +1746,11 @@ pub fn zleread(
 
     // c:1349 — semantic prompt marker printed before first prompt
     // c:1350-1351 — `if (*markers) write_loop(2, *markers, strlen(*markers));`
+    // !!! RUST-ONLY: `--fish` writes fish's per-prompt terminal queries and
+    // turns its keyboard protocols on before the prompt (fish/term.rs).
+    if crate::extensions::emulation_startup::fish_mode() {
+        crate::fish::term::before_prompt(context == crate::ported::zsh_h::ZLCON_LINE_START);
+    }
     if !markers[0].is_empty() {
         let _ = crate::ported::utils::write_loop(2, markers[0].as_bytes());
     }
@@ -4090,6 +4095,33 @@ pub fn get_key_cmd() -> Option<(Option<Thingy>, Option<String>)> {
         if csi != 0 {
             // c:1648
             if kb[kl - 2] == crate::ported::zsh_h::Meta || kb[kl - 1] < 0x20 || kb[kl - 1] > 0x3f {
+                // !!! RUST-ONLY: `--fish` reads a complete CSI sequence no
+                // binding takes as fish does (fish/term.rs `csi_input`): a
+                // kitty or modifyOtherKeys key report goes back on the input
+                // as the legacy bytes the keymaps bind, and anything else (a
+                // query reply, a key with no binding) is dropped.
+                if crate::extensions::emulation_startup::fish_mode()
+                    && (0x40..=0x7e).contains(&kb[kl - 1])
+                    && last_match_len < buf.len()
+                {
+                    let keys = crate::fish::term::csi_input(&buf[csi_raw..]);
+                    buf.truncate(csi_raw - 2);
+                    // (a binding matched inside the sequence, `ESC` say, is
+                    // not one any more)
+                    if last_match_len > buf.len() {
+                        last_match = None;
+                        last_str = None;
+                        matched = false;
+                        last_match_len = 0;
+                        lastlen_meta = 0;
+                    }
+                    crate::ported::zle::zle_keymap::keybuf.lock().unwrap().truncate(csi - 2);
+                    crate::ported::zle::zle_keymap::keybuflen.store((csi - 2) as i32, SeqCst);
+                    ungetbytes(&keys);
+                    timeout = false;
+                    csi = 0;
+                    continue;
+                }
                 // c:1649-1650
                 // c:1651-1654 — "If we reach the end of a valid CSI sequence
                 // and the matched key binding is for part of the CSI

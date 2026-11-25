@@ -807,9 +807,41 @@ pub fn emits_fish_marks() -> bool {
 }
 
 /// The command line the next `OSC 133;C` and title report under `--fish`:
-/// the text as typed, recorded by `csh_line` once it translates (the history
-/// holds the translated zsh text). zsh's `mark_output` takes no command.
+/// the text as typed, recorded by `csh_line` once it translates. zsh's
+/// `mark_output` takes no command.
 pub static FISH_MARK_CMDLINE: Mutex<String> = Mutex::new(String::new());
+
+/// The line last typed at a `--fish` prompt and the part of its translation
+/// the history has not yet taken. fish records a line as typed, once: the
+/// translation the lexer reads (and `hend` would store) is zsh text, and one
+/// line can translate to several events.
+static FISH_HISTORY: Mutex<Option<FishHistory>> = Mutex::new(None);
+
+struct FishHistory {
+    typed: String,
+    rest: String,
+    stored: bool,
+}
+
+/// What `hend` stores for the history line `chline` under `--fish`:
+/// `Some(Some(typed))` for the first event of a typed line, `Some(None)` for
+/// a later event of the same line (nothing), `None` when `chline` is not
+/// from a typed line (stored as zsh would).
+pub fn fish_history_line(chline: &str) -> Option<Option<String>> {
+    let mut guard = FISH_HISTORY.lock().ok()?;
+    let h = guard.as_mut()?;
+    let Some(rest) = h.rest.strip_prefix(chline) else {
+        *guard = None;
+        return None;
+    };
+    h.rest = rest.to_string();
+    let first = !std::mem::replace(&mut h.stored, true);
+    let typed = first.then(|| h.typed.clone());
+    if h.rest.trim().is_empty() {
+        *guard = None;
+    }
+    Some(typed)
+}
 
 /// Set while a `--fish` command's `OSC 133;C` has no `D` yet. A line that
 /// ends the shell (`exit 3`) never reaches the post-command mark, and fish
@@ -1220,6 +1252,11 @@ pub fn csh_line(line: &str) -> Option<String> {
                 if fish_mode() && crate::ported::zsh_h::interact() {
                     if let Ok(mut typed) = FISH_MARK_CMDLINE.lock() {
                         typed.clone_from(&pending);
+                    }
+                    // (the lexer reads it with a newline at the end; input.rs)
+                    let rest = if text.ends_with('\n') { text.clone() } else { format!("{text}\n") };
+                    if let Ok(mut h) = FISH_HISTORY.lock() {
+                        *h = Some(FishHistory { typed: pending.clone(), rest, stored: false });
                     }
                 }
                 pending.clear();

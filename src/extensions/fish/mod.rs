@@ -20,6 +20,7 @@ pub mod complete;
 pub mod emit;
 pub mod parse;
 pub mod setcmd;
+pub mod term;
 
 /// zsh-side helpers the translated output relies on: the options fish's
 /// semantics need, `status`, `type`, `functions`, `set_color`, `source`/`eval`
