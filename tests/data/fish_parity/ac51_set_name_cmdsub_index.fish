@@ -1,0 +1,7 @@
+set -g a-b x; echo "st=$status"
+set -l 1a x; echo "st=$status"
+echo (seq 5)[0]; echo "st=$status"
+echo (seq 5)[a]; echo "st=$status"
+echo (seq 5)[1..0]; echo "st=$status"
+echo (seq 5)[6..4]; echo "st=$status"
+echo (seq 5)[2..3]; echo "st=$status"
