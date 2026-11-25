@@ -1369,6 +1369,15 @@ __fish_argparse() {
   __fish_argv_opts=("${(@)opts}")
   return 0
 }
+# fish's own answers when there is nothing to act on
+fg() {
+  [[ -o interactive ]] && (( $# || ${#jobstates} )) || { print -u2 -r -- 'fg: There are no suitable jobs'; return 2; }
+  builtin fg "$@"
+}
+vared() {
+  (( $# == 1 )) || { print -u2 -r -- "vared: Expected exactly one argument, got $#."; return 0; }
+  builtin vared "$@"
+}
 fish_vi_key_bindings() { bindkey -v; typeset -g fish_key_bindings=fish_vi_key_bindings; return 0 }
 fish_default_key_bindings() { bindkey -e; typeset -g fish_key_bindings=fish_default_key_bindings; return 0 }
 fish_hybrid_key_bindings() { bindkey -e; typeset -g fish_key_bindings=fish_hybrid_key_bindings; return 0 }
