@@ -1275,6 +1275,20 @@ pub fn prompt_markers() -> [String; 4] {
     // `B` after it; collate_seq writes the `B`). fish puts nothing inside
     // the prompt text.
     if crate::extensions::emulation_startup::emulating() {
+        // `--fish` asks the terminal its name once, as fish 4.9.3 does at
+        // startup (XTVERSION ended by primary DA, skipped with the
+        // `query-term` feature off): a Konsole answer keeps the marks off
+        // (terminal.rs:182-195). Here, at the first prompt, rather than in
+        // query_terminal: ZLE is set up while the preamble runs, before
+        // `$fish_features` has been applied. The reply lands in `.term.id`.
+        static FISH_PROBE: std::sync::Once = std::sync::Once::new();
+        if crate::extensions::emulation_startup::fish_mode()
+            && crate::extensions::emulation_startup::fish_feature("query-term", true)
+        {
+            FISH_PROBE.call_once(|| {
+                probe_terminal("\x1b[>0q\x1b[0c", QUERY_STATES, handle_query, &mut None);
+            });
+        }
         let pre = if crate::extensions::emulation_startup::emits_fish_marks() {
             "\x1b]133;A;click_events=1\x1b\\".to_string()
         } else {
@@ -1353,6 +1367,8 @@ pub fn mark_output(start: bool) {
     // and `D;<status>` (terminal.rs:211-226).
     if crate::extensions::emulation_startup::emulating() {
         if crate::extensions::emulation_startup::emits_fish_marks() {
+            // FISH_OUTPUT_OPEN: a line that exits the shell gets its `D` from zexit.
+            crate::extensions::emulation_startup::FISH_OUTPUT_OPEN.store(start, Ordering::Relaxed);
             let mark = if start {
                 let line = crate::extensions::emulation_startup::FISH_MARK_CMDLINE.lock().map(|l| l.clone()).unwrap_or_default();
                 format!("\x1b]133;C;cmdline_url={}\x1b\\", url_encode(&line))

@@ -94,21 +94,52 @@ __fish_index() {
   typeset -ga $__dest
   builtin eval "$__dest=(\"\${(@)__out}\")"
 }
+# fish's feature flags (fish 4.9.3 crates/feature-flags METADATA), in fish's order:
+# NAME GROUP READ-ONLY DESCRIPTION
+__fish_feature_meta=(
+  stderr-nocaret 3.0 1 '^ no longer redirects stderr (historical, can no longer be changed)'
+  qmark-noglob 3.0 0 '? no longer globs'
+  regex-easyesc 3.1 0 "string replace -r needs fewer \\'s"
+  ampersand-nobg-in-token 3.4 0 '& only backgrounds if followed by a separator'
+  remove-percent-self 4.0 0 '%self is no longer expanded (use $fish_pid)'
+  test-require-arg 4.0 0 'builtin test requires an argument'
+  mark-prompt 4.0 0 'write OSC 133 prompt markers to the terminal'
+  ignore-terminfo 4.1 1 'do not look up $TERM in terminfo database (historical, can no longer be changed)'
+  query-term 4.1 0 'query the TTY to enable extra functionality'
+  omit-term-workarounds 4.3 0 'skip workarounds for incompatible terminals'
+)
 typeset -gA __fish_feature_flags=(stderr-nocaret on qmark-noglob on regex-easyesc on ampersand-nobg-in-token on remove-percent-self off test-require-arg off mark-prompt on ignore-terminfo on query-term on omit-term-workarounds off)
 __fish_features() {
-  command cat <<'__FISH_EOF'
-stderr-nocaret          on  3.0 ^ no longer redirects stderr (historical, can no longer be changed)
-qmark-noglob            on  3.0 ? no longer globs
-regex-easyesc           on  3.1 string replace -r needs fewer \'s
-ampersand-nobg-in-token on  3.4 & only backgrounds if followed by a separator
-remove-percent-self     off 4.0 %self is no longer expanded (use $fish_pid)
-test-require-arg        off 4.0 builtin test requires an argument
-mark-prompt             on  4.0 write OSC 133 prompt markers to the terminal
-ignore-terminfo         on  4.1 do not look up $TERM in terminfo database (historical, can no longer be changed)
-query-term              on  4.1 query the TTY to enable extra functionality
-omit-term-workarounds   off 4.3 skip workarounds for incompatible terminals
-__FISH_EOF
+  local n g r d
+  for n g r d in "${__fish_feature_meta[@]}"; do
+    printf '%-23s %-3s %s %s\n' $n $__fish_feature_flags[$n] $g "$d"
+  done
 }
+# fish's set_from_string (feature-flags lib.rs:220-251): comma-separated entries,
+# `no-` inverts one, a name that is no feature is a group (`4.0`) or `all`, and a
+# read-only feature never changes; an unknown name is ignored
+__fish_features_apply() {
+  setopt localoptions extendedglob
+  local s e name val n g r d
+  for s; do
+    for e in ${(s:,:)s}; do
+      e=${${e##[[:space:]]#}%%[[:space:]]#}
+      [[ -n $e ]] || continue
+      if [[ $e == no-* ]]; then name=${e#no-} val=off; else name=$e val=on; fi
+      for n g r d in "${__fish_feature_meta[@]}"; do
+        if [[ -n ${__fish_feature_flags[$name]+x} ]]; then
+          [[ $n == $name && $r == 0 ]] && __fish_feature_flags[$n]=$val
+        elif [[ ( $g == $name || $name == all ) && $r == 0 ]]; then
+          __fish_feature_flags[$n]=$val
+        fi
+      done
+    done
+  done
+}
+# `status current-command` / `current-commandline`: the program name and nothing,
+# except while an interactive line runs (fish reader.rs:6398-6402, 6428-6438)
+__fish_status_command=fish
+__fish_status_commandline=
 status() {
   case ${1-} in
     is-interactive|-i|--is-interactive) [[ -o interactive ]] ;;
@@ -119,7 +150,8 @@ status() {
     features) __fish_features ;;
     test-feature) [[ -n ${__fish_feature_flags[$2]-} ]] || return 2; [[ ${__fish_feature_flags[$2]} == on ]] ;;
     filename|-f|--current-filename) print -r -- ${ZSH_ARGZERO:-Standard input} ;;
-    current-command) print -r -- ${funcstack[2]:-fish} ;;
+    current-command) print -r -- $__fish_status_command ;;
+    current-commandline) print -r -- $__fish_status_commandline ;;
     current-function|function) print -r -- ${funcstack[2]:-Not a function} ;;
     fish-path) print -r -- '@ZSHRS@' ;;
     current-line-number|line-number|-n) print -r -- $LINENO ;;
@@ -1333,6 +1365,8 @@ __fish_uvar_erase() {
   return 0
 }
 __fish_uvar_load
+# fish applies $fish_features once, at startup (fish.rs:469-473)
+__fish_features_apply "${fish_features[@]}"
 if [[ -o interactive ]]; then
   __fish_uvar_marker=${TMPDIR:-/tmp}/.fish_uvar.$$
   : > $__fish_uvar_marker
@@ -1343,9 +1377,51 @@ if [[ -o interactive ]]; then
   }
   __fish_uvar_cleanup() { command rm -f $__fish_uvar_marker }
   precmd_functions+=(__fish_uvar_sync)
-  # fish_title, when the user defines one, sets the terminal title before each prompt
-  __fish_title_hook() { (( $+functions[fish_title] )) && print -rn -- $'\e]0;'"$(fish_title)"$'\a'; return 0 }
-  precmd_functions+=(__fish_title_hook)
+  # The terminal title (fish reader.rs:5060-5137): fish_title's output lines run
+  # together, or fish's default `echo (status current-command) " " $PWD`, as OSC 0;
+  # fish_tab_title's as OSC 1; then SGR 0. Before a command ($1 = the line) a
+  # written title is followed by a carriage return.
+  __fish_write_title() {
+    local t w=
+    if (( $+functions[fish_title] )) || __fish_autoload_ok fish_title 2>/dev/null; then
+      t=${(j::)${(f)"$(fish_title ${1:+"$1"})"}}
+    else
+      t="$__fish_status_command   $PWD"
+    fi
+    [[ -n $t ]] && { print -rn -- $'\e]0;'"$t"$'\e\\'; w=1 }
+    if (( $+functions[fish_tab_title] )) || __fish_autoload_ok fish_tab_title 2>/dev/null; then
+      t=${(j::)${(f)"$(fish_tab_title ${1:+"$1"})"}}
+      [[ -n $t ]] && { print -rn -- $'\e]1;'"$t"$'\e\\'; w=1 }
+    fi
+    print -rn -- $'\e[m'
+    [[ -n $1 && -n $w ]] && print -rn -- $'\r'
+    return 0
+  }
+  # Run by the shell after the OSC 133;C mark of an interactive line, before the
+  # line runs (fish reader.rs:6398-6407): `status current-command` becomes the
+  # line's first word that is not an assignment (tok_command, tokenizer.rs:896 —
+  # nothing when a separator or redirection comes first), then the title.
+  __fish_command_begin() {
+    setopt localoptions extendedglob
+    local w first=
+    for w in ${(z)1}; do
+      [[ $w == [[:alpha:]_][[:alnum:]_]#=* ]] && continue
+      [[ $w == (\;|\||\|\||\&|\&\&|\&\||[0-9]#[\<\>]*|$'\n') ]] || first=$w
+      break
+    done
+    if [[ -n $first ]]; then
+      __fish_status_command=$first
+      __fish_status_commandline=$1
+    fi
+    __fish_write_title "$1"
+  }
+  # back to the program name once the line is done, then the prompt's title
+  __fish_prompt_title() {
+    __fish_status_command=fish
+    __fish_status_commandline=
+    __fish_write_title
+  }
+  precmd_functions+=(__fish_prompt_title)
   zshexit_functions+=(__fish_uvar_cleanup)
 fi
 umask=(${(l:4::0:)$(builtin umask)})

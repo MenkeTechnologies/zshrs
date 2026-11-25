@@ -16215,6 +16215,10 @@ pub fn zexit(val: i32, from_where: i32) {
         BREAKS.store(LOOPS.load(Relaxed), Relaxed);
         return;
     }
+    // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+    // `--fish`: a line that ends the shell never reaches its post-command
+    // OSC 133 mark; fish closes it with the exit status (reader.rs:884).
+    crate::extensions::emulation_startup::fish_close_output_mark(val);
     // c:6012 — `cleanfilelists();` — delete per-job temp-file lists
     // before exit. jobs.rs::cleanfilelists is a Rust-only-signature
     // adapter over the C global jobtab (see its WARNING block).

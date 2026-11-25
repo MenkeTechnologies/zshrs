@@ -772,23 +772,62 @@ pub fn emits_bracketed_paste() -> bool {
 /// so does fish 4.9.3 (screen.rs:1102). bash does not send one, and neither
 /// does zsh 5.9, so `--zsh` and the other drop-ins do not.
 pub fn emits_integration_prompt() -> bool {
-    !emulating() || personality() == Personality::Fish
+    !emulating() || emits_fish_marks()
+}
+
+/// Whether the `--fish` drop-in is running.
+pub fn fish_mode() -> bool {
+    emulating() && personality() == Personality::Fish
+}
+
+/// A fish feature flag (`status test-feature NAME`), from the preamble's
+/// `__fish_feature_flags`, which holds fish's defaults with `$fish_features`
+/// applied; `default` (fish's own default) before the preamble has run.
+pub fn fish_feature(name: &str, default: bool) -> bool {
+    let keys = crate::ported::params::gethkparam("__fish_feature_flags").unwrap_or_default();
+    let vals = crate::ported::params::gethparam("__fish_feature_flags").unwrap_or_default();
+    keys.iter()
+        .zip(&vals)
+        .find(|(k, _)| *k == name)
+        .map_or(default, |(_, v)| v == "on")
 }
 
 /// Whether `--fish` writes fish's own OSC 133 marks: `A;click_events=1`
 /// before the prompt, `C;cmdline_url=<line>` before a command and
-/// `D;<status>` after it (fish 4.9.3 terminal.rs:197-226). fish skips them
-/// when its `mark-prompt` feature is off or the terminal is Konsole
-/// (terminal.rs:182-195); `--fish` has no feature-flag store, so this is
-/// the personality test alone.
+/// `D;<status>` after it (fish 4.9.3 terminal.rs:197-226). fish leaves them
+/// out when its `mark-prompt` feature is off, or when the terminal answered
+/// XTVERSION as Konsole and `omit-term-workarounds` is off
+/// (terminal.rs:182-195 `want_to_mark_prompt`).
 pub fn emits_fish_marks() -> bool {
-    emulating() && personality() == Personality::Fish
+    if !fish_mode() || !fish_feature("mark-prompt", true) {
+        return false;
+    }
+    let konsole = crate::ported::params::getsparam(".term.id").as_deref() == Some("Konsole");
+    !konsole || fish_feature("omit-term-workarounds", false)
 }
 
-/// The command line the next `OSC 133;C` reports under `--fish`. zsh's
-/// `mark_output` takes no command, so the event loop stores it here just
-/// before `zleentry(ZLE_CMD_PREEXEC)`.
+/// The command line the next `OSC 133;C` and title report under `--fish`:
+/// the text as typed, recorded by `csh_line` once it translates (the history
+/// holds the translated zsh text). zsh's `mark_output` takes no command.
 pub static FISH_MARK_CMDLINE: Mutex<String> = Mutex::new(String::new());
+
+/// Set while a `--fish` command's `OSC 133;C` has no `D` yet. A line that
+/// ends the shell (`exit 3`) never reaches the post-command mark, and fish
+/// still closes it with the exit status (reader.rs:884), so `zexit` does.
+pub static FISH_OUTPUT_OPEN: AtomicBool = AtomicBool::new(false);
+
+/// Write the `--fish` end-of-output mark for a line that is ending the
+/// shell, when its start mark is still open.
+pub fn fish_close_output_mark(status: i32) {
+    if !FISH_OUTPUT_OPEN.swap(false, Ordering::Relaxed) {
+        return;
+    }
+    let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    if shtty >= 0 {
+        let mark = format!("\x1b]133;D;{status}\x1b\\");
+        let _ = crate::ported::utils::write_loop(shtty, mark.as_bytes());
+    }
+}
 
 /// ksh93 defines NO default aliases in the maintained line.
 ///
@@ -1177,6 +1216,12 @@ pub fn csh_line(line: &str) -> Option<String> {
         }
         match csh_input(&pending, translate_partial) {
             Ok(text) => {
+                // fish's OSC 133;C and title report the line as typed
+                if fish_mode() && crate::ported::zsh_h::interact() {
+                    if let Ok(mut typed) = FISH_MARK_CMDLINE.lock() {
+                        typed.clone_from(&pending);
+                    }
+                }
                 pending.clear();
                 Some(text)
             }

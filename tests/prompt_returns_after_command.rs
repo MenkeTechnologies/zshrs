@@ -33,6 +33,9 @@ fn zshrs_bin() -> PathBuf {
 }
 
 struct Session {
+    /// The terminal's XTVERSION answer (`\eP>|name version\e\\`), sent when
+    /// the shell asks; none by default, like a terminal that does not know it.
+    xtversion: &'static [u8],
     /// Closed FIRST on drop: a session leader cannot finish exiting while its
     /// terminal's output is still queued for a master nobody reads (macOS leaves the
     /// process in the exiting state for ever, and `wait` with it).
@@ -60,6 +63,11 @@ impl Session {
     /// They repaint on every key, which is slow in a debug build under load; the
     /// signal path under test does not depend on them, so most cases run without.
     fn start(home: &Path, fx: bool) -> Session {
+        Session::start_with(home, fx, &[])
+    }
+
+    /// `start`, with extra arguments for the shell (`--fish`).
+    fn start_with(home: &Path, fx: bool, args: &[&str]) -> Session {
         std::fs::create_dir_all(home).unwrap();
         std::fs::write(home.join(".zshrc"), format!("PS1='{PROMPT}'\nRPS1=\n")).unwrap();
         // The commands are written to the pty in one burst, not typed. Autopair
@@ -77,6 +85,7 @@ impl Session {
         assert_eq!(rc, 0, "openpty");
         let slave = unsafe { OwnedFd::from_raw_fd(slave) };
         let mut cmd = Command::new(zshrs_bin());
+        cmd.args(args);
         cmd.env_clear()
             .env("HOME", home)
             .env("ZSHRS_HOME", home.join(".zshrs"))
@@ -96,7 +105,7 @@ impl Session {
         }
         let child = cmd.spawn().expect("spawn zshrs");
         let master = unsafe { std::fs::File::from_raw_fd(master) };
-        Session { master: Some(master), child, seen: Vec::new() }
+        Session { xtversion: b"", master: Some(master), child, seen: Vec::new() }
     }
 
     fn prompts(&self) -> usize {
@@ -127,7 +136,10 @@ impl Session {
             for _ in 0..s.matches("\x1b[6n").count() {
                 let _ = self.master.as_mut().unwrap().write_all(b"\x1b[1;1R");
             }
-            if s.contains("\x1b[c") {
+            if s.contains("\x1b[>0q") {
+                let _ = self.master.as_mut().unwrap().write_all(self.xtversion);
+            }
+            if s.contains("\x1b[c") || s.contains("\x1b[0c") {
                 let _ = self.master.as_mut().unwrap().write_all(b"\x1b[?62;c");
             }
         }
@@ -357,7 +369,7 @@ fn monitor_in_a_non_interactive_shell_does_not_stop_children_on_a_tty() {
         });
     }
     let child = cmd.spawn().expect("spawn zshrs");
-    let mut s = Session { master: Some(unsafe { std::fs::File::from_raw_fd(master) }), child, seen: Vec::new() };
+    let mut s = Session { xtversion: b"", master: Some(unsafe { std::fs::File::from_raw_fd(master) }), child, seen: Vec::new() };
     assert!(s.pump(Duration::from_secs(20), |b| has(b, b"D42")), "`/usr/bin/true` never finished: …{:?}", s.tail());
 }
 
@@ -484,6 +496,80 @@ fn osc_133_marks_frame_the_prompt_and_each_command() {
         .copied()
         .collect();
     assert_eq!(&marks[..expected.len()], &expected[..], "all marks: {marks:?}");
+    drop(s);
+    let _ = std::fs::remove_dir_all(&h);
+}
+
+/// `--fish` writes fish 4.9.3's marks and titles (terminal.rs:197-226,
+/// reader.rs:868-884, 5060-5137, 6398-6407): `A;click_events=1` and `B`
+/// around the prompt; for a line, `C;cmdline_url=` with the line AS TYPED (the
+/// history holds its zsh translation), then the OSC 0 title with SGR 0 and a
+/// carriage return, then `D;<status>`; and a line that exits the shell still
+/// gets its `D` with the exit status. The session's PATH has no fish, whose
+/// embedded `fish_title` zshrs would load, so the title is fish's default
+/// `echo (status current-command) " " $PWD`: the line's first word, three
+/// spaces, the directory.
+#[test]
+fn fish_drop_in_marks_and_titles_each_line_like_fish() {
+    if !zshrs_bin().exists() {
+        eprintln!("skip: zshrs binary not built");
+        return;
+    }
+    let h = home("fishmarks", 0);
+    let _ = std::fs::remove_dir_all(&h);
+    let mut s = Session::start_with(&h, false, &["--fish"]);
+    let prompt_b = b"\x1b]133;A;click_events=1\x1b\\";
+    assert!(s.pump(Duration::from_secs(120), |b| has(b, prompt_b)), "no prompt mark: {:?}", s.tail());
+    s.master.as_mut().unwrap().write_all(b"false\r").unwrap();
+    assert!(s.pump(Duration::from_secs(30), |b| has(b, b"\x1b]133;D;1\x1b\\")), "no D;1: {:?}", s.tail());
+    s.master.as_mut().unwrap().write_all(b"echo $status\r").unwrap();
+    assert!(s.pump(Duration::from_secs(30), |b| has(b, b"\x1b]133;D;0\x1b\\")), "no D;0: {:?}", s.tail());
+    s.master.as_mut().unwrap().write_all(b"exit 3\r").unwrap();
+    assert!(s.pump(Duration::from_secs(30), |b| has(b, b"\x1b]133;D;3\x1b\\")), "no D;3: {:?}", s.tail());
+
+    // C, then the title, then D, for each line
+    let seen = s.seen.clone();
+    for (line, url, first, status) in [
+        ("false", "false", "false", 1),
+        ("echo $status", "echo%20%24status", "echo", 0),
+        ("exit 3", "exit%203", "exit", 3),
+    ] {
+        let c = find(&seen, format!("\x1b]133;C;cmdline_url={url}\x1b\\").as_bytes())
+            .unwrap_or_else(|| panic!("no C for {line:?}: {:?}", s.tail()));
+        let title = format!("\x1b]0;{first}   ");
+        let t = c + find(&seen[c..], title.as_bytes()).unwrap_or_else(|| panic!("no title after C for {line:?}"));
+        let after_title = &seen[t..];
+        let st = find(after_title, b"\x1b\\").unwrap();
+        assert!(after_title[st..].starts_with(b"\x1b\\\x1b[m\r"), "title not closed with SGR 0 + CR: {line:?}");
+        let d = find(&seen[t..], format!("\x1b]133;D;{status}\x1b\\").as_bytes());
+        assert!(d.is_some(), "no D;{status} after the title for {line:?}");
+    }
+    // the line `echo $status` reported the previous line's status
+    assert!(has(&seen, b"\x1b[m\r1\r\n"), "echo $status after false: {:?}", s.tail());
+    drop(s);
+    let _ = std::fs::remove_dir_all(&h);
+}
+
+/// fish writes no OSC 133 marks to a terminal that answers XTVERSION as
+/// Konsole (terminal.rs:182-195), but still sets the title.
+#[test]
+fn fish_drop_in_writes_no_marks_to_konsole() {
+    if !zshrs_bin().exists() {
+        eprintln!("skip: zshrs binary not built");
+        return;
+    }
+    let h = home("fishkonsole", 0);
+    let _ = std::fs::remove_dir_all(&h);
+    let mut s = Session::start_with(&h, false, &["--fish"]);
+    s.xtversion = b"\x1bP>|Konsole 23.08.5\x1b\\";
+    // fish_prompt's `> ` is drawn (cleared to the end of the line) once per prompt
+    let prompts = |b: &[u8]| b.windows(5).filter(|w| *w == b"> \x1b[K").count();
+    assert!(s.pump(Duration::from_secs(120), |b| prompts(b) >= 1), "no prompt: {:?}", s.tail());
+    s.master.as_mut().unwrap().write_all(b"false\r").unwrap();
+    let titled = s.pump(Duration::from_secs(30), |b| has(b, b"\x1b]0;false   "));
+    assert!(titled, "no command title: {:?}", s.tail());
+    assert!(s.pump(Duration::from_secs(30), |b| prompts(b) >= 2), "no second prompt: {:?}", s.tail());
+    assert!(!has(&s.seen, b"\x1b]133;"), "OSC 133 written to Konsole: {:?}", s.tail());
     drop(s);
     let _ = std::fs::remove_dir_all(&h);
 }

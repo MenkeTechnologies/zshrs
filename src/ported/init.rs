@@ -2604,27 +2604,23 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
             if toplevel != 0                                                 // c:216
                 && zle_load_state.load(Ordering::SeqCst) == 1
             {
-                // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
-                // `--fish` reports the command line in its OSC 133;C mark
-                // (emulation_startup::FISH_MARK_CMDLINE); C's mark_output
-                // takes none. It is the line as typed: the history entry
-                // preexec gets as `$1` (c:195-198), not the translated text.
-                if crate::extensions::emulation_startup::emits_fish_marks() {
-                    let typed = {
-                        let hr = crate::ported::hist::hist_ring.lock().unwrap();
-                        let cl = crate::ported::hist::curline.lock().unwrap();
-                        let same = cl.as_ref().map(|c| c.histnum).unwrap_or(0)
-                            == crate::ported::hist::curhist.load(Ordering::SeqCst);
-                        hr.first().filter(|_| same).map(|h| h.node.nam.clone()).unwrap_or_default()
-                    };
-                    if let Ok(mut line) = crate::extensions::emulation_startup::FISH_MARK_CMDLINE.lock() {
-                        *line = typed;
-                    }
-                }
+                let fish = crate::extensions::emulation_startup::fish_mode();
                 let _ = zleentry(
                     // c:217 ZLE_CMD_PREEXEC
                     ZLE_CMD_PREEXEC,
                 );
+                // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+                // fish, after the 133;C mark and before the line runs, sets
+                // `status current-command` and writes the terminal title
+                // (reader.rs:6398-6407): the preamble's __fish_command_begin.
+                if fish {
+                    let typed = crate::extensions::emulation_startup::FISH_MARK_CMDLINE
+                        .lock()
+                        .map(|l| l.clone())
+                        .unwrap_or_default();
+                    let args = ["__fish_command_begin".to_string(), typed];
+                    crate::ported::utils::callhookfunc("__fish_command_begin", Some(&args), 0, std::ptr::null_mut());
+                }
             }
             if STOPMSG.load(Ordering::SeqCst) != 0 {
                 // c:218
