@@ -1927,6 +1927,8 @@ pub(crate) struct FishData {
     extra_completions: String,
     extra_functions: String,
     files: HashSet<String>,
+    /// the same, in the order `status list-files` gives them
+    listed: Vec<String>,
 }
 
 fn env_dir(var: &str, fallback: &str) -> String {
@@ -2026,6 +2028,7 @@ pub(crate) fn fish_data() -> Option<&'static FishData> {
         }
         let extra_completions = lines.next()?.to_string();
         let extra_functions = lines.next()?.to_string();
+        let listed: Vec<String> = lines.map(str::to_string).collect();
         Some(FishData {
             exe,
             cache,
@@ -2033,7 +2036,8 @@ pub(crate) fn fish_data() -> Option<&'static FishData> {
             dirs,
             extra_completions,
             extra_functions,
-            files: lines.map(str::to_string).collect(),
+            files: listed.iter().cloned().collect(),
+            listed,
         })
     })()?;
     Some(DATA.get_or_init(|| found))
@@ -2042,17 +2046,55 @@ pub(crate) fn fish_data() -> Option<&'static FishData> {
 /// A script fish carries inside its binary (`completions/git.fish`), read once
 /// with `status get-file` and kept in the cache.
 fn embedded(rel: &str) -> Option<String> {
+    embedded_bytes(rel).map(|b| String::from_utf8_lossy(&b).into_owned())
+}
+
+/// [`embedded`] as the bytes fish holds (`tools/web_config/favicon.png`).
+fn embedded_bytes(rel: &str) -> Option<Vec<u8>> {
     let d = fish_data()?;
     if !d.files.contains(rel) {
         return None;
     }
     let path = d.cache.join(rel);
-    if let Ok(t) = std::fs::read_to_string(&path) {
-        return Some(t);
+    if let Ok(b) = std::fs::read(&path) {
+        return Some(b);
     }
     let out = run_fish(&d.exe, &["status get-file $argv[1]", rel])?;
     write_atomic(&path, &out);
-    Some(String::from_utf8_lossy(&out).into_owned())
+    Some(out)
+}
+
+/// `__fish_status_file get-file REL` / `__fish_status_file list-files [PREFIX…]`:
+/// fish `status get-file` / `status list-files`, the files fish carries inside
+/// its binary. get-file prints one (status 1, silently, when there is no such
+/// file); list-files prints every path that starts with one of the prefixes
+/// (all of them without one), in fish's order, status 1 when none does.
+fn status_file(argv: &[String]) -> i32 {
+    use std::io::Write;
+    let listed = fish_data().map_or(&[][..], |d| &d.listed[..]);
+    match (argv.get(1).map(String::as_str), argv.get(2..).unwrap_or(&[])) {
+        (Some("get-file"), [rel]) => match embedded_bytes(rel) {
+            Some(b) => {
+                let _ = std::io::stdout().write_all(&b);
+                0
+            }
+            None => 1,
+        },
+        (Some("get-file"), args) => {
+            eprintln!("status get-file: expected 1 arguments; got {}", args.len());
+            2
+        }
+        (Some("list-files"), prefixes) => {
+            let mut out = String::new();
+            for f in listed.iter().filter(|f| prefixes.is_empty() || prefixes.iter().any(|p| f.starts_with(p.as_str()))) {
+                out.push_str(f);
+                out.push('\n');
+            }
+            let _ = std::io::stdout().write_all(out.as_bytes());
+            i32::from(out.is_empty())
+        }
+        _ => 2,
+    }
 }
 
 /// fish's default `fish_function_path` / `fish_complete_path` (share/config.fish).
@@ -2894,11 +2936,15 @@ fn param_complete(raw: &str, cd: bool, reader: bool) -> Vec<Comp> {
     }
     if let Some(i) = sep {
         let before = unescape(&raw[..=i]);
-        out.extend(param_files(&unescape_wild(&raw[i + 1..]), cd, reader).into_iter().map(|mut c| {
+        let (whole, after) = (unescape(raw), unescape(&raw[i + 1..]));
+        out.extend(param_files(&unescape_wild(&raw[i + 1..]), cd, reader).into_iter().filter_map(|mut c| {
+            // ranked as fish ranks it: against the text after the separator
+            // (`cd x=R` finds `x=src/` by a case-insensitive substring)
+            c.rank_floor = rank_of(&after, &c)?;
+            c.matched_as = Some(whole.clone());
             c.word = format!("{before}{}", c.word);
-            c.matched_as = c.matched_as.map(|m| format!("{before}{m}"));
             c.from_separator = true;
-            c
+            Some(c)
         }));
     }
     out
@@ -3487,6 +3533,7 @@ pub fn register_all() {
         print!("{out}");
         0
     });
+    crate::native_cmds::register("__fish_status_file", |argv| settle(status_file(argv)));
     crate::native_cmds::register("__fish_builtin_names", |_| {
         let mut out = String::new();
         for (n, _) in FISH_BUILTINS {

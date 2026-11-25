@@ -75,7 +75,8 @@ done
 (( $#escaped )) && _describe $group -t fish-completions completion escaped -Q ${replace:#-Q} $close
 (( $#escaped_bare )) && _describe $group -t fish-completions completion escaped_bare -S '' -Q ${replace:#-Q}
 # fish only lists several matches that replace the word unless their common
-# prefix is longer than it
-[[ $__fish_clist == 1 ]] && compstate[insert]=''
+# prefix is longer than it; a second TAB, with that list shown, selects the
+# first match in the pager (zsh AUTO_MENU starts menu completion)
+[[ $__fish_clist == 1 && $compstate[old_list] != shown ]] && compstate[insert]=''
 [[ $__fish_cf == 1 ]] && _files
 return 0

@@ -303,6 +303,7 @@ complete -C 'echo --f=zqf'
 complete -C "echo --f='zqf"
 complete -C 'echo a\=zqf'
 complete -C 'echo a:zqf'
+complete -C 'cd x=Q'
 function zqfd -d 'zq desc'; end
 complete -C zqfd
 function zqp; end
