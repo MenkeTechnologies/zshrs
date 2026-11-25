@@ -802,9 +802,13 @@ impl Emitter {
         targets.extend(names[1..].iter().cloned());
         // (a group, so the declarations travel with the read when it is a pipeline's last stage)
         let group = |text: String| if pre.is_empty() { text } else { format!("{{ {text}; }}") };
+        // fish's status is 0 whenever anything was read, even when the input ended without
+        // its terminator (zsh says 1 there)
+        let seen = format!("{{ {{}}; __fish_rrc=$?; (( __fish_rrc == 1 && ${{#{}}} )) && __fish_rrc=0; (exit $__fish_rrc); }}", names[0]);
+        let ok = |text: String| seen.replacen("{}", &text, 1);
         if as_list {
             let ifs = delim.map_or(String::new(), |d| format!("IFS={d} "));
-            return group(format!("{pre}{ifs}builtin read {flags}A {}", targets.join(" ")));
+            return ok(group(format!("{pre}{ifs}builtin read {flags}A {}", targets.join(" "))));
         }
         // one variable takes the whole line, as fish does; several split on IFS
         let ifs = match (&delim, names.len()) {
@@ -812,7 +816,7 @@ impl Emitter {
             (Some(d), _) => format!("IFS={d} "),
             _ => String::new(),
         };
-        group(format!("{pre}{ifs}builtin read {flags} {}", targets.join(" ")))
+        ok(group(format!("{pre}{ifs}builtin read {flags} {}", targets.join(" "))))
     }
 
     /// `alias name 'command args'` / `alias name=command`: a function, as in fish.

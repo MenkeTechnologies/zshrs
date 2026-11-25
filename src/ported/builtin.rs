@@ -18365,17 +18365,6 @@ pub fn bin_read(
         // Lossless, for the same reason as the `-k` arm: the bytes this loop
         // preserved on purpose must survive the String conversion.
         buf = crate::script_bytes::decode_script_bytes(&buf_bytes);
-        // c:Src/builtin.c:6418 — `read -d ''` (NUL delimiter) strips
-        // trailing newlines from the captured content. This matches
-        // the `find -print0 | while read -d ''` idiom which expects
-        // path entries without trailing whitespace. zsh's read body
-        // applies this trim only for the empty-delim case; non-empty
-        // delimiters keep the raw bytes.
-        if arg.is_empty() {
-            while buf.ends_with('\n') {
-                buf.pop();
-            }
-        }
         // c:7107 + c:7116-7122 — C assigns the parameter FIRST (`setsparam(reply,
         // buf)`) and only then returns 1 if the loop ended at EOF. So an
         // unterminated record still lands in the variable but reports failure:
