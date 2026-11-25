@@ -30,23 +30,22 @@ thread_local! {
     // c:733 — `static unsigned int aid = 0;` file-static in prompt_markers.
     static AID: Cell<u32> = const { Cell::new(0) };
     // c:734 — `static char pre[] = "\033]133;A;cl=m;aid=zZZZZZZ\033\\";`
-    //          26-byte mutable buffer; bytes [13..19] are the AID
-    //          placeholder ("zZZZZZ" — note the leading 'z' at offset 13
-    //          stays put; the next 6 bytes "ZZZZZZ" get overwritten).
-    //          Index check: "\033]133;A;cl=m;aid=" = 1+1+5+1+5+1+3+1 = 17
-    //          chars to and including '='. `pre + 13` lands inside
-    //          "...;aid=" so the 6 overwritten bytes are right after the
-    //          '=' (positions 17..23). Cross-check with C: `pre[13]` is
-    //          the second char of ";aid=z..." which is the 'a' of "aid"?
-    //          No — `;cl=m;aid=` starts at offset 8 ("\033]133;A;" is 8
-    //          chars: ESC ] 1 3 3 ; A ;). So pre[13] points 5 bytes into
-    //          ";cl=m;aid=" → 'm'. That's the '=' after `cl=`? Off-by-
-    //          one analysis is fiddly; trust the C arithmetic and copy
-    //          6 bytes at offset 13.
+    //          The "before the prompt" mark, with the shell's id spliced
+    //          in by prompt_markers (see the aid note there).
     static PRE_BUFFER: RefCell<Vec<u8>> = RefCell::new(
         b"\x1b]133;A;cl=m;aid=zZZZZZZ\x1b\\".to_vec()
     );
 }
+
+/// ZSHRS-ONLY. Offset of the 6 id bytes inside `PRE_BUFFER`.
+///
+/// C copies them to `pre + 13` (termquery.c:752), but byte 13 of
+/// `ESC ] 1 3 3 ; A ; c l = m ; a i d = z Z…` is the `a` of `aid=`: the
+/// copy overwrites the key, and zsh writes `\e]133;A;cl=m;V8b0DQZZZZZ`
+/// (measured from the zsh-5.9.0.3-test-476 oracle under a pty). The id
+/// belongs after `aid=`, at 17, replacing the `zZZZZZ` placeholder and
+/// leaving the final `Z` — a well-formed `aid=V8b0DQZ`.
+const PRE_AID_OFFSET: usize = 17;
 
 // `TermCapabilities` deleted — Rust-only struct with no C
 // counterpart. The C source publishes discovered capabilities by
@@ -1070,17 +1069,18 @@ pub fn extension_enabled(class: &str, ext: &str, def: bool) -> bool {
             Some(rest) => (true, rest),
             None => (false, e.as_str()),
         };
-        // c:687-688 — `if (strncmp(*e + negate, class, clen)) continue;`
+        // c:670-671 — `if (strncmp(*e + negate, prefix, plen)) continue;`
         if !body.starts_with(class) {
             continue;
         }
-        // c:690 — after the class prefix, either string end (whole-
-        //          class match) or `:ext` (specific-extension match).
+        // c:673-675 — after the prefix, either string end (whole-class
+        //          match) or `-ext` (one extension: `integration-pwd`, the
+        //          names Doc/Zsh/zle.yo:2665-2680 documents).
         let after = &body[class.len()..];
         if after.is_empty() {
             return !negate;
         }
-        if let Some(rest) = after.strip_prefix(':') {
+        if let Some(rest) = after.strip_prefix('-') {
             if rest == ext {
                 return !negate;
             }
@@ -1175,8 +1175,7 @@ pub fn collate_seq(sindex: usize, dir: i32) {
         // zshrs mode keeps the marker.
         if enabled
             && key == "integration-prompt"
-            && (crate::extensions::emulation_startup::emulating()
-                || !crate::extensions::emulation_startup::emits_integration_prompt())
+            && !crate::extensions::emulation_startup::emits_integration_prompt()
         {
             enabled = false;
         }
@@ -1248,31 +1247,45 @@ pub fn end_edit() -> i32 {
 }
 
 /// Direct port of `const char **prompt_markers(void)` from
-/// `Src/Zle/termquery.c:731`. Returns the three FinalTerm OSC 133
-/// prompt-region markers (PR=primary/PS1, SE=secondary/PS2,
-/// RI=right/RPS1+RPS2). Gated on the `integration:prompt` extension
-/// toggle. When disabled, returns three empty strings (analog of
-/// C's 4-NULL `nomark`).
+/// `Src/Zle/termquery.c:731`. Returns C's four-slot `markers` array:
+/// `[pre, PR, SE, RI]` — the FinalTerm OSC 133 "before the prompt" mark
+/// (written to fd 2 by zleread, zle_main.c:1350) and the prompt-region
+/// marks promptexpand puts in front of PS1, PS2 and RPS1/RPS2. Gated on
+/// the `integration-prompt` extension toggle. When disabled, returns four
+/// empty strings (analog of C's 4-NULL `nomark`).
 ///
 /// C has a file-static mutable buffer `pre` ("before prompt" OSC 133;A
 /// template) and a file-static `aid` (per-shell hash). On first call
 /// while enabled, C computes `aid = hasher(HOST) ^ pid`, base64-encodes
 /// the 4 bytes of `aid` (8 chars), and memcpy's the first 6 chars into
-/// `pre[13..19]` (replacing the `ZZZZZZ` placeholder). The mutated
+/// `pre + 13` (zshrs splices at `PRE_AID_OFFSET`, see there). The mutated
 /// `pre` is private to this translation unit; Rust mirrors with
 /// thread-locals `AID` and `PRE_BUFFER` so the side effect is
 /// observable from within the same module while staying invisible to
 /// outside callers (matching the C file-static scope).
 /// WARNING: signature change — C returns `const char **` (4-NULL-
 /// terminated when disabled); Rust returns a fixed-size array of
-/// String. Caller picks PS1/PS2/RPS marker by index.
+/// String; an empty slot stands for C's NULL. Caller picks by index.
 /// Port of `prompt_markers()` from `Src/Zle/termquery.c:731`.
-pub fn prompt_markers() -> [String; 3] {
+pub fn prompt_markers() -> [String; 4] {
     // c:731
+    // ZSHRS-ONLY. The marks are a zsh-dev-tree feature: no drop-in writes
+    // them except `--fish`, whose own marks fish 4.9.3 writes at the same
+    // two points (terminal.rs:197-209: `A;click_events=1` before the prompt,
+    // `B` after it; collate_seq writes the `B`). fish puts nothing inside
+    // the prompt text.
+    if crate::extensions::emulation_startup::emulating() {
+        let pre = if crate::extensions::emulation_startup::emits_fish_marks() {
+            "\x1b]133;A;click_events=1\x1b\\".to_string()
+        } else {
+            String::new()
+        };
+        return [pre, String::new(), String::new(), String::new()];
+    }
     // c:741 — `if (!extension_enabled("integration", "prompt", 11, 1))
     //          return nomark;`
     if !extension_enabled("integration", "prompt", true) {
-        return [String::new(), String::new(), String::new()];
+        return [String::new(), String::new(), String::new(), String::new()];
     }
 
     // c:744-752 — first-call AID computation. `if (!aid) { ... }`.
@@ -1298,21 +1311,18 @@ pub fn prompt_markers() -> [String; 3] {
         //          native-endian. `to_ne_bytes` matches.
         let aid_bytes = aid.to_ne_bytes();
         let b64 = base64_encode(&aid_bytes);
-        // c:751 — `memcpy(pre + 13, h, 6);` — only the first 6 chars
-        //          of the 8-char base64 output get spliced into the
-        //          ZZZZZZ placeholder.
+        // c:751 — `memcpy(pre + 13, h, 6);` — the first 6 chars of the
+        //          8-char base64 output, at PRE_AID_OFFSET (ZSHRS-ONLY
+        //          offset, see there).
         PRE_BUFFER.with(|p| {
             let mut buf = p.borrow_mut();
-            let payload = b64.as_bytes();
-            let n = payload.len().min(6).min(buf.len().saturating_sub(13));
-            for i in 0..n {
-                buf[13 + i] = payload[i];
-            }
+            buf[PRE_AID_OFFSET..PRE_AID_OFFSET + 6].copy_from_slice(&b64.as_bytes()[..6]);
         });
     }
 
-    // c:735-738 + c:754 — return the 3-element markers array.
+    // c:735-738 + c:754 — `return markers;` = { pre, PR, SE, RI }.
     [
+        PRE_BUFFER.with(|p| String::from_utf8_lossy(&p.borrow()).into_owned()), // c:734 pre
         "\x1b]133;P;k=i\x1b\\".to_string(), // c:735 PR
         "\x1b]133;P;k=s\x1b\\".to_string(), // c:736 SE
         "\x1b]133;P;k=r\x1b\\".to_string(), // c:737 RI
@@ -1324,31 +1334,49 @@ pub fn prompt_markers() -> [String; 3] {
 /// Emits the FinalTerm "command output" OSC 133 marker so terminal
 /// integrations like iTerm2 / WezTerm can fold previous output. Two
 /// flavors: `start=1` writes `\e]133;C\e\\` (begin output), else
-/// `\e]133;D\e\\` (end output). Gated on the `integration:output`
+/// `\e]133;D\e\\` (end output). Gated on the `integration-output`
 /// extension toggle.
 pub fn mark_output(start: bool) {
     // c:759
     const START: &[u8] = b"\x1b]133;C\x1b\\"; // c:761
     const END: &[u8] = b"\x1b]133;D\x1b\\"; // c:762
+    let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    if shtty < 0 {
+        return;
+    }
     // ZSHRS-ONLY. The OSC 133 markers are a shell-integration feature no
     // emulated shell emits — bash writes none, and neither does zsh 5.9
     // with its default `.term.extensions`. `--bash` was still putting
     // `\e]133;C` / `\e]133;D` around every command's output. The prompt
     // marker (133;B) is gated in `collate_seq`; these are the output pair.
+    // `--fish` is the exception: fish 4.9.3 writes `C;cmdline_url=<line>`
+    // and `D;<status>` (terminal.rs:211-226).
     if crate::extensions::emulation_startup::emulating() {
+        if crate::extensions::emulation_startup::emits_fish_marks() {
+            let mark = if start {
+                let line = crate::extensions::emulation_startup::FISH_MARK_CMDLINE.lock().map(|l| l.clone()).unwrap_or_default();
+                format!("\x1b]133;C;cmdline_url={}\x1b\\", url_encode(&line))
+            } else {
+                let status = crate::ported::builtin::LASTVAL.load(Ordering::Relaxed);
+                format!("\x1b]133;D;{status}\x1b\\")
+            };
+            let _ = crate::ported::utils::write_loop(shtty, mark.as_bytes());
+        }
         return;
     }
     if extension_enabled("integration", "output", true) {
         // c:763
-        let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
-        if shtty < 0 {
-            return;
+        if start {
+            let _ = crate::ported::utils::write_loop(shtty, START); // c:764
+        } else {
+            // ZSHRS-ONLY. C writes a bare `\e]133;D` (c:762). zshrs adds the
+            // command's exit status, `\e]133;D;<status>`, the form zellij and
+            // kitty read to mark a failed command and the one fish sends.
+            let _ = END; // c:762 — replaced by the status form below
+            let status = crate::ported::builtin::LASTVAL.load(Ordering::Relaxed);
+            let end = format!("\x1b]133;D;{status}\x1b\\");
+            let _ = crate::ported::utils::write_loop(shtty, end.as_bytes());
         }
-        let _ = crate::ported::utils::write_loop(
-            // c:764
-            shtty,
-            if start { START } else { END },
-        );
     }
 }
 
@@ -1372,7 +1400,7 @@ pub fn write_urlencoded(fd: i32, path_components: &str) {
 /// `Src/Zle/termquery.c:778`. Emits the `OSC 7 ; file://host/path`
 /// CWD notification used by modern terminals to follow the shell's
 /// directory across new tabs and splits. Gated on the
-/// `integration:pwd` extension toggle, and refuses to emit if `$HOST`
+/// `integration-pwd` extension toggle, and refuses to emit if `$HOST`
 /// contains a `/` (otherwise the resulting URL would be malformed).
 /// Port of `notify_pwd()` from `Src/Zle/termquery.c:778`.
 pub fn notify_pwd() {
@@ -1991,14 +2019,13 @@ mod tests {
         let aid_after = AID.with(|a| a.get());
         assert_ne!(aid_after, 0, "AID should be computed on first call");
 
-        // Verify the 6 bytes at offset 13..19 are no longer "ZZZZZZ".
-        // (They got overwritten by the first 6 chars of base64-encoded aid.)
-        let buf = PRE_BUFFER.with(|p| p.borrow().clone());
-        let spliced = &buf[13..19];
-        assert_ne!(spliced, b"ZZZZZZ", "pre[13..19] should be overwritten");
-        // Re-derive: aid_after.to_ne_bytes() → base64 → first 6 chars.
+        // The id lands after `aid=` (PRE_AID_OFFSET), not over the key the
+        // way C's `pre + 13` does, and markers[0] is that buffer.
         let expected_b64 = base64_encode(&aid_after.to_ne_bytes());
-        assert_eq!(spliced, &expected_b64.as_bytes()[..6]);
+        let pre = format!("\x1b]133;A;cl=m;aid={}Z\x1b\\", &expected_b64[..6]);
+        let buf = PRE_BUFFER.with(|p| p.borrow().clone());
+        assert_eq!(String::from_utf8(buf).unwrap(), pre);
+        assert_eq!(prompt_markers()[0], pre);
 
         // Second call must NOT recompute AID (gated on !aid).
         let before = AID.with(|a| a.get());
@@ -2053,12 +2080,25 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // c:741 — extension_enabled defaults to true when nothing in
         //          .term.extensions disables it. With no entry, the
-        //          three FinalTerm escapes come through.
+        //          four FinalTerm escapes come through.
         let _g = zle_test_setup();
         let m = prompt_markers();
-        assert_eq!(m[0], "\x1b]133;P;k=i\x1b\\");
-        assert_eq!(m[1], "\x1b]133;P;k=s\x1b\\");
-        assert_eq!(m[2], "\x1b]133;P;k=r\x1b\\");
+        assert!(m[0].starts_with("\x1b]133;A;cl=m;aid="));
+        assert_eq!(m[1], "\x1b]133;P;k=i\x1b\\");
+        assert_eq!(m[2], "\x1b]133;P;k=s\x1b\\");
+        assert_eq!(m[3], "\x1b]133;P;k=r\x1b\\");
+    }
+
+    /// c:741 — `-integration-prompt` in `.term.extensions` turns every
+    /// slot off, the `pre` mark included (zleread then writes nothing).
+    #[test]
+    fn prompt_markers_disabled_returns_nomark() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        crate::ported::params::setaparam(".term.extensions", vec!["-integration-prompt".to_string()]);
+        let m = prompt_markers();
+        crate::ported::params::unsetparam(".term.extensions");
+        assert!(m.iter().all(|s| s.is_empty()), "{m:?}");
     }
 
     #[test]
@@ -2075,9 +2115,9 @@ mod tests {
     #[test]
     fn extension_enabled_matches_specific_ext() {
         let _g = crate::test_util::global_state_lock();
-        // c:690 — `-integration:pwd` only disables `pwd`, not `prompt`.
+        // c:690 — `-integration-pwd` only disables `pwd`, not `prompt`.
         let _g = zle_test_setup();
-        crate::ported::params::setaparam(".term.extensions", vec!["-integration:pwd".to_string()]);
+        crate::ported::params::setaparam(".term.extensions", vec!["-integration-pwd".to_string()]);
         assert!(extension_enabled("integration", "prompt", true));
         assert!(!extension_enabled("integration", "pwd", true));
         crate::ported::params::setaparam(".term.extensions", vec![]);
@@ -2619,9 +2659,9 @@ mod tests {
         );
     }
 
-    /// c:792 — `prompt_markers` returns 3-element array (compile-time pin).
+    /// c:735-738 — `prompt_markers` returns C's 4-slot array (compile-time pin).
     #[test]
-    fn prompt_markers_returns_3_element_array() {
-        let _: [String; 3] = prompt_markers();
+    fn prompt_markers_returns_4_element_array() {
+        let _: [String; 4] = prompt_markers();
     }
 }

@@ -1462,8 +1462,16 @@ pub fn zleread(
     *crate::ported::prompt::current_attrs_lock().lock().unwrap() = 0;
     crate::ported::prompt::set_pending_text_attrs(0);
     crate::ported::prompt::txtunknownattrs.store(0, SeqCst);
-    *LPROMPT.lock().unwrap() = crate::prompt::expand_prompt(lprompt);
-    *RPROMPT.lock().unwrap() = crate::prompt::expand_prompt(rprompt);
+    // c:1221 — `const char **markers = prompt_markers();`
+    let markers = crate::ported::zle::termquery::prompt_markers();
+    // c:1274-1278 — `lpromptbuf = promptexpand(lp, 1, markers[context ==
+    // ZLCON_LINE_CONT ? 2 : 1], ...); rpromptbuf = promptexpand(rp, 1,
+    // markers[3], ...);` — an empty slot is C's NULL (no marker).
+    let lmark = &markers[if context == crate::ported::zsh_h::ZLCON_LINE_CONT { 2 } else { 1 }];
+    *LPROMPT.lock().unwrap() =
+        crate::ported::prompt::promptexpand(lprompt, 1, Some(lmark.as_str()).filter(|m| !m.is_empty())).0;
+    *RPROMPT.lock().unwrap() =
+        crate::ported::prompt::promptexpand(rprompt, 1, Some(markers[3].as_str()).filter(|m| !m.is_empty())).0;
     // Fresh edit session on a fresh terminal row — the multiline
     // repaint anchor must not climb into the previous command's
     // output (see LAST_PAINT_ROWS in zle_refresh.rs).
@@ -1735,6 +1743,12 @@ pub fn zleread(
     initmodifier(); // c:1345
     PREFIXFLAG.store(0, SeqCst); // c:1346
     REGION_ACTIVE.store(0, SeqCst); // c:1347
+
+    // c:1349 — semantic prompt marker printed before first prompt
+    // c:1350-1351 — `if (*markers) write_loop(2, *markers, strlen(*markers));`
+    if !markers[0].is_empty() {
+        let _ = crate::ported::utils::write_loop(2, markers[0].as_bytes());
+    }
 
     // c:1353 — `zrefresh()`: the prompt and line are painted BEFORE the
     // zle-line-init hook and before start_edit(), so `\e[?2004h` follows
@@ -2760,8 +2774,7 @@ pub fn reexpandprompt() {
     });
     if prev == 0 {
         // c:2006 — const char **markers = prompt_markers();
-        //          (markers[0] = lprompt status, markers[2] = rprompt status —
-        //           Rust port doesn't surface markers yet, so they collapse.)
+        let markers = crate::ported::zle::termquery::prompt_markers();
         // c:2012 — int local_lastval = lastval;
         let local_lastval = LASTVAL.load(SeqCst);
         // c:2013 — lastval = pre_zle_status;
@@ -2815,9 +2828,11 @@ pub fn reexpandprompt() {
             *crate::ported::prompt::pending_attrs_lock().lock().unwrap() = 0;
             crate::ported::prompt::txtunknownattrs.store(0, Ordering::Relaxed);
 
-            // c:2025 — new_lprompt = promptexpand(raw_lp ? *raw_lp : NULL, 1, markers[0], NULL, NULL);
+            // c:2025-2026 — new_lprompt = promptexpand(raw_lp ? *raw_lp : NULL, 1,
+            //     markers[zlecontext == ZLCON_LINE_CONT ? 2 : 1], NULL, NULL);
             let raw_lp = RAW_LP.lock().unwrap().clone();
-            let new_lp = crate::prompt::expand_prompt(&raw_lp);
+            let lmark = &markers[if ZLECONTEXT.load(SeqCst) == crate::ported::zsh_h::ZLCON_LINE_CONT { 2 } else { 1 }];
+            let new_lp = crate::ported::prompt::promptexpand(&raw_lp, 1, Some(lmark.as_str()).filter(|m| !m.is_empty())).0;
             // c:2026 — `pmpt_attr = txtcurrentattrs;`
             crate::ported::zle::zle_refresh::PMPT_ATTR.store(
                 *crate::ported::prompt::current_attrs_lock().lock().unwrap(),
@@ -2831,9 +2846,9 @@ pub fn reexpandprompt() {
                 continue;
             }
 
-            // c:2033 — new_rprompt = promptexpand(raw_rp ? *raw_rp : NULL, 1, markers[2], NULL, NULL);
+            // c:2034 — new_rprompt = promptexpand(raw_rp ? *raw_rp : NULL, 1, markers[3], NULL, NULL);
             let raw_rp = RAW_RP.lock().unwrap().clone();
-            let new_rp = crate::prompt::expand_prompt(&raw_rp);
+            let new_rp = crate::ported::prompt::promptexpand(&raw_rp, 1, Some(markers[3].as_str()).filter(|m| !m.is_empty())).0;
             // c:2034 — `rpmpt_attr = txtcurrentattrs;`
             crate::ported::zle::zle_refresh::RPMPT_ATTR.store(
                 *crate::ported::prompt::current_attrs_lock().lock().unwrap(),

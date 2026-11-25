@@ -434,3 +434,56 @@ fn prompt_is_painted_before_bracketed_paste_is_enabled() {
     drop(s);
     let _ = std::fs::remove_dir_all(&h);
 }
+
+/// Shell integration (OSC 133, read by zellij, kitty, WezTerm, iTerm2): before
+/// each prompt the `A` mark (Src/Zle/zle_main.c:1350-1351), `P;k=i` in front of
+/// the prompt text (c:1274), `B` when editing starts (termquery.c:668), `C`
+/// before the command runs and `D;<status>` after it. The aid is well formed
+/// (`aid=` + 6 base64 chars + the placeholder's last `Z`), not zsh's `pre + 13`
+/// copy that overwrites the key, and `D` carries the exit status zsh omits.
+#[test]
+fn osc_133_marks_frame_the_prompt_and_each_command() {
+    if !zshrs_bin().exists() {
+        eprintln!("skip: zshrs binary not built");
+        return;
+    }
+    let h = home("osc133", 0);
+    let _ = std::fs::remove_dir_all(&h);
+    let mut s = Session::start(&h, false);
+    assert!(s.wait_for_first_prompt(Duration::from_secs(30)), "no prompt: {:?}", s.tail());
+    // Raw lines: the status `D` reports is the line's last command's.
+    for (line, done) in [("(exit 3)\r", "\x1b]133;D;3"), ("true\r", "\x1b]133;D;0")] {
+        s.master.as_mut().unwrap().write_all(line.as_bytes()).unwrap();
+        let ok = s.pump(Duration::from_secs(30), |b| has(b, done.as_bytes()));
+        assert!(ok, "no {done:?} after {line:?}: {:?}", s.tail());
+    }
+    // the third prompt: editing started (`B`) once per prompt
+    let third_b = |b: &[u8]| String::from_utf8_lossy(b).matches("\x1b]133;B").count() >= 3;
+    assert!(s.pump(Duration::from_secs(30), third_b), "no third prompt: {:?}", s.tail());
+
+    // Every OSC 133 mark, in order, with the variable aid reduced to its shape.
+    let text = String::from_utf8_lossy(&s.seen).into_owned();
+    let marks: Vec<String> = text
+        .split("\x1b]133;")
+        .skip(1)
+        .map(|m| {
+            let m = &m[..m.find("\x1b\\").unwrap_or(m.len())];
+            match m.strip_prefix("A;cl=m;aid=") {
+                Some(id) if id.len() == 7 && id.ends_with('Z') => "A;cl=m;aid=<id>".to_string(),
+                _ => m.to_string(),
+            }
+        })
+        .collect();
+    let prompt = ["A;cl=m;aid=<id>", "P;k=i", "B"];
+    let expected: Vec<&str> = prompt
+        .iter()
+        .chain(&["C", "D;3"])
+        .chain(&prompt)
+        .chain(&["C", "D;0"])
+        .chain(&prompt)
+        .copied()
+        .collect();
+    assert_eq!(&marks[..expected.len()], &expected[..], "all marks: {marks:?}");
+    drop(s);
+    let _ = std::fs::remove_dir_all(&h);
+}

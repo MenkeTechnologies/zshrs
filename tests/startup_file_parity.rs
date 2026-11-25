@@ -1490,11 +1490,19 @@ static PERSONALITY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 fn terminal_sequences_follow_the_emulated_shell() {
     let _g = PERSONALITY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     use zsh::emulation_startup::{
-        emits_bracketed_paste, emits_integration_prompt, personality, set_personality, Personality,
+        emits_bracketed_paste, emits_integration_prompt, emulating, personality, set_emulating,
+        set_personality, Personality,
     };
     let saved = personality();
+    let saved_emulating = emulating();
+    // native zshrs is no drop-in: it writes the mark
+    set_personality(Personality::Zsh);
+    set_emulating(false);
+    assert!(emits_integration_prompt(), "native OSC 133 marker");
+    set_emulating(true);
     for (p, paste, osc) in [
-        (Personality::Zsh, true, true),
+        (Personality::Zsh, true, false),
+        (Personality::Fish, false, true),
         (Personality::Bash, true, false),
         (Personality::Ksh93, false, false),
         (Personality::Mksh, false, false),
@@ -1508,6 +1516,7 @@ fn terminal_sequences_follow_the_emulated_shell() {
         assert_eq!(emits_integration_prompt(), osc, "{p:?} OSC 133 marker");
     }
     set_personality(saved);
+    set_emulating(saved_emulating);
 }
 
 /// zsh's partial-line `%` marker (PROMPT_SP) is off for every drop-in and

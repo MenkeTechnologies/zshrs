@@ -767,13 +767,28 @@ pub fn emits_bracketed_paste() -> bool {
     matches!(personality(), Personality::Zsh | Personality::Bash)
 }
 
-/// Whether this drop-in writes the OSC 133 shell-integration marker
-/// before each prompt. It is a zsh feature — bash does not send one, and
-/// neither does zsh 5.9 with its default `.term.extensions` — so only
-/// native zshrs keeps it.
+/// Whether this shell writes the OSC 133 `B` (end of prompt) mark when
+/// editing starts. Native zshrs does (zsh's dev tree, termquery.c:668), and
+/// so does fish 4.9.3 (screen.rs:1102). bash does not send one, and neither
+/// does zsh 5.9, so `--zsh` and the other drop-ins do not.
 pub fn emits_integration_prompt() -> bool {
-    personality() == Personality::Zsh
+    !emulating() || personality() == Personality::Fish
 }
+
+/// Whether `--fish` writes fish's own OSC 133 marks: `A;click_events=1`
+/// before the prompt, `C;cmdline_url=<line>` before a command and
+/// `D;<status>` after it (fish 4.9.3 terminal.rs:197-226). fish skips them
+/// when its `mark-prompt` feature is off or the terminal is Konsole
+/// (terminal.rs:182-195); `--fish` has no feature-flag store, so this is
+/// the personality test alone.
+pub fn emits_fish_marks() -> bool {
+    emulating() && personality() == Personality::Fish
+}
+
+/// The command line the next `OSC 133;C` reports under `--fish`. zsh's
+/// `mark_output` takes no command, so the event loop stores it here just
+/// before `zleentry(ZLE_CMD_PREEXEC)`.
+pub static FISH_MARK_CMDLINE: Mutex<String> = Mutex::new(String::new());
 
 /// ksh93 defines NO default aliases in the maintained line.
 ///

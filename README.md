@@ -898,7 +898,34 @@ stands in for renders autosuggestion ghost text or colours the command line
 as you type, so a drop-in that did could not look like its reference.
 `ZSHRS_NATIVE_ZLE_FX` overrides the default in both directions: `=1` brings
 the engines back inside a drop-in, `=0` turns them off natively. The OSC 133
-shell-integration markers are gated the same way.
+shell-integration markers follow the shell zshrs stands in for instead (see
+below), and `ZSHRS_NATIVE_ZLE_FX` does not change them.
+
+#### Terminal shell integration (OSC 133 / OSC 7)
+
+zshrs marks the prompt, the command line and each command's output itself, so
+terminals and multiplexers that read FinalTerm marks (zellij, kitty) can jump
+between prompts, select a command's output and flag failed commands, with no
+integration script to source. The marks follow zsh's development tree
+(`Src/Zle/termquery.c`) with two changes: the shell id is written as a
+well-formed `aid=` (zsh's copy overwrites the key), and `D` carries the exit
+status, as fish sends it.
+
+| when | native zshrs | `--fish` (fish 4.9.3's bytes) |
+|---|---|---|
+| before the prompt | `\e]133;A;cl=m;aid=<id>\e\\` | `\e]133;A;click_events=1\e\\` |
+| inside the prompt text | `\e]133;P;k=i\e\\` (PS1), `k=s` (PS2), `k=r` (RPS1/RPS2) | — |
+| editing starts | `\e]133;B\e\\` | `\e]133;B\e\\` |
+| before the command runs | `\e]133;C\e\\` | `\e]133;C;cmdline_url=<URL-escaped line>\e\\` |
+| after the command | `\e]133;D;<status>\e\\` | `\e]133;D;<status>\e\\` |
+| at startup and on each directory change | `\e]7;file://<host><pwd>\e\\` | — |
+
+Every other drop-in, `--zsh` included, writes none of them, because zsh 5.9,
+bash, ksh, dash and tcsh do not. Natively, `.term.extensions` switches them off
+as in zsh: `.term.extensions=(-integration)` for all of them, or one at a time
+with `-integration-prompt`, `-integration-output` or `-integration-pwd`. The
+first OSC 7 is written before `.zshrc` runs, so a `-integration` set there
+stops every later mark but not that one; zsh behaves the same.
 
 POSIX requires that "if there is an error in a special built-in utility …
 the shell shall abort", and ksh93u+m, mksh and dash all do — `readonly -X`,
