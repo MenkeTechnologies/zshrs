@@ -192,8 +192,9 @@ pub(super) fn path_kind(name: &str, explicit: Option<bool>) -> PathKind {
 
 /// Does translated text hold an `exit` or `return` command word?
 fn leaves_shell(text: &str) -> bool {
-    // (the capture code of a nested substitution ends with an `exit` of its own)
-    let text = text.replace("exit $__fish_cs", "").replace("exit $__fish_ips", "");
+    // (the capture code of a nested substitution, and the replay of a pipeline's
+    // statuses, end in an `exit` of their own)
+    let text = text.replace("exit $__fish_cs", "").replace("exit $__fish_ips", "").replace("exit $__fish_ipp", "");
     text.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '-'))
         .any(|w| w == "exit" || w == "return")
 }
@@ -592,7 +593,7 @@ impl Emitter {
             out.push_str(&format!(" & __fish_jobreg $! {text}"));
         }
         if wrap_not {
-            out = format!("{{ {out}; __fish_nrc=$?; if (( __fish_nrc == 127 )); then (exit 127); else (( __fish_nrc != 0 )); fi; }}");
+            out = format!("{{ {out}; __fish_nrc=$?; if (( __fish_nrc == 127 )); then __fish_ret 127; else (( __fish_nrc != 0 )); fi; }}");
         }
         if j.timed {
             // fish's `time` report, on stderr after the job
@@ -953,7 +954,7 @@ impl Emitter {
         } else {
             return None;
         };
-        Some(format!("{{ print -u2 -r -- 'fish: {msg}'; (exit 121); }}"))
+        Some(format!("{{ print -u2 -r -- 'fish: {msg}'; __fish_ret 121; }}"))
     }
 
     fn simple(&mut self, words: &[Word], redirs: &[Redir]) -> String {

@@ -253,7 +253,7 @@ mod tests {
         assert_eq!(t("if test -f a\necho y\nelse if true\necho z\nelse\necho n\nend"),
                    "if __fish_test -f a\nthen\necho y\nelif true\nthen\necho z\nelse\necho n\nfi");
         assert_eq!(t("a; and b; or c"), "a && b || c");
-        assert_eq!(t("not a"), "{ a; __fish_nrc=$?; if (( __fish_nrc == 127 )); then (exit 127); else (( __fish_nrc != 0 )); fi; }");
+        assert_eq!(t("not a"), "{ a; __fish_nrc=$?; if (( __fish_nrc == 127 )); then __fish_ret 127; else (( __fish_nrc != 0 )); fi; }");
         assert_eq!(t("while true\nbreak\nend"), "while true\ndo\nbreak\ndone");
     }
 

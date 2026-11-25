@@ -224,14 +224,14 @@ impl Emitter {
             text = format!("{text}; __fish_pathvars[{name}]={kind}");
         } else if f.erase && super::emit::path_flags_seen() {
             let z = self.zn(&name);
-            text = format!("{{ {text}; __fish_st __fish_rc; (( ${{+{z}}} )) || unset '__fish_pathvars[{name}]'; (exit $__fish_rc); }}");
+            text = format!("{{ {text}; __fish_st __fish_rc; (( ${{+{z}}} )) || unset '__fish_pathvars[{name}]'; __fish_ret $__fish_rc; }}");
         }
         if !self.watched_vars.contains(&name) {
             return text;
         }
         let what = if f.erase { "ERASE" } else { "SET" };
         format!(
-            "{{ {text}; __fish_st __fish_rc; (( ${{+__fish_events[var:{name}]}} )) && __fish_var_event {name} {what}; (exit $__fish_rc); }}"
+            "{{ {text}; __fish_st __fish_rc; (( ${{+__fish_events[var:{name}]}} )) && __fish_var_event {name} {what}; __fish_ret $__fish_rc; }}"
         )
     }
 
@@ -250,7 +250,7 @@ impl Emitter {
         // fish variable names are letters, digits and underscores
         if !f.query && !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
             return format!(
-                "{{ print -u2 -r -- {}; print -u2; (exit 1); }}",
+                "{{ print -u2 -r -- {}; print -u2; __fish_ret 1; }}",
                 squote(&format!("set: {name}: invalid variable name. See `help language#shell-variable-and-function-names`"))
             );
         }
@@ -270,7 +270,7 @@ impl Emitter {
                         // a local and the global it hides are both described, local first
                         // (`show`, builtins/set.rs:683)
                         match self.local_of(&n).filter(|l| *l != global && !self.auto_locals.contains(l)) {
-                            Some(l) => format!("{{ {}; __fish_rc=$?; {} && __fish_rc=0; (exit $__fish_rc); }}", show(&l), show(&global)),
+                            Some(l) => format!("{{ {}; __fish_rc=$?; {} && __fish_rc=0; __fish_ret $__fish_rc; }}", show(&l), show(&global)),
                             None => show(&self.zn(&n)),
                         }
                     })
@@ -332,7 +332,7 @@ impl Emitter {
             }
             // (an invalid index stops at the operand it is in)
             let sep = if indexed { " && " } else { "; " };
-            return format!("{{ __fish_nq=0; {}; (exit $__fish_nq); }}", tests.join(sep));
+            return format!("{{ __fish_nq=0; {}; __fish_ret $__fish_nq; }}", tests.join(sep));
         }
 
         // `set x[2 4..5] a b c`: one value per index, through `__fish_set_idx`
@@ -545,7 +545,7 @@ impl Emitter {
             let u = if u.starts_with("__fish_en=0;") { u.clone() } else { format!("{u} || __fish_st __fish_erc") };
             text = if k + 1 == units.len() { u } else { format!("{u}; (( __fish_erc == 1 )) || {{ {text}; }}") };
         }
-        format!("{{ __fish_erc=0; {text}; (exit $__fish_erc); }}")
+        format!("{{ __fish_erc=0; {text}; __fish_ret $__fish_erc; }}")
     }
 
     /// One `set -e` operand in one pass: [`erase_one`](Self::erase_one), or for `-U`
@@ -560,9 +560,9 @@ impl Emitter {
         let z = Self::global_of(name);
         let q = squote(name);
         match idx {
-            None => format!("if __fish_uvar_has {q}; then __fish_uvar_erase {z}; unset {z}; else (exit 4); fi"),
+            None => format!("if __fish_uvar_has {q}; then __fish_uvar_erase {z}; unset {z}; else __fish_ret 4; fi"),
             Some(i) => format!(
-                "if __fish_uvar_has {q}; then {} && __fish_uvar_save {z}; else (exit 1); fi",
+                "if __fish_uvar_has {q}; then {} && __fish_uvar_save {z}; else __fish_ret 1; fi",
                 Self::erase_index(&z, &i)
             ),
         }
@@ -639,7 +639,7 @@ impl Emitter {
             Some(self.zn(name))
         };
         let Some(z) = target else {
-            return if idx.is_some() { "(exit 1)" } else { "(exit 4)" }.into();
+            return if idx.is_some() { "__fish_ret 1" } else { "__fish_ret 4" }.into();
         };
         let Some(i) = idx else {
             if local.as_deref() == Some(z.as_str()) && !self.unmap_local(name) {
@@ -649,9 +649,9 @@ impl Emitter {
                 let outer = self.outer_of(name);
                 let decl = if self.in_local_scope() { "local -n" } else { "typeset -gn" };
                 self.ref_locals.insert(z.clone());
-                return format!("if (( ${{+{z}}} )); then unset {z}; {decl} {z}={outer}; else (exit 4); fi");
+                return format!("if (( ${{+{z}}} )); then unset {z}; {decl} {z}={outer}; else __fish_ret 4; fi");
             }
-            return format!("if (( ${{+{z}}} )); then unset {z}; else (exit 4); fi");
+            return format!("if (( ${{+{z}}} )); then unset {z}; else __fish_ret 4; fi");
         };
         Self::erase_index(&z, &i)
     }
@@ -825,7 +825,7 @@ impl Emitter {
         let (name, body, eq) = match texts.as_slice() {
             [one] => match one.split_once('=') {
                 Some((n, b)) => (n.to_string(), b.to_string(), true),
-                None => return "{ print -u2 -r -- 'alias: body cannot be empty'; (exit 1); }".into(),
+                None => return "{ print -u2 -r -- 'alias: body cannot be empty'; __fish_ret 1; }".into(),
             },
             [n, rest @ ..] => (n.clone(), rest.join(" "), false),
             [] => return "__fish_alias_list".into(),
