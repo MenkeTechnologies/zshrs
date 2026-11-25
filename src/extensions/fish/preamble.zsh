@@ -1249,10 +1249,14 @@ __fish_argparse() {
   local -a vals opts=() excl=()
   typeset -ga __fish_argflags
   __fish_argflags=(argv_opts)
-  local intid= intidname= minargs= maxargs= nov=$'\x02' xs xa xb present p
+  local sep=0 intid= intidname= minargs= maxargs= nov=$'\x02' xs xa xb present p
   local -A kind=() alias=() acc=() noopt=() valid=()
   local -a specs=() rest=() ids=()
   while (( $# )); do
+    # options come before the specs; a dash word after the first spec is a spec with an invalid short flag
+    if (( ${#specs} )) && [[ $1 == -* && $1 != -- ]]; then
+      print -u2 -r -- "$name: Short flag '-' invalid, must be alphanum or '#'"; return 1
+    fi
     case $1 in
       -n|--name) name=$2; shift 2 ;;
       -x|--exclusive) excl+=($2); shift 2 ;;
@@ -1266,11 +1270,15 @@ __fish_argparse() {
       -u|--move-unknown) mu=1; shift ;;
       -s|--stop-nonopt) stop=1; shift ;;
       -h|--help) shift ;;
-      --) shift; break ;;
-      *) specs+=($1); shift ;;
+      --) shift; sep=1; break ;;
+      -*) print -u2 -r -- "$name: $1: unknown option"; return 2 ;;
+      *) specs+=("$1"); shift ;;
     esac
   done
-  for spec in $specs; do
+  # the specs end at `--`; without it there is nothing to parse
+  (( sep )) || { print -u2 -r -- "$name: Missing -- separator"; return 2; }
+  for spec in "${(@)specs}"; do
+    [[ -z $spec ]] && { print -u2 -r -- "$name: An option spec must have at least a short or a long flag"; return 1; }
     s=${spec%%!*} sfx= short= long= amp= intid=
     [[ $s == *'&' ]] && { amp=1; s=${s%&}; }
     case $s in
@@ -1283,7 +1291,7 @@ __fish_argparse() {
     if [[ $s == *[^[:alnum:]_/-]* ]]; then
       c=${s#${s%%[^[:alnum:]_/-]*}}
       print -u2 -r -- "$name: Invalid option spec '$spec' at char '${c[1]}'"
-      return 2
+      return 1
     fi
     skipshort=
     if [[ $s == */* ]]; then short=${s%%/*}; long=${s#*/}
@@ -1298,6 +1306,7 @@ __fish_argparse() {
     kind[$id]=$sfx
     [[ -n $short && -z $skipshort ]] && alias[-$short]=$id
     [[ -n $long ]] && alias[--$long]=$id
+    [[ -z $long && -n $short ]] && alias[--$short]=$id   # fish also takes a short-only flag as `--a`
     alias[ids:$id]="$short $long"
     for a in $short $long; do unset "_flag_${a//-/_}"; done
   done
