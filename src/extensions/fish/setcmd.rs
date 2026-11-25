@@ -27,6 +27,9 @@ struct SetFlags {
     unpath: bool,
     /// `-g` itself (`-U` sets `global` too, for the paths that treat both alike).
     g_flag: bool,
+    /// Scope flags given (`-l -f -g -U`), `-n`/`--names`, and `-L`/`--long` seen, to reject fish's conflicting combinations.
+    scopes: u8,
+    names: bool,
 }
 
 impl Emitter {
@@ -58,6 +61,7 @@ impl Emitter {
                 "--long" => Some('L'),
                 "--path" => Some('P'),
                 "--unpath" => Some('N'),
+                "--no-event" => Some('V'),
                 _ => None,
             };
             let letters: Vec<char> = if let Some(l) = opts.strip_prefix('-') {
@@ -70,16 +74,22 @@ impl Emitter {
             };
             for c in letters {
                 match c {
-                    'l' => f.local = true,
+                    'l' => {
+                        f.local = true;
+                        f.scopes += 1;
+                    }
                     'f' => {
+                        f.scopes += 1;
                         f.local = true;
                         f.function = true;
                     }
                     'g' => {
+                        f.scopes += 1;
                         f.global = true;
                         f.g_flag = true;
                     }
                     'U' => {
+                        f.scopes += 1;
                         f.global = true;
                         f.universal = true;
                     }
@@ -93,13 +103,22 @@ impl Emitter {
                         f.list = true;
                         f.show = true;
                     }
-                    'n' | 'L' => f.list = true,
+                    'n' => {
+                        f.list = true;
+                        f.names = true;
+                    }
+                    'L' => f.list = true,| 'L' => f.list = true,
                     'P' => f.path = true,
                     'N' => f.unpath = true,
                     _ => {}
                 }
             }
             i += 1;
+        }
+        // `set -q --show x` is a query
+        if f.query && f.show {
+            f.show = false;
+            f.list = false;
         }
         (f, i)
     }
@@ -144,6 +163,9 @@ impl Emitter {
     /// `set -U` also writes the variable to the universal store; `set -U -e` removes it.
     pub(super) fn set_cmd(&mut self, args: &[Word]) -> String {
         let (f, at) = self.set_flags(args);
+        if let Some(msg) = set_conflict(&f) {
+            return format!("{{ print -r -u2 -- {}; __fish_ret 2; }}", squote(&format!("set: {msg}")));
+        }
         let text = self.set_stored(args, &f, at);
         // an assignment that works leaves `$status` as it was; one that fails has its own
         // (`preserve_failure_exit_status`, builtins/set.rs:1046)
@@ -839,5 +861,23 @@ impl Emitter {
         }
         let mine = self.scope_locals().join(" ");
         format!("{{ __fish_av=(\"${{argv[@]}}\"); __fish_set_list --in='{mine}' {}; }}", flags.join(" "))
+    }
+}
+
+/// fish's refusal of option combinations that contradict each other (`builtins/set.rs`
+/// `validate_cmd_opts`): the message, with status 2.
+fn set_conflict(f: &SetFlags) -> Option<&'static str> {
+    if f.scopes > 1 {
+        Some("scope can be only one of: universal function global local")
+    } else if f.export && f.unexport {
+        Some("cannot both export and unexport")
+    } else if f.path && f.unpath {
+        Some("cannot both path and unpath")
+    } else if f.show && (f.scopes > 0 || f.export || f.unexport || f.erase || f.names) {
+        Some("invalid option combination")
+    } else if f.query && f.erase {
+        Some("invalid option combination")
+    } else {
+        None
     }
 }

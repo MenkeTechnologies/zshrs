@@ -269,7 +269,7 @@ __fish_set_list() {
 __fish_set_show() {
   local z=$1 n=$2 t kind=global exp=unexported cnt
   local -a vals
-  [[ ${+parameters[$z]} == 1 ]] || return 1
+  [[ ${+parameters[$z]} == 1 ]] || return 0
   t=${(Pt)z}
   [[ $z == _fl* ]] && kind=local
   [[ $t == *export* || $z == __fx_* ]] && exp=exported
