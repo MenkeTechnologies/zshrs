@@ -1120,6 +1120,10 @@ zpty -w -n w $'\r'; pump
 zpty -d w 2>/dev/null
 local -a ls
 ls=( ${{(f)"$(<$OUTFILE)"}} )
+# zshrs writes the OSC 133 prompt mark to fd 2 before each prompt, as the
+# zsh dev tree does (zle_main.c:1349-1351); the release zsh compared against
+# has no marks, so drop them before comparing the warnings.
+ls=( ${{(S)ls//$'\e]133;'*$'\e\\'/}} )
 print -rl -- ${{${{(M)ls:#*invalid zwc*}}/#*\/zsh(|rs):/zsh:}} >| $OUTFILE
 "#
     );

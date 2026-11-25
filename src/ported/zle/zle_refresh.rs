@@ -9135,10 +9135,11 @@ mod tests {
         assert_eq!(CLEARFLAG.load(Ordering::SeqCst), 0, "clearflag zeroed");
         assert_eq!(RESETNEEDED.load(Ordering::SeqCst), 1, "resetneeded set");
         // c:2429 — the raw "%% > " template was re-expanded to "% > ", proving
-        // reexpandprompt() ran (it was previously deferred).
+        // reexpandprompt() ran (it was previously deferred). The
+        // OSC 133 P marker is promptexpand's marker argument (zle_main.c:2025).
         assert_eq!(
             crate::ported::zle::zle_main::prompt(),
-            "% > ",
+            "\x01\x1b]133;P;k=i\x1b\\\x02% > ",
             "clearscreen must reexpandprompt the raw template"
         );
     }

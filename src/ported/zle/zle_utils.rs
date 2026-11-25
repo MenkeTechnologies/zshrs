@@ -1364,8 +1364,10 @@ mod tests_hooks {
         *RAW_LP.lock().unwrap() = "%% > ".to_string();
         *RAW_RP.lock().unwrap() = "[%%]".to_string();
         reexpandprompt();
-        assert_eq!(prompt(), "% > ");
-        assert_eq!(rprompt(), "[%]");
+        // c:2006/2025/2034 — promptexpand is handed the OSC 133 P marker
+        // for the primary and right prompts (prompt_markers, termquery.c:751).
+        assert_eq!(prompt(), "\x01\x1b]133;P;k=i\x1b\\\x02% > ");
+        assert_eq!(rprompt(), "\x01\x1b]133;P;k=r\x1b\\\x02[%]");
         ZLECONTEXT.store(saved_ctx, SeqCst);
     }
 
@@ -1390,8 +1392,16 @@ mod tests_hooks {
         *RAW_LP.lock().unwrap() = "STALE_L".to_string();
         *RAW_RP.lock().unwrap() = "STALE_R".to_string();
         reexpandprompt();
-        assert_eq!(prompt(), "P> ", "PS1 re-read live, not from stale RAW_LP");
-        assert_eq!(rprompt(), "[%R]", "RPROMPT (classic name) re-read live");
+        assert_eq!(
+            prompt(),
+            "\x01\x1b]133;P;k=i\x1b\\\x02P> ",
+            "PS1 re-read live, not from stale RAW_LP"
+        );
+        assert_eq!(
+            rprompt(),
+            "\x01\x1b]133;P;k=r\x1b\\\x02[%R]",
+            "RPROMPT (classic name) re-read live"
+        );
         unsetparam("PS1");
         unsetparam("RPROMPT");
         ZLECONTEXT.store(saved_ctx, SeqCst);
