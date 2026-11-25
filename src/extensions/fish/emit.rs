@@ -577,8 +577,11 @@ impl Emitter {
                         });
                     }
                 }
+                // (an `if` leaves one status, so the list is kept in `__fish_ipp` and replayed
+                // as a pipeline of `exit`s, which is what sets `$pipestatus`)
+                let replay = (1..=j.cmds.len()).map(|i| format!("(exit $__fish_ipp[{i}])")).collect::<Vec<_>>().join(" | ");
                 out = format!(
-                    "if __fish_inproc {q}; then __fish_ipf=$(mktemp \"${{TMPDIR:-/tmp}}/.zrp.XXXXXX\"); {{ {head}\n}} >$__fish_ipf; {{ {rest}\n}} <$__fish_ipf; __fish_ips=$?; command rm -f $__fish_ipf; (exit $__fish_ips); else {out}; fi",
+                    "if __fish_inproc {q}; then __fish_ipf=$(mktemp \"${{TMPDIR:-/tmp}}/.zrp.XXXXXX\"); {{ {head}\n}} >$__fish_ipf; __fish_iph=$?; {{ {rest}\n__fish_ipp=($__fish_iph $pipestatus); }} <$__fish_ipf; command rm -f $__fish_ipf; else {out}\n__fish_ipp=($pipestatus); fi; {replay}",
                     q = quote_lit(name)
                 );
             }
