@@ -34,7 +34,10 @@ parking_lot = "0.12"
 rand = "0.8"
 regex = "1.11"
 rkyv = { version = "0.7", features = ["validation", "archive_le", "size_32"] }
-rusqlite = "0.32"
+# bundled: the release workflow builds this crate on its own (`-p zshrs-daemon`),
+# where features do not unify with the root crate's bundled rusqlite; without
+# it the musl targets link the runner's glibc libsqlite3.so.
+rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
