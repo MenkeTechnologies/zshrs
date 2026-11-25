@@ -250,7 +250,7 @@ impl Emitter {
         // fish variable names are letters, digits and underscores
         if !f.query && !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
             return format!(
-                "{{ print -u2 -r -- {}; print -u2; __fish_ret 1; }}",
+                "{{ print -u2 -r -- {}; print -u2; __fish_ret 2; }}",
                 squote(&format!("set: {name}: invalid variable name. See `help language#shell-variable-and-function-names`"))
             );
         }

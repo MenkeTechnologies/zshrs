@@ -969,10 +969,16 @@ impl Emitter {
         let msg = if parts().any(|p| match p {
             Part::Var(v) => zero(&v.index),
             Part::Double(ds) => ds.iter().any(|d| matches!(d, DPart::Var(v) if zero(&v.index))),
+            Part::Cmd(_, ix, _) => zero(ix),
             _ => false,
         }) {
             "array indices start at 1, not 0."
-        } else if parts().any(|p| matches!(p, Part::Var(v) if index_has_brace_space(v))) {
+        } else if parts().any(|p| match p {
+            Part::Var(v) => index_has_brace_space(v),
+            // a substituted command's index takes numbers and `..` only
+            Part::Cmd(_, Some(toks), _) => toks.iter().any(|t| !t.chars().all(|c| c.is_ascii_digit() || c == '-' || c == '.')),
+            _ => false,
+        }) {
             "Invalid index value"
         } else {
             return None;
