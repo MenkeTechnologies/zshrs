@@ -196,7 +196,7 @@ __fish_set_list() {
       __fx_*) continue ;;
       # this function's own locals and the shell's scratch variables
       __sc|__nm|__ex|__lg|__n|__k|__line|__v|__t|__vals|__out|__in|__hasin|__virtual|__fn|__fv) continue ;;
-      __fx_*|__fc<->|__fa<->|__fi<->_<->|__fish_(cs|ps|rc|nrc|nq|av|nav|srcfile|argv|argv_opts|argflags|ipf|ipf<->|ips|rrc|ipp|iph|hist_app|io|iv|tw|en|erc|ix|w|qe|qc|csv|rv|lm|ss|bs|fs|fl|es|nr|incs|hs)) continue ;;
+      __fx_*|__fc<->|__fa<->|__fi<->_<->|__fish_(cs|ps|rc|nrc|nq|av|nav|srcfile|argv|argv_opts|argflags|ipf|ipf<->|ips|rrc|ipp|iph|hist_app|rz|rzn|rzw|rzs|io|iv|tw|en|erc|ix|w|qe|qc|csv|rv|lm|ss|bs|fs|fl|es|nr|incs|hs)) continue ;;
       # every other `__` name is a user's (fish's own scripts set many), bar what this file made
       __fish_uvar_*|__fish_(bin|cache|config|data|help|man|sysconf|user_data)_dir) continue ;;
       __*) (( ${+__fish_internal[$__n]} )) && continue; [[ $__sc == l ]] && continue ;;
@@ -271,6 +271,29 @@ __fish_set_list() {
   (( ${#__out} )) && print -rl -- "${(@)__out}"
   return 0
 }
+# read -z with several variables or -a: split the NUL-terminated record on whitespace as
+# fish does; the last variable keeps the rest of the record as it is, newline included
+__fish_readz() {
+  setopt localoptions extendedglob
+  local __fish_rzm=$1 __fish_rzs __fish_rzn __fish_rzw; shift
+  IFS= builtin read -r -d '' __fish_rzs; local __fish_rzr=$?
+  [[ $__fish_rzr == 1 && -n $__fish_rzs ]] && __fish_rzr=0
+  if [[ $__fish_rzm == a ]]; then
+    __fish_rzw=(${=__fish_rzs}); set -A "$1" "${__fish_rzw[@]}"
+    return $__fish_rzr
+  fi
+  while (( $# > 1 )); do
+    __fish_rzs=${__fish_rzs##[[:space:]]#}
+    __fish_rzn=${__fish_rzs%%[[:space:]]*}
+    : ${(P)1::=$__fish_rzn}
+    __fish_rzs=${__fish_rzs#$__fish_rzn}
+    shift
+  done
+  __fish_rzs=${__fish_rzs##[[:space:]]#}
+  : ${(P)1::=$__fish_rzs}
+  return $__fish_rzr
+}
+
 __fish_set_show() {
   local z=$1 n=$2 t kind=global exp=unexported cnt
   local -a vals

@@ -728,6 +728,7 @@ impl Emitter {
         let mut as_list = false;
         let mut by_line = false;
         let mut delim: Option<String> = None;
+        let mut zero = false;
         let mut names: Vec<String> = Vec::new();
         let mut i = 0;
         while i < args.len() {
@@ -744,7 +745,10 @@ impl Emitter {
                 "-s" | "--silent" => flags.push('s'),
                 "-a" | "--list" => as_list = true,
                 "-L" | "--line" => by_line = true,
-                "-z" | "--null" => flags.push_str(" -d ''"),
+                "-z" | "--null" => {
+                    flags.push_str(" -d ''");
+                    zero = true;
+                }
                 "-P" | "--prompt-str" => prompt = arg(self),
                 "-n" | "--nchars" => {
                     if let Some(n) = arg(self) {
@@ -765,7 +769,10 @@ impl Emitter {
                             's' => flags.push('s'),
                             'a' => as_list = true,
                             'L' => by_line = true,
-                            'z' => flags.push_str(" -d ''"),
+                            'z' => {
+                                flags.push_str(" -d ''");
+                                zero = true;
+                            }
                             _ => {}
                         }
                     }
@@ -806,6 +813,9 @@ impl Emitter {
         // its terminator (zsh says 1 there)
         let seen = format!("{{ {{}}; __fish_rrc=$?; (( __fish_rrc == 1 && ${{#{}}} )) && __fish_rrc=0; (exit $__fish_rrc); }}", names[0]);
         let ok = |text: String| seen.replacen("{}", &text, 1);
+        if zero && (as_list || names.len() > 1) && delim.is_none() {
+            return ok(group(format!("{pre}__fish_readz {} {}", if as_list { 'a' } else { 's' }, targets.join(" "))));
+        }
         if as_list {
             let ifs = delim.map_or(String::new(), |d| format!("IFS={d} "));
             return ok(group(format!("{pre}{ifs}builtin read {flags}A {}", targets.join(" "))));
