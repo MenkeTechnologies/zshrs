@@ -3970,6 +3970,18 @@ pub fn paramsubst(
                         }
                     }
                     x if (x == '}' || x == Outbrace) && !inq && parens == 0 => {
+                        // Braces the lexer left literal must not take a
+                        // parameter expansion's closing token. In an (e)
+                        // re-lex, `${x::=a{b\}}` has a literal opening brace
+                        // and an escaped closing brace inside the token pair.
+                        if x == Outbrace {
+                            while open.last().is_some_and(|(start, _, _)| chars[*start] == '{') {
+                                open.pop();
+                            }
+                        } else if !open.last().is_some_and(|(start, _, _)| chars[*start] == '{') {
+                            i += 1;
+                            continue;
+                        }
                         if let Some((start, commas, is_param)) = open.pop() {
                             if !is_param {
                                 chars[start] = Inbrace;

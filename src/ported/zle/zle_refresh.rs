@@ -1437,10 +1437,6 @@ pub fn zrefresh() {
     // The skip is clamped to the row length, so an over-wide value can't
     // overrun.
     LPROMPTW.store(prompt_width as i32, Ordering::Relaxed);
-    // c:770 — `countprompt(lpromptbuf, &lpromptwof, &lprompth, 1)`: publish the
-    // prompt height. Only resetvideo (tests) stored it, so LPROMPTH stayed 0
-    // and `redisplay`'s `tc_upcurs(lprompth - 1)` (c:2439) never moved.
-    LPROMPTH.store(prompt_rows as i32, Ordering::Relaxed);
     let rprompt_width = countprompt(&rprompt);
     // c:774 — `countprompt(rpromptbuf, &rpromptw, &rprompth, 0)`. The live
     // zrefresh (unlike `resetvideo`, which sets these but is only reached
@@ -1858,7 +1854,11 @@ pub fn zrefresh() {
         // comes from the \n alone. The eager emit-wrap already advanced
         // the row, so absorb the \n instead of advancing twice.
         let mut just_wrapped = false;
-        for c in prompt.chars() {
+        let cursor_up = crate::ported::init::tcstr.lock().unwrap()
+            [crate::ported::zsh_h::TCUP as usize]
+            .clone();
+        let mut prompt_chars = prompt.chars();
+        while let Some(c) = prompt_chars.next() {
             if in_esc {
                 if in_esc_string {
                     // Control-string payload: consume to BEL or ST (`ESC \`).
@@ -1919,6 +1919,15 @@ pub fn zrefresh() {
                 // column moves.
                 rpms.pos = 0;
             } else if c == '\n' {
+                // Powerlevel10k reserves terminal space with a hidden
+                // newline followed by cursor-up. The bytes are still sent
+                // on repaint, but together they leave the cursor on its row.
+                if in_invisible
+                    && !cursor_up.is_empty()
+                    && prompt_chars.as_str().starts_with(&cursor_up)
+                {
+                    continue;
+                }
                 // countprompt `w = 0; h++` (prompt.c:1204-1206), with the
                 // exactly-full-row absorption above.
                 if just_wrapped {
@@ -1936,6 +1945,7 @@ pub fn zrefresh() {
         }
         // The edit line continues on the prompt's last row (C: nbuf[0]).
         prompt_last_row = rpms.ln.max(0) as usize;
+        LPROMPTH.store(prompt_last_row as i32 + 1, Ordering::Relaxed);
         // Publish it for the completion-list code, which needs C's
         // prompt-independent `nlnct` (c:1636): this port's NLNCT counts the
         // prompt rows C never models (c:779-783, c:1163, c:1206), so those
@@ -2719,7 +2729,7 @@ pub fn zrefresh() {
             // Multiline-prompt anchor: the raw print above left the REAL
             // cursor on the prompt's LAST physical row, but VLN was homed
             // to 0. The bridge lays the whole multiline prompt into NBUF
-            // rows 0..prompt_rows-1 (C keeps only the last prompt line in
+            // every row above prompt_last_row (C keeps only the last prompt line in
             // its video model — the earlier lines are printed once by the
             // zputs above and never repainted, zle_refresh.c:1158). With
             // VLN=0 refreshline believed the physical row under the
@@ -2730,18 +2740,17 @@ pub fn zrefresh() {
             // as already on screen. The last prompt row is NOT seeded —
             // it shares its row with the edit line and must still be
             // diffed (its cells re-emit identically over the print).
-            if prompt_rows > 1 {
-                let seed_rows = prompt_rows - 1;
+            if prompt_last_row > 0 {
                 {
                     let nbuf = NBUF.lock().unwrap();
                     let mut obuf = OBUF.lock().unwrap();
                     obuf.clear();
-                    for r in 0..seed_rows {
+                    for r in 0..prompt_last_row {
                         obuf.push(nbuf.get(r).cloned().unwrap_or_default());
                     }
                 }
-                OLNCT.store(seed_rows as i32, Ordering::SeqCst);
-                VLN.store(seed_rows as i32, Ordering::SeqCst);
+                OLNCT.store(prompt_last_row as i32, Ordering::SeqCst);
+                VLN.store(prompt_last_row as i32, Ordering::SeqCst);
             }
         }
         // c:1168-1172 —

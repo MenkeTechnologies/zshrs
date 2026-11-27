@@ -4801,7 +4801,8 @@ impl ShellExecutor {
     /// program runs is lexed at RUNTIME and must see the live alias table.
     ///
     /// `lines` is the dump's pipeline line table (`zwc_lineno::deparse`), so
-    /// the re-parse carries the lines C executes the wordcode at.
+    /// the re-parse carries the lines C executes the wordcode at. Like
+    /// `execode(..., "filecode")`, this runs in the caller's shell scope.
     pub fn execute_zwc_program(
         &mut self,
         script: &str,
@@ -4812,7 +4813,7 @@ impl ShellExecutor {
             let _lines = crate::zwc_lineno::Armed::new(Some(lines));
             self.compile_script_isolated(script)
         };
-        self.run_chunk_with_exit_hooks(chunk?, "execute_zwc_program")
+        self.run_chunk(chunk?, "execute_zwc_program")
     }
 
     /// Run `script` the way C runs a PLAIN sourced file: parse ONE event,
@@ -5777,10 +5778,19 @@ impl ShellExecutor {
                 crate::ported::utils::scriptname_get(),
                 crate::ported::utils::scriptfilename_get(),
             );
+            let filename = crate::ported::hashtable::getshfuncfile(name);
+            // c:Src/exec.c:5619-5620 — fill the frame that doshfunc pushed
+            // before loading the stub. %x and funcsourcetrace read this frame.
+            if let Some(path) = &filename {
+                let mut stack = crate::ported::modules::parameter::FUNCSTACK.lock().unwrap();
+                if let Some(frame) = stack.last_mut().filter(|frame| frame.name == name) {
+                    if frame.filename.as_deref().is_none_or(str::is_empty) {
+                        frame.filename = Some(path.clone());
+                    }
+                }
+            }
             crate::ported::utils::set_scriptname(Some(name.to_string())); // c:5553
-            crate::ported::utils::set_scriptfilename(crate::ported::hashtable::getshfuncfile(
-                name,
-            )); // c:5554
+            crate::ported::utils::set_scriptfilename(filename); // c:5554
             crate::ported::lex::set_lineno(0);
             saved
         });
