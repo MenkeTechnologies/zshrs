@@ -3399,6 +3399,72 @@ fn test_zcalc_evaluates_expression() {
     assert_eq!(output.trim(), "14", "got: {output:?}");
 }
 
+#[test]
+fn autoloaded_theme_expanded_command_uses_its_source_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let fpath = dir.path().join("functions");
+    let theme = dir.path().join("theme");
+    std::fs::create_dir(&fpath).unwrap();
+    std::fs::create_dir_all(theme.join("internal")).unwrap();
+    std::fs::write(
+        theme.join("theme.zsh"),
+        r#"source "${${(%):-%x}:A:h}/internal/prompt.zsh""#,
+    )
+    .unwrap();
+    std::fs::write(theme.join("internal/prompt.zsh"), "print -r -- loaded\n").unwrap();
+    std::os::unix::fs::symlink("../theme/theme.zsh", fpath.join("prompt_demo_setup")).unwrap();
+
+    // Prezto's prompt system expands the setup function name at call time.
+    let script = r#"
+        fpath=("$1" $fpath)
+        autoload -Uz prompt_demo_setup
+        theme=demo
+        prompt_${theme}_setup || exit 1
+        prompt_${theme}_setup
+    "#;
+    let (status, stdout, stderr) =
+        run_zshrs_with_args(&["-f", "-c", script, "zshrs", fpath.to_str().unwrap()]);
+    assert_eq!(status, 0, "{stderr}");
+    assert_eq!(stdout, "loaded\nloaded\n");
+    assert!(stderr.is_empty(), "{stderr}");
+}
+
+#[test]
+fn eval_array_slice_preserves_literal_braces_in_nested_expansions() {
+    let (status, stdout, stderr) = run_zshrs(
+        r#"
+        templates=(ignored '${unset_var-${first::=a{b\}}}' '${unset_var-${second::=}}' '')
+        expanded=("${(@e)templates[-3,-1]}")
+        print -r -- "${#expanded}" "<${expanded[1]}>" "<${expanded[2]}>" "<${expanded[3]}>" "<$first>"
+        "#,
+    );
+    assert_eq!(status, 0, "{stderr}");
+    assert_eq!(stdout, "3 <a{b}> <> <> <a{b}>\n");
+    assert!(stderr.is_empty(), "{stderr}");
+}
+
+#[test]
+fn sourcing_compiled_code_leaves_exit_hooks_for_shell_exit() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("fixture.zsh");
+    std::fs::write(&path, "print -r -- compiled\n").unwrap();
+    let script = r#"
+        zcompile -R -- "$1.zwc" "$1" || exit 1
+        print -r -- 'print -r -- fallback' > "$1"
+        touch -t 200001010000 "$1" || exit 1
+        trap 'print -r -- trap-exit' EXIT
+        on_exit() { print -r -- hook-exit; }
+        typeset -ga zshexit_functions=(on_exit)
+        source "$1" || exit 1
+        print -r -- caller
+    "#;
+    let (status, stdout, stderr) =
+        run_zshrs_with_args(&["-f", "-c", script, "zshrs", path.to_str().unwrap()]);
+    assert_eq!(status, 0, "{stderr}");
+    assert_eq!(stdout, "compiled\ncaller\ntrap-exit\nhook-exit\n");
+    assert!(stderr.is_empty(), "{stderr}");
+}
+
 // ---------------------------------------------------------------------------
 // Cond tests: -nt, -ot, -k (sticky), -O (owner), -G (group)
 // ---------------------------------------------------------------------------

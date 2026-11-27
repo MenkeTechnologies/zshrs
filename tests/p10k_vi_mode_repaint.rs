@@ -220,3 +220,61 @@ fn mode_switch_returns_the_cursor_to_its_row_two_row_prompt() {
     let d = displacement_per_switch("two", "dir newline prompt_char", false);
     assert_eq!(d, vec![0, 0, 0, 0], "cursor drifted on a vi mode switch");
 }
+
+#[test]
+fn clear_and_transient_redraw_respect_the_multiline_prompt_height() {
+    let home = tempfile::tempdir().unwrap();
+    std::fs::write(
+        home.path().join(".zshrc"),
+        r#"
+PROMPT=$'%{\n\e[A%}HEADER ROW\nPROMPT> '
+clear_and_redraw() {
+    builtin print -rn -- $'\e[H\e[2J' > "$TTY"
+    builtin zle .reset-prompt
+    builtin zle -R
+    builtin print -rn -- $'\e[3J' > "$TTY"
+}
+paint_transient() { builtin zle .reset-prompt; builtin zle -R; }
+finish_line() { PROMPT='SHORT> ' paint_transient; }
+zle -N clear_and_redraw
+zle -N zle-line-finish finish_line
+bindkey '^L' clear_and_redraw
+"#,
+    )
+    .unwrap();
+    let mut pty = spawn_in_pty(home.path());
+    let quiet = Duration::from_millis(500);
+    let timeout = Duration::from_secs(8);
+    let first = drain(&mut pty, quiet, timeout);
+    assert!(first.windows(8).any(|bytes| bytes == b"PROMPT> "));
+
+    pty.master.write_all(b"\x0c").unwrap();
+    let clear = drain(&mut pty, quiet, timeout);
+    assert!(clear.windows(7).any(|bytes| bytes == b"\x1b[H\x1b[2J"));
+    assert!(clear.windows(4).any(|bytes| bytes == b"\x1b[3J"));
+    // One row up from the edit line, then one down as the full prompt is
+    // drawn. The hidden newline/cursor-up pair has zero net displacement.
+    assert_eq!(net_rows_down(&clear), 0, "Ctrl-L redraw: {clear:?}");
+
+    pty.master.write_all(b"print -r -- KEEP-ME\r").unwrap();
+    let command = drain(&mut pty, quiet, timeout);
+    let output = b"KEEP-ME\r\n";
+    let output_end = command
+        .windows(output.len())
+        .position(|bytes| bytes == output)
+        .expect("command output")
+        + output.len();
+    assert_eq!(
+        net_rows_down(&command[output_end..]),
+        1,
+        "new prompt: {command:?}"
+    );
+
+    pty.master.write_all(b"x").unwrap();
+    let typing = drain(&mut pty, quiet, timeout);
+    assert_eq!(net_rows_down(&typing), 0, "typing: {typing:?}");
+    assert!(
+        !typing.windows(3).any(|bytes| bytes == b"\x1b[A"),
+        "typing: {typing:?}"
+    );
+}
